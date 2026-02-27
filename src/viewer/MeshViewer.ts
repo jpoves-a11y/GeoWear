@@ -31,7 +31,7 @@ export class MeshViewer {
 
     // Light neutral gray for initial display and inner wear surface
     this.innerMaterial = new THREE.MeshStandardMaterial({
-      color: 0xc8c8c8,
+      color: 0xd8d8d8,
       metalness: 0.1,
       roughness: 0.6,
       side: THREE.DoubleSide,

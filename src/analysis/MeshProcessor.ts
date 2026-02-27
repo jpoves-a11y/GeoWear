@@ -411,27 +411,15 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
   }
 
   const heightRange = maxHeight - minHeight;
-  // Cup axis points toward pole (negative height = pole, positive = rim)
-  // Actually, cupAxis points toward the pole, so the pole has the most negative projection
-  // and the rim has the most positive. We want to remove the rim (highest values).
-  // Wait: the axis points from rim to pole, so pole = most positive projection.
-  // We actually want to remove vertices near the rim = most negative projection.
-  // Let's reconsider: the axis is defined as pointing from centroid toward the pole.
-  // So vertices at the pole have the largest positive projection, and rim vertices
-  // have the most negative projection. We want to REMOVE the rim (most negative).
+  // Cup axis points toward the pole (at height = maxHeight)
+  // Rim is at height = minHeight
+  // We want to remove the `percent` closest to the rim (lowest heights)
   
-  // Actually let's just remove the top `percent` based on distance from the pole.
-  // The pole is the point with the maximum projection along the cup axis.
-  // We want to keep vertices within (100-percent)% of the max height range.
-  
-  // Threshold: remove vertices whose height (along axis, relative to pole) > (100-percent)% of range
-  // Height relative to pole: poleHeight - height[i]
-  // If this distance > (1 - percent/100) * heightRange, remove it (it's near the rim)
-  
-  const threshold = maxHeight - (percent / 100) * heightRange;
+  // Threshold: keep only vertices whose height is above (minHeight + percent% of range)
+  const threshold = minHeight + (percent / 100) * heightRange;
 
   // Filter triangles: keep only if ALL three vertices are above the threshold
-  // (i.e., closer to the pole than the cutoff)
+  // (i.e., away from the rim toward the pole)
   const keptFaces: number[] = [];
   
   for (let f = 0; f < faceCount; f++) {
@@ -439,13 +427,8 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
 
-    // Keep face if all vertices have height > threshold (closer to pole)
-    if (heights[i0] >= threshold && heights[i1] >= threshold && heights[i2] >= threshold) {
-      // Wait, this is wrong. Heights closer to pole are MORE positive (axis points to pole).
-      // So rim vertices have the LEAST positive height. We want height < threshold to be removed.
-      // threshold = maxHeight - (percent/100)*range
-      // Vertices with height < threshold are near the rim → remove them.
-      // Keep vertices with height >= threshold.
+    // Keep face only if ALL three vertices are above the threshold (away from rim)
+    if (heights[i0] > threshold && heights[i1] > threshold && heights[i2] > threshold) {
       keptFaces.push(f);
     }
   }
