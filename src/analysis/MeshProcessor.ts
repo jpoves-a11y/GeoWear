@@ -423,6 +423,13 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
     }
   }
 
+  // Build set of kept face indices for quick lookup
+  const keptFaceSet = new Set<number>(keptFaces);
+  const removedFaces: number[] = [];
+  for (let f = 0; f < faceCount; f++) {
+    if (!keptFaceSet.has(f)) removedFaces.push(f);
+  }
+
   // Rebuild mesh from kept faces
   const newFaceCount = keptFaces.length;
   const newPositions: number[] = [];
@@ -453,6 +460,36 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
     }
   }
 
+  // Build mesh from removed faces (rim)
+  const rimFaceCount = removedFaces.length;
+  const rimPositions: number[] = [];
+  const rimNormals: number[] = [];
+  const rimVertexMap = new Map<number, number>();
+  const rimIndices: number[] = [];
+  let rimVertexCount = 0;
+
+  for (const f of removedFaces) {
+    for (let v = 0; v < 3; v++) {
+      const oldIdx = indices[f * 3 + v];
+      let rimIdx = rimVertexMap.get(oldIdx);
+      if (rimIdx === undefined) {
+        rimIdx = rimVertexCount++;
+        rimVertexMap.set(oldIdx, rimIdx);
+        rimPositions.push(
+          positions[oldIdx * 3],
+          positions[oldIdx * 3 + 1],
+          positions[oldIdx * 3 + 2]
+        );
+        rimNormals.push(
+          normals[oldIdx * 3],
+          normals[oldIdx * 3 + 1],
+          normals[oldIdx * 3 + 2]
+        );
+      }
+      rimIndices.push(rimIdx);
+    }
+  }
+
   return {
     mesh: {
       positions: new Float32Array(newPositions),
@@ -460,6 +497,13 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
       indices: new Uint32Array(newIndices),
       vertexCount: newVertexCount,
       faceCount: newFaceCount,
+    },
+    rimMesh: {
+      positions: new Float32Array(rimPositions),
+      normals: new Float32Array(rimNormals),
+      indices: new Uint32Array(rimIndices),
+      vertexCount: rimVertexCount,
+      faceCount: rimFaceCount,
     },
     rimPercentRemoved: percent,
     heightRange: [minHeight, maxHeight],

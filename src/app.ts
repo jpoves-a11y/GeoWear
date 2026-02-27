@@ -243,9 +243,7 @@ export class App {
       this.status.setStatus('Trimming rim...');
       const trim = p.stepTrimRim(this.params.rimTrimPercent);
       this.meshViewer.displayInnerMesh(trim.mesh);
-      if (p.state.separation) {
-        this.meshViewer.displayGhostMesh(p.state.separation.inner);
-      }
+      this.meshViewer.displayGhostMesh(trim.rimMesh);
       this.status.setStatus(`Trimmed: ${(trim.rimPercentRemoved).toFixed(1)}% rim removed`);
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
@@ -344,7 +342,7 @@ export class App {
     const p = this.pipeline;
     const zeroOffset = new THREE.Vector3();
 
-    // Show inner mesh
+    // Show inner mesh (trimmed, opaque)
     if (p.state.workingMesh) {
       this.meshViewer.displayInnerMesh(p.state.workingMesh);
     }
@@ -352,7 +350,9 @@ export class App {
     // Show transparent context meshes
     if (p.state.separation) {
       this.meshViewer.displayOuterMesh(p.state.separation.outer);
-      this.meshViewer.displayGhostMesh(p.state.separation.inner);
+    }
+    if (p.state.trimResult) {
+      this.meshViewer.displayGhostMesh(p.state.trimResult.rimMesh);
     }
 
     // Heat map

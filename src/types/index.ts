@@ -23,7 +23,8 @@ export interface SeparationResult {
 
 /** Trimmed mesh result after rim removal */
 export interface TrimResult {
-  mesh: MeshData;
+  mesh: MeshData;                 // trimmed inner surface
+  rimMesh: MeshData;              // removed rim part (transparent reference)
   rimPercentRemoved: number;
   heightRange: [number, number];
 }
