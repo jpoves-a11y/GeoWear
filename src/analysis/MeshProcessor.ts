@@ -411,17 +411,21 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
   }
 
   const heightRange = maxHeight - minHeight;
-  // Cup axis points toward the pole (at height = maxHeight)
-  // Rim is at height = minHeight
-  // We want to AGGRESSIVELY remove the `percent` lowest vertices
+  // Cup axis points toward the pole
+  // We want to remove the `percent` vertices closest to RIM (bottom of cup)
   
-  // Use percentile-based trimming: sort heights and find the percentile threshold
+  // Collect all vertex heights in sorted order
   const heightsSorted = Array.from(heights).sort((a, b) => a - b);
-  const trimIdx = Math.ceil((percent / 100) * heightsSorted.length);
-  const threshold = heightsSorted[Math.max(0, trimIdx - 1)];
+  
+  // Calculate how many vertices to trim from the bottom (rim side)
+  const vertexCountToTrim = Math.ceil((percent / 100) * heightsSorted.length);
+  
+  // INVERTED: The threshold is taken from the TOP of the sorted array
+  // Everything AT OR BELOW this threshold (from the HIGH end) gets removed
+  const thresholdValue = heightsSorted[Math.max(0, heightsSorted.length - vertexCountToTrim)];
 
-  // Filter triangles: keep only if all vertices are ABOVE the threshold
-  // This removes the lowest `percent`% of vertices from the mesh
+  // Filter triangles: keep only if ALL three vertices are BELOW the threshold
+  // This keeps the lower portion (away from pole, toward rim from bottom)
   const keptFaces: number[] = [];
   
   for (let f = 0; f < faceCount; f++) {
@@ -429,8 +433,8 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
 
-    // Keep face only if ALL three vertices are above the percentile threshold
-    if (heights[i0] > threshold && heights[i1] > threshold && heights[i2] > threshold) {
+    // Keep only faces where all vertices are below the threshold
+    if (heights[i0] < thresholdValue && heights[i1] < thresholdValue && heights[i2] < thresholdValue) {
       keptFaces.push(f);
     }
   }
