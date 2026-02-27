@@ -243,6 +243,9 @@ export class App {
       this.status.setStatus('Trimming rim...');
       const trim = p.stepTrimRim(this.params.rimTrimPercent);
       this.meshViewer.displayInnerMesh(trim.mesh);
+      if (p.state.separation) {
+        this.meshViewer.displayGhostMesh(p.state.separation.inner);
+      }
       this.status.setStatus(`Trimmed: ${(trim.rimPercentRemoved).toFixed(1)}% rim removed`);
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
@@ -344,6 +347,12 @@ export class App {
     // Show inner mesh
     if (p.state.workingMesh) {
       this.meshViewer.displayInnerMesh(p.state.workingMesh);
+    }
+
+    // Show transparent context meshes
+    if (p.state.separation) {
+      this.meshViewer.displayOuterMesh(p.state.separation.outer);
+      this.meshViewer.displayGhostMesh(p.state.separation.inner);
     }
 
     // Heat map

@@ -13,12 +13,14 @@ export class MeshViewer {
   private originalGroup: THREE.Group;
   private innerMeshObject: THREE.Mesh | null = null;
   private outerMeshObject: THREE.Mesh | null = null;
+  private ghostMeshObject: THREE.Mesh | null = null;
   private wireframeObject: THREE.LineSegments | null = null;
   private referenceSphereObject: THREE.Mesh | null = null;
 
   // Materials
   private innerMaterial: THREE.MeshStandardMaterial;
   private outerMaterial: THREE.MeshStandardMaterial;
+  private ghostMaterial: THREE.MeshStandardMaterial;
   private wireframeMaterial: THREE.LineBasicMaterial;
 
   constructor(sceneManager: SceneManager) {
@@ -43,6 +45,16 @@ export class MeshViewer {
       side: THREE.DoubleSide,
       transparent: true,
       opacity: 0.25,
+      depthWrite: false,
+    });
+
+    this.ghostMaterial = new THREE.MeshStandardMaterial({
+      color: 0x9aa0aa,
+      metalness: 0.02,
+      roughness: 0.7,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.2,
       depthWrite: false,
     });
 
@@ -162,6 +174,24 @@ export class MeshViewer {
     const mesh = new THREE.Mesh(geometry, this.outerMaterial);
     mesh.name = 'outer-mesh';
     this.outerMeshObject = mesh;
+    this.originalGroup.add(mesh);
+  }
+
+  /**
+   * Display a transparent ghost mesh (e.g., trimmed-away region reference).
+   */
+  public displayGhostMesh(meshData: MeshData): void {
+    if (this.ghostMeshObject) {
+      this.originalGroup.remove(this.ghostMeshObject);
+      this.ghostMeshObject.geometry.dispose();
+    }
+
+    const geometry = this.meshDataToGeometry(meshData);
+    geometry.computeVertexNormals();
+
+    const mesh = new THREE.Mesh(geometry, this.ghostMaterial);
+    mesh.name = 'ghost-mesh';
+    this.ghostMeshObject = mesh;
     this.originalGroup.add(mesh);
   }
 
@@ -296,6 +326,7 @@ export class MeshViewer {
     }
     this.innerMeshObject = null;
     this.outerMeshObject = null;
+    this.ghostMeshObject = null;
     this.wireframeObject = null;
     this.referenceSphereObject = null;
   }
@@ -304,6 +335,7 @@ export class MeshViewer {
     this.clearAll();
     this.innerMaterial.dispose();
     this.outerMaterial.dispose();
+    this.ghostMaterial.dispose();
     this.wireframeMaterial.dispose();
   }
 }
