@@ -44,7 +44,7 @@ export class MeshViewer {
       roughness: 0.65,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.25,
+      opacity: 0.15,
       depthWrite: false,
     });
 
@@ -54,7 +54,7 @@ export class MeshViewer {
       roughness: 0.7,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.2,
+      opacity: 0.1,
       depthWrite: false,
     });
 
@@ -149,13 +149,15 @@ export class MeshViewer {
     const geometry = this.meshDataToGeometry(meshData);
     geometry.computeVertexNormals();
 
-    const mesh = new THREE.Mesh(geometry, this.innerMaterial);
+    const mesh = new THREE.Mesh(geometry, this.innerMaterial.clone());
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.name = 'inner-mesh';
-    mesh.renderOrder = 2; // Render on top
     this.innerMeshObject = mesh;
+    
+    // Add in correct order: first remove/re-add to ensure proper depth ordering
     this.originalGroup.add(mesh);
+    this.reorderMeshes();
 
     return mesh;
   }
@@ -172,11 +174,11 @@ export class MeshViewer {
     const geometry = this.meshDataToGeometry(meshData);
     geometry.computeVertexNormals();
 
-    const mesh = new THREE.Mesh(geometry, this.outerMaterial);
+    const mesh = new THREE.Mesh(geometry, this.outerMaterial.clone());
     mesh.name = 'outer-mesh';
-    mesh.renderOrder = 1; // Render below inner
     this.outerMeshObject = mesh;
     this.originalGroup.add(mesh);
+    this.reorderMeshes();
   }
 
   /**
@@ -191,11 +193,11 @@ export class MeshViewer {
     const geometry = this.meshDataToGeometry(meshData);
     geometry.computeVertexNormals();
 
-    const mesh = new THREE.Mesh(geometry, this.ghostMaterial);
+    const mesh = new THREE.Mesh(geometry, this.ghostMaterial.clone());
     mesh.name = 'ghost-mesh';
-    mesh.renderOrder = 1.5; // Render between outer and inner
     this.ghostMeshObject = mesh;
     this.originalGroup.add(mesh);
+    this.reorderMeshes();
   }
 
   /**
@@ -242,6 +244,26 @@ export class MeshViewer {
     if (this.referenceSphereObject) {
       this.referenceSphereObject.visible = visible;
     }
+  }
+
+  /**
+   * Reorder meshes in the group to ensure correct depth rendering.
+   * Order: outer (back) -> ghost (middle) -> inner (front)
+   */
+  private reorderMeshes(): void {
+    const outer = this.originalGroup.getObjectByName('outer-mesh');
+    const ghost = this.originalGroup.getObjectByName('ghost-mesh');
+    const inner = this.originalGroup.getObjectByName('inner-mesh');
+
+    // Remove all mesh objects
+    if (outer) this.originalGroup.remove(outer);
+    if (ghost) this.originalGroup.remove(ghost);
+    if (inner) this.originalGroup.remove(inner);
+
+    // Re-add in correct order (back to front)
+    if (outer) this.originalGroup.add(outer);
+    if (ghost) this.originalGroup.add(ghost);
+    if (inner) this.originalGroup.add(inner);
   }
 
   /**
