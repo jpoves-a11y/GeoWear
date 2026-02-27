@@ -57,7 +57,7 @@ export class MeshViewer {
     });
 
     this.wireframeMaterial = new THREE.LineBasicMaterial({
-      color: 0x00d4ff,
+      color: 0x0077cc,
       transparent: true,
       opacity: 0.15,
     });

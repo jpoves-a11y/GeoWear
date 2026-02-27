@@ -30,10 +30,10 @@ export class SceneManager {
 
     // ---- Scene ----
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0d1117);
+    this.scene.background = new THREE.Color(0xf0f0f0);
 
     // Fog for depth perception
-    this.scene.fog = new THREE.FogExp2(0x0d1117, 0.015);
+    this.scene.fog = new THREE.FogExp2(0xf0f0f0, 0.015);
 
     // ---- Camera ----
     const aspect = this.container.clientWidth / this.container.clientHeight;
