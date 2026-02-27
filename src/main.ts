@@ -2,7 +2,6 @@
 // GeoWear — Main Entry Point
 // ============================================================
 
-import 'lil-gui/dist/lil-gui.css';
 import { App } from './app';
 
 // Wait for DOM
