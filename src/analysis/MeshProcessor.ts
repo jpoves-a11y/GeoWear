@@ -152,8 +152,18 @@ export function separateFaces(meshData: MeshData): SeparationResult {
   }
 
   // Step 5: Build separated mesh data
-  const inner = buildMeshFromFaces(positions, normals, indices, innerFaces);
-  const outer = buildMeshFromFaces(positions, normals, indices, outerFaces);
+  let inner = buildMeshFromFaces(positions, normals, indices, innerFaces);
+  let outer = buildMeshFromFaces(positions, normals, indices, outerFaces);
+
+  // Sanity check: inner surface should be closer to the centroid than outer surface.
+  // If not, swap to correct misclassification due to centroid or normal issues.
+  const innerMean = meanDistanceToPoint(inner.positions, cx, cy, cz);
+  const outerMean = meanDistanceToPoint(outer.positions, cx, cy, cz);
+  if (innerMean > outerMean) {
+    const temp = inner;
+    inner = outer;
+    outer = temp;
+  }
 
   // Step 4: Determine cup axis (from centroid to innermost point)
   // The cup axis is the direction from the rim center to the pole (bottom of the cup)
@@ -215,6 +225,24 @@ function buildMeshFromFaces(
     vertexCount: newVertexCount,
     faceCount: faceIndices.length,
   };
+}
+
+function meanDistanceToPoint(
+  positions: Float32Array,
+  cx: number,
+  cy: number,
+  cz: number
+): number {
+  const n = positions.length / 3;
+  if (n === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < positions.length; i += 3) {
+    const dx = positions[i] - cx;
+    const dy = positions[i + 1] - cy;
+    const dz = positions[i + 2] - cz;
+    sum += Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  return sum / n;
 }
 
 /**
