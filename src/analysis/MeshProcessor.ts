@@ -4,7 +4,7 @@
 // ============================================================
 
 import type { MeshData, SeparationResult, TrimResult } from '../types';
-import { weldVertices, buildTriangleIndices } from '../utils/geometry';
+import { faceNormal } from '../utils/geometry';
 
 /**
  * Separate inner (concave) and outer (convex) faces of a hemispherical cup.
@@ -17,8 +17,8 @@ import { weldVertices, buildTriangleIndices } from '../utils/geometry';
  * 5. Outer faces (convex): face normal points away from centroid
  */
 export function separateFaces(meshData: MeshData): SeparationResult {
-  const { positions, normals } = meshData;
-  const faceCount = positions.length / 9; // 3 vertices * 3 components per face
+  const { positions, normals, indices } = meshData;
+  const faceCount = indices.length / 3;
 
   // Step 1: Compute centroid
   let cx = 0, cy = 0, cz = 0;
@@ -32,41 +32,128 @@ export function separateFaces(meshData: MeshData): SeparationResult {
   cy /= totalVerts;
   cz /= totalVerts;
 
-  // Step 2: Classify faces
-  const innerFaces: number[] = [];
-  const outerFaces: number[] = [];
+  // Step 2: Build face data for robust filtering
+  type FaceInfo = {
+    index: number;
+    v0: number;
+    v1: number;
+    v2: number;
+    cx: number;
+    cy: number;
+    cz: number;
+    dot: number;
+    distance: number;
+  };
+
+  const faceData: FaceInfo[] = [];
+  const distances: number[] = [];
 
   for (let f = 0; f < faceCount; f++) {
-    const baseIdx = f * 9; // 3 vertices * 3 components
+    const i0 = indices[f * 3];
+    const i1 = indices[f * 3 + 1];
+    const i2 = indices[f * 3 + 2];
 
-    // Face centroid
-    const fcx = (positions[baseIdx] + positions[baseIdx + 3] + positions[baseIdx + 6]) / 3;
-    const fcy = (positions[baseIdx + 1] + positions[baseIdx + 4] + positions[baseIdx + 7]) / 3;
-    const fcz = (positions[baseIdx + 2] + positions[baseIdx + 5] + positions[baseIdx + 8]) / 3;
+    const ax = positions[i0 * 3];
+    const ay = positions[i0 * 3 + 1];
+    const az = positions[i0 * 3 + 2];
+    const bx = positions[i1 * 3];
+    const by = positions[i1 * 3 + 1];
+    const bz = positions[i1 * 3 + 2];
+    const cxp = positions[i2 * 3];
+    const cyp = positions[i2 * 3 + 1];
+    const czp = positions[i2 * 3 + 2];
 
-    // Face normal (average of vertex normals for that face)
-    const fnx = (normals[baseIdx] + normals[baseIdx + 3] + normals[baseIdx + 6]) / 3;
-    const fny = (normals[baseIdx + 1] + normals[baseIdx + 4] + normals[baseIdx + 7]) / 3;
-    const fnz = (normals[baseIdx + 2] + normals[baseIdx + 5] + normals[baseIdx + 8]) / 3;
+    const fcx = (ax + bx + cxp) / 3;
+    const fcy = (ay + by + cyp) / 3;
+    const fcz = (az + bz + czp) / 3;
 
-    // Direction from mesh centroid to face centroid
-    const dx = fcx - cx;
-    const dy = fcy - cy;
-    const dz = fcz - cz;
+    const [fnx, fny, fnz] = faceNormal(ax, ay, az, bx, by, bz, cxp, cyp, czp);
+    const dtx = cx - fcx;
+    const dty = cy - fcy;
+    const dtz = cz - fcz;
+    const dlen = Math.sqrt(dtx * dtx + dty * dty + dtz * dtz) || 1;
+    const tnx = dtx / dlen;
+    const tny = dty / dlen;
+    const tnz = dtz / dlen;
+    const dot = fnx * tnx + fny * tny + fnz * tnz;
+    const distance = dlen;
 
-    // Dot product: negative means normal points toward centroid (inner/concave surface)
-    const dot = fnx * dx + fny * dy + fnz * dz;
+    faceData.push({ index: f, v0: i0, v1: i1, v2: i2, cx: fcx, cy: fcy, cz: fcz, dot, distance });
+    distances.push(distance);
+  }
 
-    if (dot < 0) {
-      innerFaces.push(f);
-    } else {
-      outerFaces.push(f);
+  // Step 3: Filter inner surface candidates by normal alignment and distance
+  distances.sort((a, b) => a - b);
+  const q1 = distances[Math.floor(distances.length * 0.25)] ?? 0;
+  const q3 = distances[Math.floor(distances.length * 0.75)] ?? 0;
+  const maxDistance = q3 || q1 || Infinity;
+
+  let candidateFaces = faceData.filter(f => f.dot > 0.5 && f.distance <= maxDistance);
+  if (candidateFaces.length === 0) {
+    // Fallback: use only normal alignment
+    candidateFaces = faceData.filter(f => f.dot > 0);
+  }
+
+  // Step 4: Keep largest connected component (shared vertices)
+  const vertexToFaces = new Map<number, number[]>();
+  for (const f of candidateFaces) {
+    const verts = [f.v0, f.v1, f.v2];
+    for (const v of verts) {
+      const list = vertexToFaces.get(v);
+      if (list) list.push(f.index);
+      else vertexToFaces.set(v, [f.index]);
     }
   }
 
-  // Step 3: Build separated mesh data
-  const inner = buildMeshFromFaces(positions, normals, innerFaces);
-  const outer = buildMeshFromFaces(positions, normals, outerFaces);
+  const adjacency = new Map<number, Set<number>>();
+  for (const f of candidateFaces) adjacency.set(f.index, new Set());
+
+  for (const f of candidateFaces) {
+    const neighbors = adjacency.get(f.index)!;
+    const verts = [f.v0, f.v1, f.v2];
+    for (const v of verts) {
+      const list = vertexToFaces.get(v);
+      if (!list) continue;
+      for (const n of list) {
+        if (n !== f.index) neighbors.add(n);
+      }
+    }
+  }
+
+  const visited = new Set<number>();
+  const components: number[][] = [];
+  for (const f of candidateFaces) {
+    if (visited.has(f.index)) continue;
+    const queue: number[] = [f.index];
+    const component: number[] = [];
+    visited.add(f.index);
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      component.push(current);
+      const neighbors = adjacency.get(current);
+      if (!neighbors) continue;
+      for (const n of neighbors) {
+        if (!visited.has(n)) {
+          visited.add(n);
+          queue.push(n);
+        }
+      }
+    }
+    components.push(component);
+  }
+
+  components.sort((a, b) => b.length - a.length);
+  const innerFaceSet = new Set<number>(components[0] ?? []);
+  const innerFaces: number[] = [];
+  const outerFaces: number[] = [];
+  for (let f = 0; f < faceCount; f++) {
+    if (innerFaceSet.has(f)) innerFaces.push(f);
+    else outerFaces.push(f);
+  }
+
+  // Step 5: Build separated mesh data
+  const inner = buildMeshFromFaces(positions, normals, indices, innerFaces);
+  const outer = buildMeshFromFaces(positions, normals, indices, outerFaces);
 
   // Step 4: Determine cup axis (from centroid to innermost point)
   // The cup axis is the direction from the rim center to the pole (bottom of the cup)
@@ -86,32 +173,47 @@ export function separateFaces(meshData: MeshData): SeparationResult {
 function buildMeshFromFaces(
   positions: Float32Array,
   normals: Float32Array,
+  indices: Uint32Array,
   faceIndices: number[]
 ): MeshData {
-  const faceCount = faceIndices.length;
-  const vertexCount = faceCount * 3;
-  const newPositions = new Float32Array(vertexCount * 3);
-  const newNormals = new Float32Array(vertexCount * 3);
+  const newPositions: number[] = [];
+  const newNormals: number[] = [];
+  const newIndices: number[] = [];
+  const vertexMap = new Map<number, number>();
+  let newVertexCount = 0;
 
-  for (let i = 0; i < faceCount; i++) {
-    const srcBase = faceIndices[i] * 9;
-    const dstBase = i * 9;
-    for (let j = 0; j < 9; j++) {
-      newPositions[dstBase + j] = positions[srcBase + j];
-      newNormals[dstBase + j] = normals[srcBase + j];
+  for (const f of faceIndices) {
+    const i0 = indices[f * 3];
+    const i1 = indices[f * 3 + 1];
+    const i2 = indices[f * 3 + 2];
+    const faceVerts = [i0, i1, i2];
+
+    for (const oldIdx of faceVerts) {
+      let newIdx = vertexMap.get(oldIdx);
+      if (newIdx === undefined) {
+        newIdx = newVertexCount++;
+        vertexMap.set(oldIdx, newIdx);
+        newPositions.push(
+          positions[oldIdx * 3],
+          positions[oldIdx * 3 + 1],
+          positions[oldIdx * 3 + 2]
+        );
+        newNormals.push(
+          normals[oldIdx * 3],
+          normals[oldIdx * 3 + 1],
+          normals[oldIdx * 3 + 2]
+        );
+      }
+      newIndices.push(newIdx);
     }
   }
 
-  // Weld vertices for efficient processing
-  const welded = weldVertices(newPositions, newNormals);
-  const triIndices = buildTriangleIndices(welded.indices);
-
   return {
-    positions: welded.positions,
-    normals: welded.normals,
-    indices: triIndices,
-    vertexCount: welded.positions.length / 3,
-    faceCount,
+    positions: new Float32Array(newPositions),
+    normals: new Float32Array(newNormals),
+    indices: new Uint32Array(newIndices),
+    vertexCount: newVertexCount,
+    faceCount: faceIndices.length,
   };
 }
 
