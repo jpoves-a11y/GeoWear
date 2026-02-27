@@ -1,0 +1,551 @@
+/* ============================================================
+   GeoWear — Main Stylesheet
+   UHMWPE Acetabular Cup Wear Analyzer
+   ============================================================ */
+
+/* ---------- CSS Variables (Dark Theme) ---------- */
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-surface: #1c2128;
+  --border-color: #30363d;
+  --border-subtle: #21262d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --accent-primary: #00d4ff;
+  --accent-secondary: #0088cc;
+  --accent-gradient: linear-gradient(135deg, #00d4ff, #0088cc);
+  --danger: #f85149;
+  --warning: #d29922;
+  --success: #3fb950;
+  --info: #58a6ff;
+  --bump-color: #ff4444;
+  --dip-color: #6644ff;
+  --nominal-color: #44bb44;
+  --sidebar-width: 300px;
+  --header-height: 44px;
+  --statusbar-height: 28px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --transition-fast: 150ms ease;
+  --transition-med: 250ms ease;
+}
+
+/* ---------- Reset ---------- */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Utility ---------- */
+.hidden { display: none !important; }
+
+/* ---------- Scrollbar ---------- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ---------- Loading Overlay ---------- */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 17, 23, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.loading-content {
+  text-align: center;
+  color: var(--text-primary);
+}
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 16px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.progress-bar-container {
+  width: 240px;
+  height: 4px;
+  margin: 12px auto 0;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--accent-gradient);
+  border-radius: 2px;
+  transition: width var(--transition-med);
+}
+
+.progress-text {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+/* ---------- Header ---------- */
+#app-header {
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  user-select: none;
+  z-index: 100;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-left h1 {
+  font-size: 16px;
+  font-weight: 700;
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: 0.5px;
+}
+
+.version {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+}
+
+.header-center {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.file-label {
+  font-family: var(--font-mono);
+}
+
+.icon-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all var(--transition-fast);
+}
+
+.icon-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
+/* ---------- Main Layout ---------- */
+#app-layout {
+  display: flex;
+  height: calc(100vh - var(--header-height) - var(--statusbar-height));
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex-shrink: 0;
+}
+
+#sidebar-right {
+  border-right: none;
+  border-left: 1px solid var(--border-color);
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  z-index: 2;
+}
+
+.sidebar-header h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ---------- lil-gui Overrides ---------- */
+#gui-container {
+  padding: 0;
+}
+
+#gui-container .lil-gui {
+  --background-color: var(--bg-secondary);
+  --widget-color: var(--bg-tertiary);
+  --focus-color: var(--accent-primary);
+  --hover-color: var(--bg-surface);
+  --font-family: var(--font-sans);
+  --font-size: 12px;
+  --name-width: 45%;
+  --number-color: var(--accent-primary);
+  --string-color: var(--success);
+  --title-background-color: var(--bg-tertiary);
+  --title-text-color: var(--text-primary);
+  --text-color: var(--text-secondary);
+  width: 100% !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+/* ---------- 3D Viewport ---------- */
+#viewport {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+#three-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+}
+
+#annotations-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ---------- Color Legend ---------- */
+.color-legend {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 8px;
+  background: rgba(22, 27, 34, 0.85);
+  backdrop-filter: blur(6px);
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  z-index: 20;
+}
+
+.legend-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  min-width: 50px;
+}
+
+.legend-unit {
+  position: absolute;
+  bottom: 4px;
+  right: 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ---------- View Hint ---------- */
+.view-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 20px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: rgba(22, 27, 34, 0.7);
+  backdrop-filter: blur(4px);
+  padding: 6px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  user-select: none;
+  pointer-events: none;
+  opacity: 0.7;
+  transition: opacity var(--transition-med);
+}
+
+/* ---------- Status Bar ---------- */
+#status-bar {
+  height: var(--statusbar-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.status-left, .status-center, .status-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-left { flex: 1; }
+.status-center { flex: 1; justify-content: center; }
+.status-right { flex: 1; justify-content: flex-end; font-family: var(--font-mono); }
+
+#status-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- Results Panel ---------- */
+.results-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.results-section h3 {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 4px 0;
+}
+
+.metric-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.metric-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.metric-value.danger { color: var(--danger); }
+.metric-value.warning { color: var(--warning); }
+.metric-value.success { color: var(--success); }
+.metric-value.info { color: var(--info); }
+
+.metric-unit {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+/* ---------- Geodesic Table ---------- */
+.geodesic-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.geodesic-table th {
+  text-align: left;
+  padding: 6px 8px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-color);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+}
+
+.geodesic-table td {
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.geodesic-table tr:hover {
+  background: var(--bg-tertiary);
+  cursor: pointer;
+}
+
+.geodesic-table tr.anomaly td {
+  color: var(--warning);
+}
+
+/* ---------- Annotation Labels (CSS2D) ---------- */
+.annotation-label {
+  background: rgba(22, 27, 34, 0.9);
+  backdrop-filter: blur(4px);
+  color: var(--text-primary);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  border: 1px solid var(--border-color);
+  pointer-events: auto;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.annotation-label:hover {
+  border-color: var(--accent-primary);
+  transform: scale(1.05);
+}
+
+.annotation-label.bump {
+  border-left: 3px solid var(--bump-color);
+}
+
+.annotation-label.dip {
+  border-left: 3px solid var(--dip-color);
+}
+
+.annotation-label.pole {
+  border-left: 3px solid var(--accent-primary);
+}
+
+/* ---------- Tooltip ---------- */
+.tooltip {
+  position: absolute;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  z-index: 1000;
+  max-width: 260px;
+}
+
+.tooltip-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.tooltip-row .label { color: var(--text-secondary); }
+.tooltip-row .value { font-family: var(--font-mono); color: var(--accent-primary); }
+
+/* ---------- Animations ---------- */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.pulse { animation: pulse 1.5s ease-in-out infinite; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1024px) {
+  :root {
+    --sidebar-width: 260px;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: absolute;
+    z-index: 50;
+    top: var(--header-height);
+    bottom: var(--statusbar-height);
+    box-shadow: var(--shadow-lg);
+  }
+  
+  #sidebar-left { left: 0; }
+  #sidebar-right { right: 0; }
+  
+  .view-hint { display: none; }
+}

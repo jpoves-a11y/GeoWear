@@ -1,0 +1,27 @@
+{
+  "name": "geowear",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && npx wrangler pages deploy dist"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.0",
+    "lil-gui": "^0.21.0",
+    "ml-matrix": "^6.12.1",
+    "three": "^0.183.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.183.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GeoWear — UHMWPE Acetabular Cup Wear Analyzer</title>
+  <link rel="stylesheet" href="/src/styles/main.css" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+</head>
+<body>
+  <!-- Loading overlay -->
+  <div id="loading-overlay" class="loading-overlay hidden">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <p id="loading-text">Loading...</p>
+      <div class="progress-bar-container">
+        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+      </div>
+      <p id="progress-text" class="progress-text">0%</p>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header id="app-header">
+    <div class="header-left">
+      <svg class="logo" viewBox="0 0 32 32" width="28" height="28">
+        <circle cx="16" cy="16" r="14" fill="none" stroke="#00d4ff" stroke-width="2"/>
+        <path d="M8 20 Q16 4 24 20" fill="none" stroke="#00d4ff" stroke-width="1.5"/>
+        <path d="M10 22 Q16 8 22 22" fill="none" stroke="#00aaff" stroke-width="1"/>
+        <circle cx="16" cy="14" r="2" fill="#00d4ff"/>
+      </svg>
+      <h1>GeoWear</h1>
+      <span class="version">v1.0</span>
+    </div>
+    <div class="header-center" id="file-info">
+      <span class="file-label">No file loaded</span>
+    </div>
+    <div class="header-right">
+      <button id="btn-theme" class="icon-btn" title="Toggle theme">◑</button>
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <div id="app-layout">
+    <!-- Left sidebar: Controls -->
+    <aside id="sidebar-left" class="sidebar">
+      <div id="gui-container"></div>
+    </aside>
+
+    <!-- 3D Viewport -->
+    <main id="viewport">
+      <canvas id="three-canvas"></canvas>
+      <!-- Annotations overlay -->
+      <div id="annotations-overlay"></div>
+      <!-- Color scale legend -->
+      <div id="color-legend" class="color-legend hidden">
+        <canvas id="legend-canvas" width="30" height="256"></canvas>
+        <div class="legend-labels">
+          <span id="legend-max">+0.00</span>
+          <span id="legend-mid">0.00</span>
+          <span id="legend-min">-0.00</span>
+        </div>
+        <span class="legend-unit">μm</span>
+      </div>
+      <!-- View controls hint -->
+      <div id="view-hint" class="view-hint">
+        <span>🖱 Rotate</span>
+        <span>⚙ Scroll to zoom</span>
+        <span>⇧+🖱 Pan</span>
+      </div>
+    </main>
+
+    <!-- Right sidebar: Results -->
+    <aside id="sidebar-right" class="sidebar hidden">
+      <div class="sidebar-header">
+        <h2>Analysis Results</h2>
+        <button id="btn-close-results" class="icon-btn" title="Close">✕</button>
+      </div>
+      <div id="results-container"></div>
+    </aside>
+  </div>
+
+  <!-- Status bar -->
+  <footer id="status-bar">
+    <div class="status-left">
+      <span id="status-text">Ready</span>
+    </div>
+    <div class="status-center">
+      <span id="mesh-info"></span>
+    </div>
+    <div class="status-right">
+      <span id="fps-counter">0 FPS</span>
+    </div>
+  </footer>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
