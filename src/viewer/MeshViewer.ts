@@ -39,19 +39,19 @@ export class MeshViewer {
     });
 
     this.outerMaterial = new THREE.MeshBasicMaterial({
-      color: 0x9a9a9a,
+      color: 0xFFFFFF,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.08,
+      opacity: 0.02,
       depthWrite: false,
       depthTest: false,
     });
 
     this.ghostMaterial = new THREE.MeshBasicMaterial({
-      color: 0x9a9a9a,
+      color: 0xFFFFFF,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.08,
+      opacity: 0.02,
       depthWrite: false,
       depthTest: false,
     });
