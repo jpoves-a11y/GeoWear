@@ -53,6 +53,7 @@ export class SceneManager {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.2;
+    this.renderer.sortObjects = true; // Enable renderOrder sorting for transparency
 
     // ---- CSS2D Renderer (for annotations) ----
     this.cssRenderer = new CSS2DRenderer();

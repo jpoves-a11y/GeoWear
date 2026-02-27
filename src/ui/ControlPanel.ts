@@ -34,6 +34,8 @@ export class ControlPanel {
   private callbacks: ControlCallbacks;
   private processingFolder!: GUI;
   private analysisButtons: Record<string, any> = {};
+  private buttonControllers: Record<string, any> = {};
+  private completedSteps = new Set<string>();
 
   constructor(callbacks: ControlCallbacks) {
     this.callbacks = callbacks;
@@ -68,19 +70,19 @@ export class ControlPanel {
     // Step-by-step controls
     const steps = this.processingFolder.addFolder('Step by Step');
     this.analysisButtons['separate'] = { '1. Detect Inner Face': () => this.callbacks.onStepSeparate() };
-    steps.add(this.analysisButtons['separate'], '1. Detect Inner Face');
+    this.buttonControllers['separate'] = steps.add(this.analysisButtons['separate'], '1. Detect Inner Face');
 
     this.analysisButtons['trim'] = { '2. Trim Rim (5%)': () => this.callbacks.onStepTrim() };
-    steps.add(this.analysisButtons['trim'], '2. Trim Rim (5%)');
+    this.buttonControllers['trim'] = steps.add(this.analysisButtons['trim'], '2. Trim Rim (5%)');
 
     this.analysisButtons['fit'] = { '3. Fit Sphere': () => this.callbacks.onStepFitSphere() };
-    steps.add(this.analysisButtons['fit'], '3. Fit Sphere');
+    this.buttonControllers['fit'] = steps.add(this.analysisButtons['fit'], '3. Fit Sphere');
 
     this.analysisButtons['geodesics'] = { '4. Compute Geodesics': () => this.callbacks.onStepGeodesics() };
-    steps.add(this.analysisButtons['geodesics'], '4. Compute Geodesics');
+    this.buttonControllers['geodesics'] = steps.add(this.analysisButtons['geodesics'], '4. Compute Geodesics');
 
     this.analysisButtons['analyze'] = { '5. Analyze & Quantify': () => this.callbacks.onStepAnalyze() };
-    steps.add(this.analysisButtons['analyze'], '5. Analyze & Quantify');
+    this.buttonControllers['analyze'] = steps.add(this.analysisButtons['analyze'], '5. Analyze & Quantify');
 
     steps.close();
     this.processingFolder.open();
@@ -165,6 +167,23 @@ export class ControlPanel {
     folder.add(exports, 'Report (PDF)');
 
     folder.close();
+  }
+
+  /**
+   * Mark a step as completed by adding a checkmark to its button label.
+   */
+  public markStepCompleted(stepName: string): void {
+    if (this.completedSteps.has(stepName)) return;
+    this.completedSteps.add(stepName);
+
+    const controller = this.buttonControllers[stepName];
+    if (controller) {
+      const button = controller.domElement.querySelector('button');
+      if (button) {
+        button.style.color = '#3fb950'; // green
+        button.textContent = '✓ ' + button.textContent;
+      }
+    }
   }
 
   dispose(): void {

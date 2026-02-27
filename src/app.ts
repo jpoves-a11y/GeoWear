@@ -232,6 +232,7 @@ export class App {
       this.meshViewer.displayInnerMesh(sep.inner);
       this.meshViewer.displayOuterMesh(sep.outer);
       this.status.setStatus(`Separated: ${sep.inner.faceCount} inner / ${sep.outer.faceCount} outer faces`);
+      this.controls.markStepCompleted('separate');
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -245,6 +246,7 @@ export class App {
       this.meshViewer.displayInnerMesh(trim.mesh);
       this.meshViewer.displayGhostMesh(trim.rimMesh);
       this.status.setStatus(`Trimmed: ${(trim.rimPercentRemoved).toFixed(1)}% rim removed`);
+      this.controls.markStepCompleted('trim');
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -262,6 +264,7 @@ export class App {
         `Sphere: R=${fit.radius.toFixed(4)}mm, RMS=${(fit.rmsError * 1000).toFixed(2)}μm | ` +
         `Ellipsoid: ${p.state.ellipsoidFit!.shapeClass}, sphericity=${p.state.ellipsoidFit!.sphericityPercent.toFixed(1)}%`
       );
+      this.controls.markStepCompleted('fit');
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -278,6 +281,7 @@ export class App {
       }
       this.status.setStatus(`Computed ${p.state.geodesics.length} geodesics`);
       this.hideLoading();
+      this.controls.markStepCompleted('geodesics');
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
       this.hideLoading();
@@ -330,6 +334,7 @@ export class App {
       }
 
       this.status.setStatus(`Analysis complete: ${p.state.results?.totalAnomalyPoints || 0} anomaly points`);
+      this.controls.markStepCompleted('analyze');
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }

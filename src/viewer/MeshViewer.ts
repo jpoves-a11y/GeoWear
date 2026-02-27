@@ -153,6 +153,7 @@ export class MeshViewer {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.name = 'inner-mesh';
+    mesh.renderOrder = 2; // Render on top
     this.innerMeshObject = mesh;
     this.originalGroup.add(mesh);
 
@@ -173,6 +174,7 @@ export class MeshViewer {
 
     const mesh = new THREE.Mesh(geometry, this.outerMaterial);
     mesh.name = 'outer-mesh';
+    mesh.renderOrder = 1; // Render below inner
     this.outerMeshObject = mesh;
     this.originalGroup.add(mesh);
   }
@@ -191,6 +193,7 @@ export class MeshViewer {
 
     const mesh = new THREE.Mesh(geometry, this.ghostMaterial);
     mesh.name = 'ghost-mesh';
+    mesh.renderOrder = 1.5; // Render between outer and inner
     this.ghostMeshObject = mesh;
     this.originalGroup.add(mesh);
   }
