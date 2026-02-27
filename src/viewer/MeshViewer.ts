@@ -19,8 +19,8 @@ export class MeshViewer {
 
   // Materials
   private innerMaterial: THREE.MeshStandardMaterial;
-  private outerMaterial: THREE.MeshStandardMaterial;
-  private ghostMaterial: THREE.MeshStandardMaterial;
+  private outerMaterial: THREE.Material;
+  private ghostMaterial: THREE.Material;
   private wireframeMaterial: THREE.LineBasicMaterial;
 
   constructor(sceneManager: SceneManager) {
@@ -38,23 +38,19 @@ export class MeshViewer {
       transparent: false,
     });
 
-    this.outerMaterial = new THREE.MeshStandardMaterial({
+    this.outerMaterial = new THREE.MeshBasicMaterial({
       color: 0xaaaabc,
-      metalness: 0.05,
-      roughness: 0.65,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.15,
+      opacity: 0.2,
       depthWrite: false,
     });
 
-    this.ghostMaterial = new THREE.MeshStandardMaterial({
+    this.ghostMaterial = new THREE.MeshBasicMaterial({
       color: 0x9aa0aa,
-      metalness: 0.02,
-      roughness: 0.7,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.1,
+      opacity: 0.15,
       depthWrite: false,
     });
 
