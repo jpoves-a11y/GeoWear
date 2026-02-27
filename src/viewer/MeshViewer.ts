@@ -50,7 +50,7 @@ export class MeshViewer {
       color: 0x9aa0aa,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.15,
+      opacity: 0.2,
       depthWrite: false,
     });
 
