@@ -29,11 +29,11 @@ export class MeshViewer {
     this.originalGroup.name = 'loaded-mesh';
     this.sceneManager.scene.add(this.originalGroup);
 
-    // UHMWPE-like appearance (translucent white plastic)
+    // Inner wear surface - dark blue, highly visible
     this.innerMaterial = new THREE.MeshStandardMaterial({
-      color: 0xe8e8f0,
-      metalness: 0.05,
-      roughness: 0.55,
+      color: 0x1e3c72,
+      metalness: 0.3,
+      roughness: 0.4,
       side: THREE.DoubleSide,
       transparent: false,
     });
@@ -42,7 +42,7 @@ export class MeshViewer {
       color: 0xFFFFFF,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.02,
+      opacity: 0.01,
       depthWrite: false,
       depthTest: false,
     });
@@ -51,7 +51,7 @@ export class MeshViewer {
       color: 0xFFFFFF,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.02,
+      opacity: 0.01,
       depthWrite: false,
       depthTest: false,
     });
