@@ -82,16 +82,23 @@ export function separateFaces(meshData: MeshData): SeparationResult {
     distances.push(distance);
   }
 
-  // Step 3: Filter inner surface candidates by normal alignment and distance
-  distances.sort((a, b) => a - b);
-  const q1 = distances[Math.floor(distances.length * 0.25)] ?? 0;
-  const q3 = distances[Math.floor(distances.length * 0.75)] ?? 0;
-  const maxDistance = q3 || q1 || Infinity;
+  // Step 3: Prefer distance-based clustering (inner should be closer to centroid).
+  const cluster = clusterByDistance(faceData.map(f => f.distance));
+  let candidateFaces: FaceInfo[];
+  if (cluster && cluster.separation >= 0.08) {
+    const innerLabel = cluster.centers[0] <= cluster.centers[1] ? 0 : 1;
+    candidateFaces = faceData.filter((_, i) => cluster.labels[i] === innerLabel);
+  } else {
+    // Fallback: normal alignment and distance trimming
+    distances.sort((a, b) => a - b);
+    const q1 = distances[Math.floor(distances.length * 0.25)] ?? 0;
+    const q3 = distances[Math.floor(distances.length * 0.75)] ?? 0;
+    const maxDistance = q3 || q1 || Infinity;
 
-  let candidateFaces = faceData.filter(f => f.dot > 0.5 && f.distance <= maxDistance);
-  if (candidateFaces.length === 0) {
-    // Fallback: use only normal alignment
-    candidateFaces = faceData.filter(f => f.dot > 0);
+    candidateFaces = faceData.filter(f => f.dot > 0.5 && f.distance <= maxDistance);
+    if (candidateFaces.length === 0) {
+      candidateFaces = faceData.filter(f => f.dot > 0);
+    }
   }
 
   // Step 4: Keep largest connected component (shared vertices)
@@ -225,6 +232,56 @@ function buildMeshFromFaces(
     vertexCount: newVertexCount,
     faceCount: faceIndices.length,
   };
+}
+
+function clusterByDistance(distances: number[]): {
+  labels: Uint8Array;
+  centers: [number, number];
+  separation: number;
+} | null {
+  if (distances.length === 0) return null;
+
+  let min = distances[0];
+  let max = distances[0];
+  for (const d of distances) {
+    if (d < min) min = d;
+    if (d > max) max = d;
+  }
+
+  if (max - min < 1e-6) return null;
+
+  let c0 = min;
+  let c1 = max;
+  const labels = new Uint8Array(distances.length);
+
+  for (let iter = 0; iter < 10; iter++) {
+    let sum0 = 0;
+    let sum1 = 0;
+    let count0 = 0;
+    let count1 = 0;
+
+    for (let i = 0; i < distances.length; i++) {
+      const d = distances[i];
+      const d0 = Math.abs(d - c0);
+      const d1 = Math.abs(d - c1);
+      const label = d0 <= d1 ? 0 : 1;
+      labels[i] = label;
+      if (label === 0) {
+        sum0 += d;
+        count0++;
+      } else {
+        sum1 += d;
+        count1++;
+      }
+    }
+
+    if (count0 === 0 || count1 === 0) return null;
+    c0 = sum0 / count0;
+    c1 = sum1 / count1;
+  }
+
+  const separation = Math.abs(c1 - c0) / (max - min);
+  return { labels, centers: [c0, c1], separation };
 }
 
 function meanDistanceToPoint(

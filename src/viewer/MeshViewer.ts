@@ -44,6 +44,7 @@ export class MeshViewer {
       transparent: true,
       opacity: 0.2,
       depthWrite: false,
+      depthTest: false,
     });
 
     this.ghostMaterial = new THREE.MeshBasicMaterial({
@@ -52,6 +53,7 @@ export class MeshViewer {
       transparent: true,
       opacity: 0.2,
       depthWrite: false,
+      depthTest: false,
     });
 
     this.wireframeMaterial = new THREE.LineBasicMaterial({
@@ -172,6 +174,7 @@ export class MeshViewer {
 
     const mesh = new THREE.Mesh(geometry, this.outerMaterial.clone());
     mesh.name = 'outer-mesh';
+    mesh.renderOrder = 10;
     this.outerMeshObject = mesh;
     this.originalGroup.add(mesh);
     this.reorderMeshes();
@@ -191,6 +194,7 @@ export class MeshViewer {
 
     const mesh = new THREE.Mesh(geometry, this.ghostMaterial.clone());
     mesh.name = 'ghost-mesh';
+    mesh.renderOrder = 10;
     this.ghostMeshObject = mesh;
     this.originalGroup.add(mesh);
     this.reorderMeshes();
