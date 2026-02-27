@@ -413,13 +413,15 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
   const heightRange = maxHeight - minHeight;
   // Cup axis points toward the pole (at height = maxHeight)
   // Rim is at height = minHeight
-  // We want to remove the `percent` closest to the rim (lowest heights)
+  // We want to AGGRESSIVELY remove the `percent` lowest vertices
   
-  // Threshold: keep only vertices whose height is above (minHeight + percent% of range)
-  const threshold = minHeight + (percent / 100) * heightRange;
+  // Use percentile-based trimming: sort heights and find the percentile threshold
+  const heightsSorted = Array.from(heights).sort((a, b) => a - b);
+  const trimIdx = Math.ceil((percent / 100) * heightsSorted.length);
+  const threshold = heightsSorted[Math.max(0, trimIdx - 1)];
 
-  // Filter triangles: keep only if ALL three vertices are above the threshold
-  // (i.e., away from the rim toward the pole)
+  // Filter triangles: keep only if all vertices are ABOVE the threshold
+  // This removes the lowest `percent`% of vertices from the mesh
   const keptFaces: number[] = [];
   
   for (let f = 0; f < faceCount; f++) {
@@ -427,7 +429,7 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
 
-    // Keep face only if ALL three vertices are above the threshold (away from rim)
+    // Keep face only if ALL three vertices are above the percentile threshold
     if (heights[i0] > threshold && heights[i1] > threshold && heights[i2] > threshold) {
       keptFaces.push(f);
     }
