@@ -231,6 +231,7 @@ export class App {
       const sep = p.state.separation!;
       this.meshViewer.displayInnerMesh(sep.inner);
       this.meshViewer.displayOuterMesh(sep.outer);
+      this.meshViewer.hideOriginal();
       this.status.setStatus(`Separated: ${sep.inner.faceCount} inner / ${sep.outer.faceCount} outer faces`);
       this.controls.markStepCompleted('separate');
     } catch (e) {
@@ -245,6 +246,7 @@ export class App {
       const trim = p.stepTrimRim(this.params.rimTrimPercent);
       this.meshViewer.displayInnerMesh(trim.mesh);
       this.meshViewer.displayGhostMesh(trim.rimMesh);
+      this.meshViewer.hideOriginal();
       this.status.setStatus(`Trimmed: ${(trim.rimPercentRemoved).toFixed(1)}% rim removed`);
       this.controls.markStepCompleted('trim');
     } catch (e) {

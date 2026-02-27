@@ -29,33 +29,31 @@ export class MeshViewer {
     this.originalGroup.name = 'loaded-mesh';
     this.sceneManager.scene.add(this.originalGroup);
 
-    // Neutral gray for initial display and inner wear surface
+    // Light neutral gray for initial display and inner wear surface
     this.innerMaterial = new THREE.MeshStandardMaterial({
-      color: 0x9a9a9a,
+      color: 0xc8c8c8,
       metalness: 0.1,
       roughness: 0.6,
       side: THREE.DoubleSide,
       transparent: false,
     });
 
-    // Super transparent for outer/trimmed areas
-    this.outerMaterial = new THREE.MeshBasicMaterial({
-      color: 0x9a9a9a,
+    // Super transparent for outer (non-inner) areas
+    this.outerMaterial = new THREE.MeshStandardMaterial({
+      color: 0xb0b0b0,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.003,
+      opacity: 0.06,
       depthWrite: false,
-      depthTest: false,
     });
 
-    // Super transparent ghost mesh for trimmed region
-    this.ghostMaterial = new THREE.MeshBasicMaterial({
-      color: 0x9a9a9a,
+    // Super transparent ghost mesh for trimmed rim region
+    this.ghostMaterial = new THREE.MeshStandardMaterial({
+      color: 0xb0b0b0,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.003,
+      opacity: 0.06,
       depthWrite: false,
-      depthTest: false,
     });
 
     this.wireframeMaterial = new THREE.LineBasicMaterial({
