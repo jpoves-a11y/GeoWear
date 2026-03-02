@@ -203,6 +203,14 @@ export class MeshViewer {
   /**
    * Show or hide inner mesh wireframe.
    */
+  /**
+   * Toggle visibility of outer mesh + ghost (trimmed rim) mesh.
+   */
+  public setContextVisible(visible: boolean): void {
+    if (this.outerMeshObject) this.outerMeshObject.visible = visible;
+    if (this.ghostMeshObject) this.ghostMeshObject.visible = visible;
+  }
+
   public setWireframe(visible: boolean): void {
     if (visible && this.innerMeshObject) {
       if (!this.wireframeObject) {

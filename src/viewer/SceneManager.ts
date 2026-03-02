@@ -131,13 +131,6 @@ export class SceneManager {
   }
 
   private setupHelpers(): void {
-    // Grid — light gray for light theme
-    const grid = new THREE.GridHelper(100, 50, 0xcccccc, 0xdddddd);
-    grid.position.y = -0.01;
-    (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.4;
-    this.scene.add(grid);
-
     // Axes
     const axes = new THREE.AxesHelper(10);
     (axes.material as THREE.Material).transparent = true;

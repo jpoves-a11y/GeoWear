@@ -89,7 +89,8 @@ export class AnnotationManager {
     });
 
     const label = new CSS2DObject(div);
-    label.position.copy(cluster.centroid).add(groupOffset);
+    // Position at the point of maximum deviation, not the centroid
+    label.position.copy(cluster.maxDeviationPoint).add(groupOffset);
     label.position.y += 0.3; // slight offset above surface
     return label;
   }

@@ -70,6 +70,7 @@ export class App {
       onToggleHeatmap: (v: boolean) => this.toggleHeatMap(v),
       onToggleAnnotations: (v: boolean) => this.annotations.setVisible(v),
       onToggleRefSphere: (v: boolean) => this.toggleRefSphere(v),
+      onToggleContext: (v: boolean) => this.meshViewer.setContextVisible(v),
       onExportPNG: () => this.exportPNG(),
       onExportCSV: () => this.exportCSV(),
       onExportSTL: () => this.exportSTL(),

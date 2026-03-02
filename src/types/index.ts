@@ -202,6 +202,7 @@ export interface AnalysisParams {
   showHeatmap: boolean;
   showAnnotations: boolean;
   showReferenceShape: boolean;
+  showContext: boolean;         // outer STL + trimmed rim visibility
   density: number;             // UHMWPE density g/cm³, default 0.935
 }
 
@@ -218,5 +219,6 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showHeatmap: true,
   showAnnotations: true,
   showReferenceShape: false,
+  showContext: true,
   density: 0.935,
 };

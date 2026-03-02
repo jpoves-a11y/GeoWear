@@ -20,6 +20,7 @@ export interface ControlCallbacks {
   onToggleHeatmap: (v: boolean) => void;
   onToggleAnnotations: (v: boolean) => void;
   onToggleRefSphere: (v: boolean) => void;
+  onToggleContext: (v: boolean) => void;
   onExportPNG: () => void;
   onExportCSV: () => void;
   onExportSTL: () => void;
@@ -148,6 +149,10 @@ export class ControlPanel {
     folder.add(this.params, 'showReferenceShape')
       .name('Reference Sphere')
       .onChange((v: boolean) => this.callbacks.onToggleRefSphere(v));
+
+    folder.add(this.params, 'showContext')
+      .name('Context Mesh')
+      .onChange((v: boolean) => this.callbacks.onToggleContext(v));
 
     const resultsBtn = { 'Show Results Panel': () => this.callbacks.onShowResults() };
     folder.add(resultsBtn, 'Show Results Panel');
