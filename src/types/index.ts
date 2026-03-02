@@ -191,7 +191,7 @@ export interface AppState {
 /** User-configurable parameters */
 export interface AnalysisParams {
   geodesicCount: number;       // default 360
-  rimTrimPercent: number;      // default 7
+  rimTrimPercent: number;      // default 15
   thresholdMicrons: number;    // default 1.0
   colorMapName: string;        // 'rainbow' | 'cooltowarm'
   colorRangeMin: number;       // μm
@@ -206,7 +206,7 @@ export interface AnalysisParams {
 
 export const DEFAULT_PARAMS: AnalysisParams = {
   geodesicCount: 360,
-  rimTrimPercent: 7,
+  rimTrimPercent: 15,
   thresholdMicrons: 1.0,
   colorMapName: 'rainbow',
   colorRangeMin: -50,

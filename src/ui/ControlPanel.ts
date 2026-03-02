@@ -72,8 +72,8 @@ export class ControlPanel {
     this.analysisButtons['separate'] = { '1. Detect Inner Face': () => this.callbacks.onStepSeparate() };
     this.buttonControllers['separate'] = steps.add(this.analysisButtons['separate'], '1. Detect Inner Face');
 
-    this.analysisButtons['trim'] = { '2. Trim Rim (7%)': () => this.callbacks.onStepTrim() };
-    this.buttonControllers['trim'] = steps.add(this.analysisButtons['trim'], '2. Trim Rim (7%)');
+    this.analysisButtons['trim'] = { '2. Trim Rim (15%)': () => this.callbacks.onStepTrim() };
+    this.buttonControllers['trim'] = steps.add(this.analysisButtons['trim'], '2. Trim Rim (15%)');
 
     this.analysisButtons['geodesics'] = { '3. Compute Geodesics': () => this.callbacks.onStepGeodesics() };
     this.buttonControllers['geodesics'] = steps.add(this.analysisButtons['geodesics'], '3. Compute Geodesics');
