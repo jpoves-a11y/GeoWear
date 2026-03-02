@@ -140,7 +140,7 @@ export class AnnotationManager {
   }
 
   /**
-   * Render the wear vector: line from deepest point to pole.
+   * Render the wear vector: arrow from pole to most-worn point.
    */
   renderWearVector(
     deepestPoint: THREE.Vector3,
@@ -151,8 +151,8 @@ export class AnnotationManager {
   ): void {
     this.clearWearVector();
 
-    const start = deepestPoint.clone().add(groupOffset);
-    const end = polePoint.clone().add(groupOffset);
+    const start = polePoint.clone().add(groupOffset);  // starts at pole
+    const end = deepestPoint.clone().add(groupOffset);  // ends at wear point
 
     // Dashed line
     const points = [start, end];
@@ -168,7 +168,7 @@ export class AnnotationManager {
     this.wearLine.name = 'wear-line';
     this.annotationGroup.add(this.wearLine);
 
-    // Arrow at deepest point
+    // Arrow from pole toward wear point
     const direction = end.clone().sub(start).normalize();
     const length = start.distanceTo(end);
     this.wearArrow = new THREE.ArrowHelper(

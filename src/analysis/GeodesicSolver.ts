@@ -140,9 +140,9 @@ export function computeVertexAngles(
  * Trace geodesic meridians from the pole outward to the rim.
  *
  * For each angular slice (0°-359°), we:
- * 1. Select vertices within a narrow angular band
- * 2. Sort them by geodesic distance from pole
- * 3. Extract the path as a sequence of points ordered by arc length
+ * 1. Find the farthest reachable vertex within the angular band (rim vertex)
+ * 2. Trace the Dijkstra predecessor chain from that rim vertex back to the pole
+ * 3. This produces a connected path along actual mesh edges (a true geodesic)
  */
 export function computeGeodesics(
   positions: Float32Array,
@@ -165,11 +165,6 @@ export function computeGeodesics(
   ];
   const angles = computeVertexAngles(positions, vertexCount, polePos, sphereCenter, cupAxis);
 
-  // Step 3: For each angular slice, extract geodesic path
-  const geodesics: Geodesic[] = [];
-  const angularStep = (2 * Math.PI) / geodesicCount;
-  const bandWidth = angularStep * 1.5; // overlap for smoother coverage
-
   // Compute sphere radius for deviation calculation
   let sumR = 0;
   for (let i = 0; i < vertexCount; i++) {
@@ -180,46 +175,89 @@ export function computeGeodesics(
   }
   const avgRadius = sumR / vertexCount;
 
+  // Step 3: For each angular slice, trace a geodesic meridian
+  const geodesics: Geodesic[] = [];
+  const angularStep = (2 * Math.PI) / geodesicCount;
+  const bandHalf = angularStep * 0.6; // narrow band to pick the rim target
+
   for (let g = 0; g < geodesicCount; g++) {
     const targetAngle = g * angularStep;
     const angleDeg = (g * 360) / geodesicCount;
 
-    // Find vertices within the angular band
-    const bandVertices: Array<{ idx: number; dist: number }> = [];
+    // Find the farthest vertex within the angular band (rim endpoint)
+    let rimVertex = -1;
+    let rimDist = -1;
+
     for (let i = 0; i < vertexCount; i++) {
-      if (distances[i] === Infinity) continue;
+      if (distances[i] === Infinity || i === poleVertex) continue;
 
       let angleDiff = Math.abs(angles[i] - targetAngle);
       if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
 
-      if (angleDiff <= bandWidth / 2) {
-        bandVertices.push({ idx: i, dist: distances[i] });
+      if (angleDiff <= bandHalf && distances[i] > rimDist) {
+        rimDist = distances[i];
+        rimVertex = i;
       }
     }
 
-    // Sort by distance from pole
-    bandVertices.sort((a, b) => a.dist - b.dist);
+    if (rimVertex < 0) {
+      // No vertex found in this band — emit empty geodesic
+      geodesics.push({
+        angle: angleDeg,
+        points: [],
+        totalLength: 0,
+        maxDeviation: 0,
+        minDeviation: 0,
+        anomalyCount: 0,
+        isRegular: true,
+      });
+      if (onProgress) onProgress((g + 1) / geodesicCount);
+      continue;
+    }
 
-    // Build the geodesic path by tracing predecessors for evenly-spaced samples
-    // Take every few vertices to avoid overly dense paths
-    const maxPoints = 500; // control density
-    const step = Math.max(1, Math.floor(bandVertices.length / maxPoints));
+    // Trace predecessor chain from rim → pole (reverse path)
+    const pathReversed: number[] = [];
+    let current = rimVertex;
+    const maxSteps = vertexCount; // safety limit
+    let steps = 0;
 
+    while (current !== -1 && steps < maxSteps) {
+      pathReversed.push(current);
+      if (current === poleVertex) break;
+      current = predecessors[current];
+      steps++;
+    }
+
+    // Reverse to get pole → rim order
+    const path = pathReversed.reverse();
+
+    // Sub-sample if too many vertices (large meshes can have very long paths)
+    const maxPoints = 500;
+    let sampledPath: number[];
+    if (path.length > maxPoints) {
+      const sampleStep = (path.length - 1) / (maxPoints - 1);
+      sampledPath = [];
+      for (let i = 0; i < maxPoints; i++) {
+        sampledPath.push(path[Math.round(i * sampleStep)]);
+      }
+    } else {
+      sampledPath = path;
+    }
+
+    // Build geodesic points
     const points: GeodesicPoint[] = [];
     let maxDev = -Infinity, minDev = Infinity;
 
-    for (let i = 0; i < bandVertices.length; i += step) {
-      const vi = bandVertices[i].idx;
+    for (const vi of sampledPath) {
       const px = positions[vi * 3];
       const py = positions[vi * 3 + 1];
       const pz = positions[vi * 3 + 2];
 
-      // Radial deviation from sphere
       const dx = px - sphereCenter[0];
       const dy = py - sphereCenter[1];
       const dz = pz - sphereCenter[2];
       const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      const deviation = (r - avgRadius) * 1000; // convert mm to μm
+      const deviation = (r - avgRadius) * 1000; // mm → μm
 
       if (deviation > maxDev) maxDev = deviation;
       if (deviation < minDev) minDev = deviation;
@@ -227,14 +265,14 @@ export function computeGeodesics(
       points.push({
         vertexIndex: vi,
         position: [px, py, pz],
-        arcLength: bandVertices[i].dist,
+        arcLength: distances[vi],
         deviation,
-        derivative: 0, // computed later
+        derivative: 0,
         secondDerivative: 0,
       });
     }
 
-    // Compute derivatives along the geodesic
+    // Compute first derivatives (central difference)
     for (let i = 1; i < points.length - 1; i++) {
       const ds = points[i + 1].arcLength - points[i - 1].arcLength;
       if (ds > 1e-12) {
@@ -263,7 +301,7 @@ export function computeGeodesics(
       }
     }
 
-    // Count anomalies (vertices exceeding threshold — threshold will be applied later)
+    // Count anomalies
     const anomalyCount = points.filter(p => Math.abs(p.deviation) > 1).length;
 
     geodesics.push({
