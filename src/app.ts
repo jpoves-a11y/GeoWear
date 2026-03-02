@@ -348,7 +348,12 @@ export class App {
   private async stepAnalyze(): Promise<void> {
     const p = this.ensurePipeline();
     try {
+      this.showLoading('Analyzing deviations...');
       this.status.setStatus('Analyzing deviations...');
+
+      // Yield so the loading overlay / spinner can paint
+      await new Promise<void>(r => setTimeout(r, 50));
+
       p.stepAnalyzeDeviations(this.params.thresholdMicrons);
 
       const offset = this.meshViewer.getGroupOffset();
@@ -375,8 +380,11 @@ export class App {
         this.geodesicRenderer.renderPole(p.state.polePosition, offset);
       }
 
-      // Volumes
+      // Volumes — yield before heavy computation
       this.status.setStatus('Computing defect volumes...');
+      this.updateLoadingText('Computing defect volumes...');
+      await new Promise<void>(r => setTimeout(r, 50));
+
       p.stepComputeVolumes(this.params.thresholdMicrons, this.params.density);
 
       if (p.state.results) {
@@ -402,9 +410,11 @@ export class App {
       }
 
       this.status.setStatus(`Analysis complete: ${p.state.results?.totalAnomalyPoints || 0} anomaly points`);
+      this.hideLoading();
       this.controls.markStepCompleted('analyze');
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
+      this.hideLoading();
     }
   }
 
@@ -576,5 +586,10 @@ export class App {
     const overlay = document.getElementById('loading-overlay');
     if (overlay) overlay.classList.add('hidden');
     this.status.hideLoading();
+  }
+
+  private updateLoadingText(text: string): void {
+    const txt = document.getElementById('loading-text');
+    if (txt) txt.textContent = text;
   }
 }
