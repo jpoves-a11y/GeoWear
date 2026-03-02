@@ -386,6 +386,7 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
   const faceCount = meshData.faceCount;
 
   // --- Detect rim using boundary edges ---
+  // Find all boundary edges (shared by only 1 face)
   const edgeFaceCount = new Map<string, number>();
   for (let f = 0; f < faceCount; f++) {
     for (let e = 0; e < 3; e++) {
@@ -395,13 +396,52 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
       edgeFaceCount.set(key, (edgeFaceCount.get(key) || 0) + 1);
     }
   }
-  const boundaryVerts = new Set<number>();
+
+  // Collect boundary edges as adjacency among boundary vertices
+  const boundaryAdj = new Map<number, Set<number>>();
   for (const [key, count] of edgeFaceCount) {
     if (count === 1) {
       const parts = key.split('_');
-      boundaryVerts.add(Number(parts[0]));
-      boundaryVerts.add(Number(parts[1]));
+      const va = Number(parts[0]);
+      const vb = Number(parts[1]);
+      if (!boundaryAdj.has(va)) boundaryAdj.set(va, new Set());
+      if (!boundaryAdj.has(vb)) boundaryAdj.set(vb, new Set());
+      boundaryAdj.get(va)!.add(vb);
+      boundaryAdj.get(vb)!.add(va);
     }
+  }
+
+  // Group boundary vertices into connected loops/chains
+  // The rim of the cup is the LARGEST connected boundary loop
+  const visitedBoundary = new Set<number>();
+  const boundaryLoops: Set<number>[] = [];
+  for (const startVert of boundaryAdj.keys()) {
+    if (visitedBoundary.has(startVert)) continue;
+    const loop = new Set<number>();
+    const queue = [startVert];
+    visitedBoundary.add(startVert);
+    while (queue.length > 0) {
+      const v = queue.pop()!;
+      loop.add(v);
+      const neighbors = boundaryAdj.get(v);
+      if (neighbors) {
+        for (const nb of neighbors) {
+          if (!visitedBoundary.has(nb)) {
+            visitedBoundary.add(nb);
+            queue.push(nb);
+          }
+        }
+      }
+    }
+    boundaryLoops.push(loop);
+  }
+
+  // Use only the largest boundary loop (the actual rim) as seed
+  let boundaryVerts = new Set<number>();
+  if (boundaryLoops.length > 0) {
+    boundaryLoops.sort((a, b) => b.size - a.size);
+    boundaryVerts = boundaryLoops[0];
+    console.log(`[trimRim] Found ${boundaryLoops.length} boundary loops. Largest (rim): ${boundaryVerts.size} verts. Others: ${boundaryLoops.slice(1).map(l => l.size).join(', ') || 'none'}`);
   }
 
   // --- Build adjacency for BFS geodesic distance ---
