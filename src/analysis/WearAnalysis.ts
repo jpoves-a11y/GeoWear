@@ -354,6 +354,15 @@ export class WearAnalysisPipeline {
 
     this.state.curvatureThreshold = curvatureThreshold;
 
+    console.log(`[Geodesics] curvatureThreshold=${curvatureThreshold.toFixed(6)}, ` +
+      `medianRms=${medianRms.toFixed(6)}, regular=${regularCount}, irregular=${this.state.geodesics.length - regularCount}`);
+
+    // Update pole position to the common average pole (set by computeGeodesics)
+    if (this.state.geodesics.length > 0 && this.state.geodesics[0].points.length > 0) {
+      const avgPole = this.state.geodesics[0].points[0].position;
+      this.state.polePosition = new THREE.Vector3(avgPole[0], avgPole[1], avgPole[2]);
+    }
+
     this.progress('geodesics', 0.8, `Classified: ${regularCount} regular, ${this.state.geodesics.length - regularCount} irregular geodesics`);
 
     return this.state.geodesics;

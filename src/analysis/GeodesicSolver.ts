@@ -458,5 +458,39 @@ export function computeGeodesics(
     }
   }
 
+  // --- Common pole: compute average of all geodesics' first (pole-end) points ---
+  // This ensures every geodesic converges to the exact same point.
+  let avgPolX = 0, avgPolY = 0, avgPolZ = 0;
+  let poleContribCount = 0;
+  for (const geo of geodesics) {
+    if (geo.points.length > 0) {
+      avgPolX += geo.points[0].position[0];
+      avgPolY += geo.points[0].position[1];
+      avgPolZ += geo.points[0].position[2];
+      poleContribCount++;
+    }
+  }
+  if (poleContribCount > 0) {
+    avgPolX /= poleContribCount;
+    avgPolY /= poleContribCount;
+    avgPolZ /= poleContribCount;
+    // Replace every geodesic's first point with the common average pole
+    for (const geo of geodesics) {
+      if (geo.points.length > 0) {
+        geo.points[0].position = [avgPolX, avgPolY, avgPolZ];
+        // Recalculate arc length for first segment
+        if (geo.points.length > 1) {
+          const [nx, ny, nz] = geo.points[1].position;
+          const ddx = nx - avgPolX, ddy = ny - avgPolY, ddz = nz - avgPolZ;
+          geo.points[1].arcLength = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+        }
+        // Deviation at the common pole
+        const dx = avgPolX - cx, dy = avgPolY - cy, dz = avgPolZ - cz;
+        const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        geo.points[0].deviation = (r - avgRadius) * 1000;
+      }
+    }
+  }
+
   return geodesics;
 }
