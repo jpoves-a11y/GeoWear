@@ -13,8 +13,8 @@ import { separateFaces, trimRim } from './MeshProcessor';
 import { smoothMesh } from './MeshSmoother';
 import { fitSphereRobust } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
-import { MeshGraph } from '../math/MeshGraph';
-import { computeGeodesics, findPoleVertex } from './GeodesicSolver';
+import { MeshGraph, PriorityQueue } from '../math/MeshGraph';
+import { computeGeodesics } from './GeodesicSolver';
 import { analyzeDeviations, computeVertexDeviations } from './DeviationAnalyzer';
 import { clusterAnomalies, findPrimaryWearZone } from './AnomalyRegistry';
 import { computeDefectVolumes, computeWearVector } from './VolumeComputer';
@@ -205,34 +205,108 @@ export class WearAnalysisPipeline {
 
     // Use smoothed mesh for geodesic computation if available
     const mesh = this.state.smoothedMesh || this.state.workingMesh;
-    const cupAxis = this.state.separation.cupAxis;
-
-    // Compute centroid as reference center (no sphere fit needed yet)
-    let cx = 0, cy = 0, cz = 0;
-    for (let i = 0; i < mesh.positions.length; i += 3) {
-      cx += mesh.positions[i];
-      cy += mesh.positions[i + 1];
-      cz += mesh.positions[i + 2];
-    }
-    cx /= mesh.vertexCount;
-    cy /= mesh.vertexCount;
-    cz /= mesh.vertexCount;
-    const referenceCenter: [number, number, number] = [cx, cy, cz];
-    this.state.referenceCenter = referenceCenter;
 
     // Build mesh graph
-    this.progress('geodesics', 0.3, 'Building mesh adjacency graph...');
+    this.progress('geodesics', 0.25, 'Building mesh adjacency graph...');
     this.state.graph = MeshGraph.build(mesh.positions, mesh.indices, mesh.vertexCount);
 
-    // Find pole using centroid as reference
-    this.state.poleVertex = findPoleVertex(
-      mesh.positions, mesh.vertexCount, referenceCenter, cupAxis
-    );
+    // --- Robust pole detection via geodesic distance from rim boundary ---
+    this.progress('geodesics', 0.3, 'Detecting pole vertex...');
+
+    // 1. Find boundary edges → rim vertices
+    const fc = mesh.indices.length / 3;
+    const edgeFaceMap = new Map<string, number>();
+    for (let f = 0; f < fc; f++) {
+      for (let e = 0; e < 3; e++) {
+        const a = mesh.indices[f * 3 + e];
+        const b = mesh.indices[f * 3 + ((e + 1) % 3)];
+        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+        edgeFaceMap.set(key, (edgeFaceMap.get(key) || 0) + 1);
+      }
+    }
+    const rimVerts = new Set<number>();
+    for (const [key, count] of edgeFaceMap) {
+      if (count === 1) {
+        const parts = key.split('_');
+        rimVerts.add(Number(parts[0]));
+        rimVerts.add(Number(parts[1]));
+      }
+    }
+
+    // 2. Multi-source Dijkstra from all rim vertices
+    const graph = this.state.graph;
+    const distFromRim = new Float64Array(mesh.vertexCount);
+    distFromRim.fill(Infinity);
+    const visitedRim = new Uint8Array(mesh.vertexCount);
+    const pq = new PriorityQueue();
+    for (const rv of rimVerts) {
+      distFromRim[rv] = 0;
+      pq.push(rv, 0);
+    }
+    while (pq.size > 0) {
+      const item = pq.pop()!;
+      const u = item.vertex;
+      if (visitedRim[u]) continue;
+      visitedRim[u] = 1;
+      const start = graph.offsets[u];
+      const end = graph.offsets[u + 1];
+      for (let i = start; i < end; i++) {
+        const v = graph.neighbors[i];
+        if (visitedRim[v]) continue;
+        const newDist = distFromRim[u] + graph.weights[i];
+        if (newDist < distFromRim[v]) {
+          distFromRim[v] = newDist;
+          pq.push(v, newDist);
+        }
+      }
+    }
+
+    // 3. Pole = vertex with maximum geodesic distance from rim
+    let maxGeoDist = 0;
+    this.state.poleVertex = 0;
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      if (distFromRim[i] > maxGeoDist && distFromRim[i] !== Infinity) {
+        maxGeoDist = distFromRim[i];
+        this.state.poleVertex = i;
+      }
+    }
     this.state.polePosition = new THREE.Vector3(
       mesh.positions[this.state.poleVertex * 3],
       mesh.positions[this.state.poleVertex * 3 + 1],
       mesh.positions[this.state.poleVertex * 3 + 2],
     );
+
+    // 4. Recompute cup axis: rim centroid → pole direction
+    let rimCx = 0, rimCy = 0, rimCz = 0;
+    for (const v of rimVerts) {
+      rimCx += mesh.positions[v * 3];
+      rimCy += mesh.positions[v * 3 + 1];
+      rimCz += mesh.positions[v * 3 + 2];
+    }
+    if (rimVerts.size > 0) {
+      rimCx /= rimVerts.size;
+      rimCy /= rimVerts.size;
+      rimCz /= rimVerts.size;
+    }
+
+    let axX = mesh.positions[this.state.poleVertex * 3] - rimCx;
+    let axY = mesh.positions[this.state.poleVertex * 3 + 1] - rimCy;
+    let axZ = mesh.positions[this.state.poleVertex * 3 + 2] - rimCz;
+    const axLen = Math.sqrt(axX * axX + axY * axY + axZ * axZ);
+    if (axLen > 1e-12) { axX /= axLen; axY /= axLen; axZ /= axLen; }
+    else { axX = 0; axY = 1; axZ = 0; }
+
+    const cupAxis: [number, number, number] = [axX, axY, axZ];
+    // Update separation so downstream steps (volumes, wear vector) use corrected axis
+    this.state.separation!.cupAxis = cupAxis;
+
+    // Use rim centroid as reference center — it approximates the sphere center
+    // much better than the mesh centroid for a hemispherical cup
+    const referenceCenter: [number, number, number] = [rimCx, rimCy, rimCz];
+    this.state.referenceCenter = referenceCenter;
+
+    console.log(`[Pole] vertex=${this.state.poleVertex}, maxGeoDist=${maxGeoDist.toFixed(2)}, ` +
+      `rimVerts=${rimVerts.size}, axis=[${cupAxis.map(v => v.toFixed(4)).join(', ')}]`);
 
     // Compute geodesics (with yield for UI updates)
     this.state.geodesics = await new Promise<Geodesic[]>((resolve) => {
@@ -246,7 +320,7 @@ export class WearAnalysisPipeline {
           cupAxis,
           geodesicCount,
           (progress: number) => {
-            this.progress('geodesics', 0.3 + progress * 0.45, `Computing geodesic ${Math.round(progress * geodesicCount)}/${geodesicCount}`);
+            this.progress('geodesics', 0.35 + progress * 0.4, `Computing geodesic ${Math.round(progress * geodesicCount)}/${geodesicCount}`);
           },
           mesh.indices
         );
