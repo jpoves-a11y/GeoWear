@@ -174,9 +174,17 @@ function signedTetraVolume(
 
 /**
  * Compute the wear vector from the deepest point to the pole.
+ *
+ * The "deepest point" is chosen among all dip-cluster vertices by
+ * combining deviation magnitude with proximity to the cup bottom
+ * (pole). This avoids picking rim-adjacent points that may have
+ * large deviation but are not representative of true wear.
+ *
+ * Score = |deviation| × (1 − rimFraction²)
+ * where rimFraction = distance-to-pole / maxDistanceToPole.
  */
 export function computeWearVector(
-  primaryWearZone: AnomalyCluster | null,
+  dipClusters: AnomalyCluster[],
   polePosition: THREE.Vector3,
   sphereCenter: THREE.Vector3,
   cupAxis: THREE.Vector3
@@ -188,11 +196,37 @@ export function computeWearVector(
   distance: number;
   maxDepth: number;
 } | null {
-  if (!primaryWearZone) return null;
+  if (dipClusters.length === 0) return null;
 
-  const deepest = primaryWearZone.maxDeviationPoint.clone();
+  // Gather all dip points from all dip clusters
   const pole = polePosition.clone();
+  let maxDistToPole = 0;
+  const candidates: { pos: THREE.Vector3; dev: number; distToPole: number }[] = [];
 
+  for (const cluster of dipClusters) {
+    for (const p of cluster.points) {
+      const d = p.position.distanceTo(pole);
+      if (d > maxDistToPole) maxDistToPole = d;
+      candidates.push({ pos: p.position.clone(), dev: p.deviation, distToPole: d });
+    }
+  }
+
+  if (candidates.length === 0 || maxDistToPole < 1e-9) return null;
+
+  // Score: higher is better.  depth × proximity-to-bottom
+  let bestScore = -Infinity;
+  let bestCandidate = candidates[0];
+  for (const c of candidates) {
+    const rimFrac = c.distToPole / maxDistToPole; // 0 at pole, 1 at rim
+    const proximityWeight = 1 - rimFrac * rimFrac; // quadratic fall-off
+    const score = Math.abs(c.dev) * proximityWeight;
+    if (score > bestScore) {
+      bestScore = score;
+      bestCandidate = c;
+    }
+  }
+
+  const deepest = bestCandidate.pos;
   const direction = deepest.clone().sub(pole).normalize();
   const distance = deepest.distanceTo(pole);
 
@@ -207,6 +241,6 @@ export function computeWearVector(
     direction,
     angle,
     distance,
-    maxDepth: Math.abs(primaryWearZone.minDeviation),
+    maxDepth: Math.abs(bestCandidate.dev),
   };
 }

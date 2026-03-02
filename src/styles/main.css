@@ -313,6 +313,27 @@ html, body {
   font-family: var(--font-mono);
 }
 
+.legend-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.legend-info-bump {
+  color: var(--bump-color);
+  font-weight: 600;
+}
+
+.legend-info-dip {
+  color: var(--dip-color);
+  font-weight: 600;
+}
+
 /* ---------- View Hint ---------- */
 .view-hint {
   position: absolute;
@@ -477,6 +498,16 @@ html, body {
 
 .annotation-label.pole {
   border-left: 3px solid var(--accent-primary);
+}
+
+.annotation-label .cluster-type {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 1px;
 }
 
 /* ---------- Tooltip ---------- */

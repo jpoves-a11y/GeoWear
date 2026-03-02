@@ -60,16 +60,19 @@ export class AnnotationManager {
     const div = document.createElement('div');
     div.className = `annotation-label ${cluster.type}`;
 
-    const icon = cluster.type === 'bump' ? '▲' : '▼';
-    const devStr = cluster.type === 'bump'
+    const isBump = cluster.type === 'bump';
+    const icon = isBump ? '▲' : '▼';
+    const typeLabel = isBump ? 'Bump' : 'Wear';
+    const devStr = isBump
       ? `+${cluster.maxDeviation.toFixed(1)}`
       : `${cluster.minDeviation.toFixed(1)}`;
 
     div.innerHTML = `
+      <span class="cluster-type">${typeLabel}</span>
       <span>${icon} ${devStr} μm</span>
     `;
 
-    div.title = `${cluster.type === 'bump' ? 'Bump' : 'Wear'} Region #${cluster.id + 1}\n` +
+    div.title = `${typeLabel} Region #${cluster.id + 1}\n` +
       `Max deviation: ${devStr} μm\n` +
       `Area: ${cluster.area.toFixed(2)} mm²\n` +
       `Volume: ${cluster.volume.toFixed(4)} mm³\n` +
