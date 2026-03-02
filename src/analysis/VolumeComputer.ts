@@ -175,13 +175,10 @@ function signedTetraVolume(
 /**
  * Compute the wear vector from the deepest point to the pole.
  *
- * The "deepest point" is chosen among all dip-cluster vertices by
- * combining deviation magnitude with proximity to the cup bottom
- * (pole). This avoids picking rim-adjacent points that may have
- * large deviation but are not representative of true wear.
- *
- * Score = |deviation| × (1 − rimFraction²)
- * where rimFraction = distance-to-pole / maxDistanceToPole.
+ * The "deepest point" is chosen among all dip-cluster vertices that
+ * fall within the 70% of the active surface closest to the cup bottom
+ * (pole). Among those candidates, the vertex with the largest
+ * absolute deviation (deepest wear) is selected.
  */
 export function computeWearVector(
   dipClusters: AnomalyCluster[],
@@ -198,30 +195,29 @@ export function computeWearVector(
 } | null {
   if (dipClusters.length === 0) return null;
 
-  // Gather all dip points from all dip clusters
   const pole = polePosition.clone();
-  let maxDistToPole = 0;
   const candidates: { pos: THREE.Vector3; dev: number; distToPole: number }[] = [];
 
   for (const cluster of dipClusters) {
     for (const p of cluster.points) {
       const d = p.position.distanceTo(pole);
-      if (d > maxDistToPole) maxDistToPole = d;
       candidates.push({ pos: p.position.clone(), dev: p.deviation, distToPole: d });
     }
   }
 
-  if (candidates.length === 0 || maxDistToPole < 1e-9) return null;
+  if (candidates.length === 0) return null;
 
-  // Score: higher is better.  depth × proximity-to-bottom
-  let bestScore = -Infinity;
-  let bestCandidate = candidates[0];
-  for (const c of candidates) {
-    const rimFrac = c.distToPole / maxDistToPole; // 0 at pole, 1 at rim
-    const proximityWeight = 1 - rimFrac * rimFrac; // quadratic fall-off
-    const score = Math.abs(c.dev) * proximityWeight;
-    if (score > bestScore) {
-      bestScore = score;
+  // Sort by distance to pole (ascending = closest first)
+  candidates.sort((a, b) => a.distToPole - b.distToPole);
+
+  // Keep only the 70% closest to the pole (cup bottom)
+  const cutoff = Math.max(1, Math.ceil(candidates.length * 0.7));
+  const filtered = candidates.slice(0, cutoff);
+
+  // Among the filtered set, find the vertex with deepest dip
+  let bestCandidate = filtered[0];
+  for (const c of filtered) {
+    if (Math.abs(c.dev) > Math.abs(bestCandidate.dev)) {
       bestCandidate = c;
     }
   }

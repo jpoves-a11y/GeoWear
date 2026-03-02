@@ -32,6 +32,7 @@ export interface PipelineState {
   poleVertex: number;
   polePosition: THREE.Vector3 | null;
   geodesics: Geodesic[];
+  curvatureThreshold: number;
   vertexDeviations: Float32Array | null;
   results: AnalysisResults | null;
 }
@@ -50,6 +51,7 @@ export class WearAnalysisPipeline {
     poleVertex: 0,
     polePosition: null,
     geodesics: [],
+    curvatureThreshold: 0,
     vertexDeviations: null,
     results: null,
   };
@@ -271,6 +273,8 @@ export class WearAnalysisPipeline {
       this.state.geodesics[i].isRegular = rmsValues[i] <= curvatureThreshold;
       if (this.state.geodesics[i].isRegular) regularCount++;
     }
+
+    this.state.curvatureThreshold = curvatureThreshold;
 
     this.progress('geodesics', 0.8, `Classified: ${regularCount} regular, ${this.state.geodesics.length - regularCount} irregular geodesics`);
 

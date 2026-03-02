@@ -291,8 +291,8 @@ export class App {
       if (p.state.polePosition) {
         this.geodesicRenderer.renderPole(p.state.polePosition, offset);
       }
-      // Render geodesics with regularity coloring
-      this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset);
+      // Render geodesics with per-point irregularity coloring
+      this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset, true, p.state.curvatureThreshold || 0);
       this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
 
       // Make inner face slightly transparent so geodesics show on top
@@ -333,7 +333,7 @@ export class App {
 
       // Geodesic lines (use correct offset)
       if (p.state.geodesics.length > 0) {
-        this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset);
+        this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset, true, p.state.curvatureThreshold || 0);
         this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
       }
       if (p.state.polePosition) {
@@ -412,7 +412,7 @@ export class App {
 
     // Geodesics
     if (p.state.geodesics.length > 0) {
-      this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset);
+      this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset, true, p.state.curvatureThreshold || 0);
       this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
     }
 

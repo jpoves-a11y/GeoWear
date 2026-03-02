@@ -1,6 +1,7 @@
 // ============================================================
 // GeoWear — GeodesicRenderer
 // 3D visualization of geodesic meridians on the mesh
+// Per-point irregularity coloring + markers at irregular peaks
 // ============================================================
 
 import * as THREE from 'three';
@@ -13,6 +14,12 @@ export class GeodesicRenderer {
   private geodesicLines: THREE.Line[] = [];
   private lineRegularity: boolean[] = [];
   private poleMarker: THREE.Mesh | null = null;
+  private irregularityMarkers: THREE.Mesh[] = [];
+  private curvatureThreshold = 0;
+
+  // Shared geometries / materials for irregularity markers
+  private static markerGeo: THREE.SphereGeometry | null = null;
+  private static markerMat: THREE.MeshBasicMaterial | null = null;
 
   constructor(sceneManager: SceneManager) {
     this.sceneManager = sceneManager;
@@ -22,40 +29,106 @@ export class GeodesicRenderer {
   }
 
   /**
-   * Render all geodesics as colored lines on the mesh.
+   * Render all geodesics with per-point irregularity coloring.
+   *
+   * Each vertex of every geodesic is colored individually:
+   *   - Regular points → green
+   *   - Irregular points (|secondDerivative| > curvatureThreshold) → orange-red
+   *     with intensity proportional to severity
+   *
+   * Additionally, red sphere markers are placed at local peaks
+   * of irregular segments.
    */
   renderGeodesics(
     geodesics: Geodesic[],
     groupOffset: THREE.Vector3,
-    visible: boolean = true
+    visible: boolean = true,
+    curvatureThreshold: number = 0
   ): void {
     this.clear();
+    this.curvatureThreshold = curvatureThreshold;
+
+    // Lazily create shared marker geometry / material
+    if (!GeodesicRenderer.markerGeo) {
+      GeodesicRenderer.markerGeo = new THREE.SphereGeometry(0.18, 8, 8);
+    }
+    if (!GeodesicRenderer.markerMat) {
+      GeodesicRenderer.markerMat = new THREE.MeshBasicMaterial({
+        color: 0xff2222,
+        transparent: true,
+        opacity: 0.85,
+      });
+    }
 
     for (const geo of geodesics) {
       if (geo.points.length < 2) continue;
 
-      // Build geometry for this geodesic
       const linePoints: THREE.Vector3[] = [];
       const lineColors: number[] = [];
 
-      for (const point of geo.points) {
-        linePoints.push(
-          new THREE.Vector3(
-            point.position[0] + groupOffset.x,
-            point.position[1] + groupOffset.y,
-            point.position[2] + groupOffset.z,
-          )
+      // ----- per-point coloring -----
+      for (const pt of geo.points) {
+        const pos = new THREE.Vector3(
+          pt.position[0] + groupOffset.x,
+          pt.position[1] + groupOffset.y,
+          pt.position[2] + groupOffset.z,
         );
+        linePoints.push(pos);
 
-        // Color: regular geodesics = green, irregular = red/orange
+        const absD2 = Math.abs(pt.secondDerivative);
+        const isIrregular = curvatureThreshold > 0 && absD2 > curvatureThreshold;
+
         let r: number, g: number, b: number;
-        if (geo.isRegular) {
-          r = 0.1; g = 0.75; b = 0.2;
+        if (isIrregular) {
+          // severity ∈ [0,1] clamped
+          const severity = Math.min((absD2 - curvatureThreshold) / curvatureThreshold, 1);
+          // Gradient from orange (low severity) to red (high severity)
+          r = 0.95;
+          g = 0.35 * (1 - severity);
+          b = 0.05;
         } else {
-          // Irregular: orange-red
-          r = 0.95; g = 0.3; b = 0.1;
+          r = 0.1; g = 0.75; b = 0.2;
         }
         lineColors.push(r, g, b);
+      }
+
+      // ----- irregularity peak markers -----
+      // Walk through points and find local-max |d2| within each irregular run
+      if (curvatureThreshold > 0) {
+        let inIrregular = false;
+        let peakIdx = -1;
+        let peakVal = 0;
+
+        for (let i = 0; i < geo.points.length; i++) {
+          const absD2 = Math.abs(geo.points[i].secondDerivative);
+          const isIrr = absD2 > curvatureThreshold;
+
+          if (isIrr) {
+            if (!inIrregular) {
+              inIrregular = true;
+              peakIdx = i;
+              peakVal = absD2;
+            } else if (absD2 > peakVal) {
+              peakIdx = i;
+              peakVal = absD2;
+            }
+          }
+
+          // End of irregular run (or end of array)
+          if (inIrregular && (!isIrr || i === geo.points.length - 1)) {
+            // place marker at peakIdx
+            const marker = new THREE.Mesh(
+              GeodesicRenderer.markerGeo!,
+              GeodesicRenderer.markerMat!,
+            );
+            marker.position.copy(linePoints[peakIdx]);
+            marker.name = 'irregularity-marker';
+            this.irregularityMarkers.push(marker);
+            this.geodesicGroup.add(marker);
+
+            if (!isIrr) inIrregular = false;
+          }
+        }
       }
 
       const geometry = new THREE.BufferGeometry().setFromPoints(linePoints);
@@ -137,6 +210,7 @@ export class GeodesicRenderer {
 
   /**
    * Set display mode: 'all', 'regular', 'irregular', or 'none'.
+   * Also controls irregularity marker visibility.
    */
   setDisplayMode(mode: string): void {
     if (mode === 'none') {
@@ -144,6 +218,9 @@ export class GeodesicRenderer {
       return;
     }
     this.geodesicGroup.visible = true;
+
+    const showIrregular = mode === 'all' || mode === 'irregular';
+
     for (let i = 0; i < this.geodesicLines.length; i++) {
       const isRegular = this.lineRegularity[i] ?? true;
       switch (mode) {
@@ -158,6 +235,12 @@ export class GeodesicRenderer {
           break;
       }
     }
+
+    // Show/hide irregularity markers based on mode
+    for (const marker of this.irregularityMarkers) {
+      marker.visible = showIrregular;
+    }
+
     if (this.poleMarker) {
       this.poleMarker.visible = true;
     }
@@ -166,7 +249,6 @@ export class GeodesicRenderer {
   /**
    * Clear all geodesic visualizations.
    */
-
   clear(): void {
     for (const line of this.geodesicLines) {
       line.geometry.dispose();
@@ -174,6 +256,9 @@ export class GeodesicRenderer {
     }
     this.geodesicLines = [];
     this.lineRegularity = [];
+
+    // Markers share geometry/material — don't dispose shared resources
+    this.irregularityMarkers = [];
 
     while (this.geodesicGroup.children.length > 0) {
       const child = this.geodesicGroup.children[0];
