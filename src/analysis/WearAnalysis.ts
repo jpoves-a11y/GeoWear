@@ -13,11 +13,64 @@ import { separateFaces, trimRim } from './MeshProcessor';
 import { smoothMesh } from './MeshSmoother';
 import { fitSphereRobust } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
-import { MeshGraph, PriorityQueue } from '../math/MeshGraph';
+import { MeshGraph } from '../math/MeshGraph';
 import { computeGeodesics } from './GeodesicSolver';
 import { analyzeDeviations, computeVertexDeviations } from './DeviationAnalyzer';
 import { clusterAnomalies, findPrimaryWearZone } from './AnomalyRegistry';
 import { computeDefectVolumes, computeWearVector } from './VolumeComputer';
+
+/**
+ * Compute the eigenvector corresponding to the smallest eigenvalue
+ * of a 3×3 symmetric matrix [[cxx,cxy,cxz],[cxy,cyy,cyz],[cxz,cyz,czz]].
+ * Uses power iteration on the two largest eigenvectors, then cross product.
+ */
+function smallestEigenvector3x3(
+  cxx: number, cxy: number, cxz: number,
+  cyy: number, cyz: number, czz: number
+): [number, number, number] {
+  // Power iteration → largest eigenvector
+  let v1x = 1, v1y = 0, v1z = 0;
+  for (let iter = 0; iter < 80; iter++) {
+    const nx = cxx * v1x + cxy * v1y + cxz * v1z;
+    const ny = cxy * v1x + cyy * v1y + cyz * v1z;
+    const nz = cxz * v1x + cyz * v1y + czz * v1z;
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (len < 1e-15) break;
+    v1x = nx / len; v1y = ny / len; v1z = nz / len;
+  }
+  const ev1 = cxx * v1x * v1x + 2 * cxy * v1x * v1y + 2 * cxz * v1x * v1z
+            + cyy * v1y * v1y + 2 * cyz * v1y * v1z + czz * v1z * v1z;
+
+  // Deflate → second largest eigenvector
+  const d_cxx = cxx - ev1 * v1x * v1x;
+  const d_cxy = cxy - ev1 * v1x * v1y;
+  const d_cxz = cxz - ev1 * v1x * v1z;
+  const d_cyy = cyy - ev1 * v1y * v1y;
+  const d_cyz = cyz - ev1 * v1y * v1z;
+  const d_czz = czz - ev1 * v1z * v1z;
+
+  let v2x = 0, v2y = 1, v2z = 0;
+  // Pick initial vector not collinear with v1
+  const dot01 = Math.abs(v1y);
+  if (dot01 > 0.9) { v2x = 0; v2y = 0; v2z = 1; }
+  for (let iter = 0; iter < 80; iter++) {
+    const nx = d_cxx * v2x + d_cxy * v2y + d_cxz * v2z;
+    const ny = d_cxy * v2x + d_cyy * v2y + d_cyz * v2z;
+    const nz = d_cxz * v2x + d_cyz * v2y + d_czz * v2z;
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (len < 1e-15) break;
+    v2x = nx / len; v2y = ny / len; v2z = nz / len;
+  }
+
+  // Smallest eigenvector = cross(v1, v2)
+  let sx = v1y * v2z - v1z * v2y;
+  let sy = v1z * v2x - v1x * v2z;
+  let sz = v1x * v2y - v1y * v2x;
+  const sLen = Math.sqrt(sx * sx + sy * sy + sz * sz);
+  if (sLen > 1e-12) { sx /= sLen; sy /= sLen; sz /= sLen; }
+  else { sx = 0; sy = 1; sz = 0; }
+  return [sx, sy, sz];
+}
 
 export interface PipelineState {
   originalMesh: MeshData | null;
@@ -233,50 +286,7 @@ export class WearAnalysisPipeline {
       }
     }
 
-    // 2. Multi-source Dijkstra from all rim vertices
-    const graph = this.state.graph;
-    const distFromRim = new Float64Array(mesh.vertexCount);
-    distFromRim.fill(Infinity);
-    const visitedRim = new Uint8Array(mesh.vertexCount);
-    const pq = new PriorityQueue();
-    for (const rv of rimVerts) {
-      distFromRim[rv] = 0;
-      pq.push(rv, 0);
-    }
-    while (pq.size > 0) {
-      const item = pq.pop()!;
-      const u = item.vertex;
-      if (visitedRim[u]) continue;
-      visitedRim[u] = 1;
-      const start = graph.offsets[u];
-      const end = graph.offsets[u + 1];
-      for (let i = start; i < end; i++) {
-        const v = graph.neighbors[i];
-        if (visitedRim[v]) continue;
-        const newDist = distFromRim[u] + graph.weights[i];
-        if (newDist < distFromRim[v]) {
-          distFromRim[v] = newDist;
-          pq.push(v, newDist);
-        }
-      }
-    }
-
-    // 3. Pole = vertex with maximum geodesic distance from rim
-    let maxGeoDist = 0;
-    this.state.poleVertex = 0;
-    for (let i = 0; i < mesh.vertexCount; i++) {
-      if (distFromRim[i] > maxGeoDist && distFromRim[i] !== Infinity) {
-        maxGeoDist = distFromRim[i];
-        this.state.poleVertex = i;
-      }
-    }
-    this.state.polePosition = new THREE.Vector3(
-      mesh.positions[this.state.poleVertex * 3],
-      mesh.positions[this.state.poleVertex * 3 + 1],
-      mesh.positions[this.state.poleVertex * 3 + 2],
-    );
-
-    // 4. Recompute cup axis: rim centroid → pole direction
+    // 2. Compute rim centroid
     let rimCx = 0, rimCy = 0, rimCz = 0;
     for (const v of rimVerts) {
       rimCx += mesh.positions[v * 3];
@@ -289,6 +299,63 @@ export class WearAnalysisPipeline {
       rimCz /= rimVerts.size;
     }
 
+    // 3. Fit a plane to rim vertices using PCA (normal = smallest eigenvector)
+    //    The rim plane passes through rimCentroid with normal = planeN.
+    //    Covariance matrix of rim positions relative to centroid:
+    let cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
+    for (const v of rimVerts) {
+      const dx = mesh.positions[v * 3]     - rimCx;
+      const dy = mesh.positions[v * 3 + 1] - rimCy;
+      const dz = mesh.positions[v * 3 + 2] - rimCz;
+      cxx += dx * dx; cxy += dx * dy; cxz += dx * dz;
+      cyy += dy * dy; cyz += dy * dz; czz += dz * dz;
+    }
+    // Find eigenvector of smallest eigenvalue via power iteration on inverse
+    // (equivalent to finding eigenvector of largest eigenvalue of adjugate)
+    // Use simplified approach: try all 3 axis candidates, pick the one with
+    // smallest Rayleigh quotient  v^T C v / v^T v
+    // Actually, use iterative method for the smallest eigenvector:
+    // Compute the normal via cross products of two principal spread directions
+    // Simpler robust method: SVD-like via Jacobi or direct analytic for 3×3
+    // We'll use the analytic approach for the 3×3 symmetric matrix.
+    const planeN = smallestEigenvector3x3(cxx, cxy, cxz, cyy, cyz, czz);
+
+    // 4. Pole = vertex with maximum perpendicular distance from rim plane
+    //    distance = dot(pos - rimCentroid, planeN), take absolute value
+    //    (the deepest point is the one farthest from the plane, on the interior side)
+    let maxPlaneDist = 0;
+    let poleSide = 1; // track which side the majority of mesh is on
+    this.state.poleVertex = 0;
+
+    // First pass: determine which side of the plane the interior is on
+    let sumSignedDist = 0;
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      const dx = mesh.positions[i * 3]     - rimCx;
+      const dy = mesh.positions[i * 3 + 1] - rimCy;
+      const dz = mesh.positions[i * 3 + 2] - rimCz;
+      sumSignedDist += dx * planeN[0] + dy * planeN[1] + dz * planeN[2];
+    }
+    poleSide = sumSignedDist >= 0 ? 1 : -1;
+
+    // Second pass: find vertex with maximum signed distance on the interior side
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      const dx = mesh.positions[i * 3]     - rimCx;
+      const dy = mesh.positions[i * 3 + 1] - rimCy;
+      const dz = mesh.positions[i * 3 + 2] - rimCz;
+      const signedDist = (dx * planeN[0] + dy * planeN[1] + dz * planeN[2]) * poleSide;
+      if (signedDist > maxPlaneDist) {
+        maxPlaneDist = signedDist;
+        this.state.poleVertex = i;
+      }
+    }
+
+    this.state.polePosition = new THREE.Vector3(
+      mesh.positions[this.state.poleVertex * 3],
+      mesh.positions[this.state.poleVertex * 3 + 1],
+      mesh.positions[this.state.poleVertex * 3 + 2],
+    );
+
+    // 5. Cup axis = normalized direction from rim centroid → pole
     let axX = mesh.positions[this.state.poleVertex * 3] - rimCx;
     let axY = mesh.positions[this.state.poleVertex * 3 + 1] - rimCy;
     let axZ = mesh.positions[this.state.poleVertex * 3 + 2] - rimCz;
@@ -297,16 +364,15 @@ export class WearAnalysisPipeline {
     else { axX = 0; axY = 1; axZ = 0; }
 
     const cupAxis: [number, number, number] = [axX, axY, axZ];
-    // Update separation so downstream steps (volumes, wear vector) use corrected axis
     this.state.separation!.cupAxis = cupAxis;
 
-    // Use rim centroid as reference center — it approximates the sphere center
-    // much better than the mesh centroid for a hemispherical cup
+    // Reference center = rim centroid (≈ sphere center for hemispherical cup)
     const referenceCenter: [number, number, number] = [rimCx, rimCy, rimCz];
     this.state.referenceCenter = referenceCenter;
 
-    console.log(`[Pole] vertex=${this.state.poleVertex}, maxGeoDist=${maxGeoDist.toFixed(2)}, ` +
-      `rimVerts=${rimVerts.size}, axis=[${cupAxis.map(v => v.toFixed(4)).join(', ')}]`);
+    console.log(`[Pole] vertex=${this.state.poleVertex}, maxPlaneDist=${maxPlaneDist.toFixed(4)}, ` +
+      `rimVerts=${rimVerts.size}, planeN=[${planeN.map((v: number) => v.toFixed(4)).join(', ')}], ` +
+      `axis=[${cupAxis.map(v => v.toFixed(4)).join(', ')}]`);
 
     // Compute geodesics (with yield for UI updates)
     this.state.geodesics = await new Promise<Geodesic[]>((resolve) => {
