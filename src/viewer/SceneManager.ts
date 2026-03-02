@@ -90,16 +90,16 @@ export class SceneManager {
   }
 
   private setupLighting(): void {
-    // Ambient base
-    const ambientLight = new THREE.AmbientLight(0x404050, 0.6);
+    // Bright ambient base for light theme
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
     this.scene.add(ambientLight);
 
-    // Hemisphere light for natural top/bottom contrast
-    const hemiLight = new THREE.HemisphereLight(0xc8dff5, 0x3a3a5c, 0.7);
+    // Hemisphere light — bright sky/ground for even illumination
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xd0d0d0, 0.6);
     hemiLight.position.set(0, 50, 0);
     this.scene.add(hemiLight);
 
-    // Main directional light (simulating clinical lamp)
+    // Main directional light
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
     dirLight.position.set(20, 40, 30);
     dirLight.castShadow = true;
@@ -115,22 +115,22 @@ export class SceneManager {
     this.scene.add(dirLight);
 
     // Fill light (opposite side, softer)
-    const fillLight = new THREE.DirectionalLight(0x8899bb, 0.4);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
     fillLight.position.set(-15, 20, -20);
     this.scene.add(fillLight);
 
     // Rim light (back)
-    const rimLight = new THREE.DirectionalLight(0x445566, 0.3);
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.2);
     rimLight.position.set(0, -10, -30);
     this.scene.add(rimLight);
   }
 
   private setupHelpers(): void {
-    // Grid
-    const grid = new THREE.GridHelper(100, 50, 0x222233, 0x181825);
+    // Grid — light gray for light theme
+    const grid = new THREE.GridHelper(100, 50, 0xcccccc, 0xdddddd);
     grid.position.y = -0.01;
     (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.3;
+    (grid.material as THREE.Material).opacity = 0.4;
     this.scene.add(grid);
 
     // Axes
