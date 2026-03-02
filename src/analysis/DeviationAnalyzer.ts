@@ -78,15 +78,19 @@ export function analyzeDeviations(
 
   // Extract anomaly points from geodesics
   const anomalyPoints: AnomalyPoint[] = [];
-  const processedVertices = new Set<number>();
+  // Spatial deduplication: geodesic points are mesh-plane intersections
+  // (vertexIndex is always -1), so deduplicate by rounded position key
+  const seenPositions = new Set<string>();
 
   for (const geodesic of geodesics) {
     for (const point of geodesic.points) {
-      if (processedVertices.has(point.vertexIndex)) continue;
+      // Round to 4 decimal places (0.1 μm precision) for dedup key
+      const key = `${point.position[0].toFixed(4)}_${point.position[1].toFixed(4)}_${point.position[2].toFixed(4)}`;
+      if (seenPositions.has(key)) continue;
 
       const absDev = Math.abs(point.deviation);
       if (absDev > thresholdMicrons) {
-        processedVertices.add(point.vertexIndex);
+        seenPositions.add(key);
 
         const type: AnomalyType = point.deviation > 0 ? 'bump' : 'dip';
 
