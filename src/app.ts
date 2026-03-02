@@ -66,7 +66,7 @@ export class App {
       onStepGeodesics: () => this.stepGeodesics(),
       onStepAnalyze: () => this.stepAnalyze(),
       onToggleWireframe: (v: boolean) => this.meshViewer.setWireframe(v),
-      onToggleGeodesics: (v: boolean) => this.geodesicRenderer.setVisible(v),
+      onGeodesicDisplayMode: (mode: string) => this.geodesicRenderer.setDisplayMode(mode),
       onToggleHeatmap: (v: boolean) => this.toggleHeatMap(v),
       onToggleAnnotations: (v: boolean) => this.annotations.setVisible(v),
       onToggleRefSphere: (v: boolean) => this.toggleRefSphere(v),
@@ -287,6 +287,7 @@ export class App {
       }
       // Render geodesics with regularity coloring
       this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset);
+      this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
 
       // Make inner face slightly transparent so geodesics show on top
       this.meshViewer.setInnerTransparency(0.55);
@@ -393,6 +394,7 @@ export class App {
     // Geodesics
     if (p.state.geodesics.length > 0) {
       this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset);
+      this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
       this.meshViewer.setInnerTransparency(0.55);
     }
 

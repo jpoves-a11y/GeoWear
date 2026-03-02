@@ -385,34 +385,7 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
   const vertexCount = meshData.vertexCount;
   const faceCount = meshData.faceCount;
 
-  // Compute centroid of the mesh
-  let cx = 0, cy = 0, cz = 0;
-  for (let i = 0; i < positions.length; i += 3) {
-    cx += positions[i];
-    cy += positions[i + 1];
-    cz += positions[i + 2];
-  }
-  cx /= vertexCount;
-  cy /= vertexCount;
-  cz /= vertexCount;
-
-  // Project each vertex onto the cup axis to get "height"
-  const heights = new Float32Array(vertexCount);
-  let minHeight = Infinity, maxHeight = -Infinity;
-
-  for (let i = 0; i < vertexCount; i++) {
-    const dx = positions[i * 3] - cx;
-    const dy = positions[i * 3 + 1] - cy;
-    const dz = positions[i * 3 + 2] - cz;
-    const h = dx * cupAxis[0] + dy * cupAxis[1] + dz * cupAxis[2];
-    heights[i] = h;
-    if (h < minHeight) minHeight = h;
-    if (h > maxHeight) maxHeight = h;
-  }
-
-  const heightRange = maxHeight - minHeight;
-
-  // --- Detect rim using boundary edges (handles angled cups) ---
+  // --- Detect rim using boundary edges ---
   // Boundary edges belong to exactly one triangle; their vertices form the rim.
   const edgeFaceCount = new Map<string, number>();
   for (let f = 0; f < faceCount; f++) {
@@ -432,58 +405,74 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
     }
   }
 
-  // --- Use Euclidean distance from boundary instead of axis projection ---
-  // This handles angled/tilted cups much better than simple axis height
-  const distFromBoundary = new Float32Array(vertexCount);
-  distFromBoundary.fill(Infinity);
-
-  // For each vertex, compute minimum distance to any boundary vertex
-  const boundaryPositions: Array<[number, number, number]> = [];
-  for (const bv of boundaryVerts) {
-    boundaryPositions.push([positions[bv * 3], positions[bv * 3 + 1], positions[bv * 3 + 2]]);
+  // Compute mesh centroid
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < positions.length; i += 3) {
+    cx += positions[i];
+    cy += positions[i + 1];
+    cz += positions[i + 2];
   }
+  cx /= vertexCount;
+  cy /= vertexCount;
+  cz /= vertexCount;
 
-  // For efficiency with large meshes, subsample boundary to max 200 points
-  const maxBoundary = 200;
-  const sampledBoundary = boundaryPositions.length > maxBoundary
-    ? boundaryPositions.filter((_, i) => i % Math.ceil(boundaryPositions.length / maxBoundary) === 0)
-    : boundaryPositions;
+  // Determine trim axis from boundary:
+  // Vector from rim center → mesh center naturally points toward the pole
+  let ax: number, ay: number, az: number;
+  let refX: number, refY: number, refZ: number;
 
-  for (let i = 0; i < vertexCount; i++) {
-    const vx = positions[i * 3];
-    const vy = positions[i * 3 + 1];
-    const vz = positions[i * 3 + 2];
-    let minDist = Infinity;
-    for (const bp of sampledBoundary) {
-      const dx = vx - bp[0];
-      const dy = vy - bp[1];
-      const dz = vz - bp[2];
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (d < minDist) minDist = d;
+  if (boundaryVerts.size > 10) {
+    // Compute centroid of boundary (rim) vertices
+    let rimCx = 0, rimCy = 0, rimCz = 0;
+    for (const bv of boundaryVerts) {
+      rimCx += positions[bv * 3];
+      rimCy += positions[bv * 3 + 1];
+      rimCz += positions[bv * 3 + 2];
     }
-    distFromBoundary[i] = minDist;
+    rimCx /= boundaryVerts.size;
+    rimCy /= boundaryVerts.size;
+    rimCz /= boundaryVerts.size;
+
+    ax = cx - rimCx;
+    ay = cy - rimCy;
+    az = cz - rimCz;
+    const axLen = Math.sqrt(ax * ax + ay * ay + az * az);
+    if (axLen > 1e-10) { ax /= axLen; ay /= axLen; az /= axLen; }
+    else { ax = cupAxis[0]; ay = cupAxis[1]; az = cupAxis[2]; }
+
+    // Project from rim center so boundary vertices have height ≈ 0
+    refX = rimCx; refY = rimCy; refZ = rimCz;
+  } else {
+    // Fallback to provided cupAxis when no boundary detected
+    ax = cupAxis[0]; ay = cupAxis[1]; az = cupAxis[2];
+    refX = cx; refY = cy; refZ = cz;
   }
 
-  // Find max distance (pole will be farthest from boundary)
-  let maxDist = 0;
+  // Project each vertex onto trim axis
+  const heights = new Float32Array(vertexCount);
+  let minHeight = Infinity, maxHeight = -Infinity;
   for (let i = 0; i < vertexCount; i++) {
-    if (distFromBoundary[i] > maxDist) maxDist = distFromBoundary[i];
+    const dx = positions[i * 3] - refX;
+    const dy = positions[i * 3 + 1] - refY;
+    const dz = positions[i * 3 + 2] - refZ;
+    const h = dx * ax + dy * ay + dz * az;
+    heights[i] = h;
+    if (h < minHeight) minHeight = h;
+    if (h > maxHeight) maxHeight = h;
   }
 
-  // Threshold: remove vertices whose distance from boundary < percent% of max distance
-  const distThreshold = (percent / 100) * maxDist;
+  const heightRange = maxHeight - minHeight;
 
-  // Filter triangles: keep faces where ALL vertices are far enough from boundary
+  // Threshold: remove percent% of height range from the rim end (low heights)
+  const threshold = minHeight + (percent / 100) * heightRange;
+
+  // Filter: keep faces where ALL vertices are above threshold (away from rim)
   const keptFaces: number[] = [];
-  
   for (let f = 0; f < faceCount; f++) {
     const i0 = indices[f * 3];
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
-
-    if (distFromBoundary[i0] > distThreshold &&
-        distFromBoundary[i1] > distThreshold &&
-        distFromBoundary[i2] > distThreshold) {
+    if (heights[i0] > threshold && heights[i1] > threshold && heights[i2] > threshold) {
       keptFaces.push(f);
     }
   }

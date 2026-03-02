@@ -197,7 +197,7 @@ export interface AnalysisParams {
   colorRangeMin: number;       // μm
   colorRangeMax: number;       // μm
   showWireframe: boolean;
-  showGeodesics: boolean;
+  geodesicDisplayMode: string;   // 'all' | 'regular' | 'irregular' | 'none'
   showHeatmap: boolean;
   showAnnotations: boolean;
   showReferenceShape: boolean;
@@ -212,7 +212,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   colorRangeMin: -50,
   colorRangeMax: 50,
   showWireframe: false,
-  showGeodesics: true,
+  geodesicDisplayMode: 'all',
   showHeatmap: true,
   showAnnotations: true,
   showReferenceShape: false,

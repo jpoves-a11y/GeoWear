@@ -16,7 +16,7 @@ export interface ControlCallbacks {
   onStepGeodesics: () => void;
   onStepAnalyze: () => void;
   onToggleWireframe: (v: boolean) => void;
-  onToggleGeodesics: (v: boolean) => void;
+  onGeodesicDisplayMode: (mode: string) => void;
   onToggleHeatmap: (v: boolean) => void;
   onToggleAnnotations: (v: boolean) => void;
   onToggleRefSphere: (v: boolean) => void;
@@ -129,9 +129,9 @@ export class ControlPanel {
       .name('Wireframe')
       .onChange((v: boolean) => this.callbacks.onToggleWireframe(v));
 
-    folder.add(this.params, 'showGeodesics')
+    folder.add(this.params, 'geodesicDisplayMode', ['all', 'regular', 'irregular', 'none'])
       .name('Geodesics')
-      .onChange((v: boolean) => this.callbacks.onToggleGeodesics(v));
+      .onChange((v: string) => this.callbacks.onGeodesicDisplayMode(v));
 
     folder.add(this.params, 'showHeatmap')
       .name('Heat Map')

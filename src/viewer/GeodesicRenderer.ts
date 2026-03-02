@@ -11,6 +11,7 @@ export class GeodesicRenderer {
   private sceneManager: SceneManager;
   private geodesicGroup: THREE.Group;
   private geodesicLines: THREE.Line[] = [];
+  private lineRegularity: boolean[] = [];
   private poleMarker: THREE.Mesh | null = null;
 
   constructor(sceneManager: SceneManager) {
@@ -71,6 +72,7 @@ export class GeodesicRenderer {
       line.name = `geodesic-${geo.angle}`;
       line.visible = visible;
       this.geodesicLines.push(line);
+      this.lineRegularity.push(geo.isRegular);
       this.geodesicGroup.add(line);
     }
   }
@@ -134,14 +136,44 @@ export class GeodesicRenderer {
   }
 
   /**
+   * Set display mode: 'all', 'regular', 'irregular', or 'none'.
+   */
+  setDisplayMode(mode: string): void {
+    if (mode === 'none') {
+      this.geodesicGroup.visible = false;
+      return;
+    }
+    this.geodesicGroup.visible = true;
+    for (let i = 0; i < this.geodesicLines.length; i++) {
+      const isRegular = this.lineRegularity[i] ?? true;
+      switch (mode) {
+        case 'regular':
+          this.geodesicLines[i].visible = isRegular;
+          break;
+        case 'irregular':
+          this.geodesicLines[i].visible = !isRegular;
+          break;
+        default: // 'all'
+          this.geodesicLines[i].visible = true;
+          break;
+      }
+    }
+    if (this.poleMarker) {
+      this.poleMarker.visible = true;
+    }
+  }
+
+  /**
    * Clear all geodesic visualizations.
    */
+
   clear(): void {
     for (const line of this.geodesicLines) {
       line.geometry.dispose();
       (line.material as THREE.Material).dispose();
     }
     this.geodesicLines = [];
+    this.lineRegularity = [];
 
     while (this.geodesicGroup.children.length > 0) {
       const child = this.geodesicGroup.children[0];
