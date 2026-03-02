@@ -29,9 +29,9 @@ export class MeshViewer {
     this.originalGroup.name = 'loaded-mesh';
     this.sceneManager.scene.add(this.originalGroup);
 
-    // Light neutral gray for initial display and inner wear surface
+    // Very light gray for initial display and inner wear surface
     this.innerMaterial = new THREE.MeshStandardMaterial({
-      color: 0xe5e5e5,
+      color: 0xeeeeee,
       metalness: 0.1,
       roughness: 0.6,
       side: THREE.DoubleSide,
@@ -234,7 +234,7 @@ export class MeshViewer {
       opacity: 0.05,
     });
     this.referenceSphereObject = new THREE.Mesh(sphereGeo, sphereMat);
-    this.referenceSphereObject.position.copy(center).sub(this.getGroupOffset());
+    this.referenceSphereObject.position.copy(center);
     this.referenceSphereObject.name = 'reference-sphere';
     this.referenceSphereObject.visible = visible;
     this.originalGroup.add(this.referenceSphereObject);
@@ -304,9 +304,9 @@ export class MeshViewer {
     return this.originalGroup;
   }
 
-  /** Get the position offset applied to the group */
+  /** Get the scene offset to apply to objects outside originalGroup */
   public getGroupOffset(): THREE.Vector3 {
-    return this.originalGroup.position.clone().negate();
+    return this.originalGroup.position.clone();
   }
 
   /**
