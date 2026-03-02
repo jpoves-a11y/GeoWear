@@ -192,6 +192,7 @@ export interface AppState {
 export interface AnalysisParams {
   geodesicCount: number;       // default 360
   rimTrimPercent: number;      // default 15
+  smoothingIterations: number; // Taubin smoothing iterations, default 3
   thresholdMicrons: number;    // default 1.0
   colorMapName: string;        // 'rainbow' | 'cooltowarm'
   colorRangeMin: number;       // μm
@@ -207,6 +208,7 @@ export interface AnalysisParams {
 export const DEFAULT_PARAMS: AnalysisParams = {
   geodesicCount: 360,
   rimTrimPercent: 15,
+  smoothingIterations: 3,
   thresholdMicrons: 1.0,
   colorMapName: 'rainbow',
   colorRangeMin: -50,

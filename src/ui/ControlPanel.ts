@@ -99,6 +99,10 @@ export class ControlPanel {
       .name('Rim Trim %')
       .onChange(() => this.callbacks.onParamsChange(this.params));
 
+    folder.add(this.params, 'smoothingIterations', 0, 10, 1)
+      .name('Smoothing Iter.')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+
     folder.add(this.params, 'thresholdMicrons', 0.1, 10, 0.1)
       .name('Threshold (μm)')
       .onChange(() => this.callbacks.onParamsChange(this.params));

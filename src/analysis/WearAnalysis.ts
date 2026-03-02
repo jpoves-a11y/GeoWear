@@ -10,6 +10,7 @@ import type {
   AnalysisParams
 } from '../types';
 import { separateFaces, trimRim } from './MeshProcessor';
+import { smoothMesh } from './MeshSmoother';
 import { fitSphereRobust } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
 import { MeshGraph } from '../math/MeshGraph';
@@ -23,6 +24,7 @@ export interface PipelineState {
   separation: SeparationResult | null;
   trimResult: TrimResult | null;
   workingMesh: MeshData | null;
+  smoothedMesh: MeshData | null;   // smoothed version for geodesics/sphere
   graph: MeshGraph | null;
   referenceCenter: [number, number, number] | null; // centroid used before sphere fit
   sphereFit: SphereFitResult | null;
@@ -40,6 +42,7 @@ export class WearAnalysisPipeline {
     separation: null,
     trimResult: null,
     workingMesh: null,
+    smoothedMesh: null,
     graph: null,
     referenceCenter: null,
     sphereFit: null,
@@ -77,6 +80,10 @@ export class WearAnalysisPipeline {
     // Step 2: Trim rim
     this.progress('trimming', 0.1, `Trimming rim (${params.rimTrimPercent}%)...`);
     this.stepTrimRim(params.rimTrimPercent);
+
+    // Step 2b: Smooth mesh for geodesic/sphere analysis
+    this.progress('smoothing', 0.15, `Smoothing mesh (${params.smoothingIterations} iterations)...`);
+    this.stepSmooth(params.smoothingIterations);
 
     // Step 3: Build graph and compute geodesics (before sphere fit)
     this.progress('geodesics', 0.2, `Computing ${params.geodesicCount} geodesics...`);
@@ -124,11 +131,25 @@ export class WearAnalysisPipeline {
       rimPercent
     );
     this.state.workingMesh = this.state.trimResult.mesh;
+    this.state.smoothedMesh = null; // invalidate
     return this.state.trimResult;
+  }
+
+  /**
+   * Smooth the working mesh using Taubin (λ|μ) smoothing.
+   * The smoothed mesh is used for geodesic computation and sphere fitting,
+   * while the original (unsmoothed) working mesh is kept for display/heat map.
+   */
+  stepSmooth(iterations: number = 3): void {
+    if (!this.state.workingMesh) throw new Error('No working mesh available');
+    this.state.smoothedMesh = smoothMesh(this.state.workingMesh, iterations);
   }
 
   stepFitSphere(): SphereFitResult {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
+
+    // Use smoothed mesh for sphere fitting (same mesh used for geodesics)
+    const mesh = this.state.smoothedMesh || this.state.workingMesh;
 
     // If geodesics are available, fit using only regular geodesic vertices
     if (this.state.geodesics.length > 0) {
@@ -144,7 +165,6 @@ export class WearAnalysisPipeline {
       // If we have enough regular vertices, fit with those only
       if (regularVertexSet.size >= 20) {
         const regularPositions = new Float32Array(regularVertexSet.size * 3);
-        const mesh = this.state.workingMesh;
         let idx = 0;
         for (const vi of regularVertexSet) {
           regularPositions[idx++] = mesh.positions[vi * 3];
@@ -158,8 +178,8 @@ export class WearAnalysisPipeline {
 
     // Fallback: fit with all vertices
     this.state.sphereFit = fitSphereRobust(
-      this.state.workingMesh.positions,
-      this.state.workingMesh.vertexCount
+      mesh.positions,
+      mesh.vertexCount
     );
     return this.state.sphereFit;
   }
@@ -178,7 +198,8 @@ export class WearAnalysisPipeline {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.separation) throw new Error('Run separation first');
 
-    const mesh = this.state.workingMesh;
+    // Use smoothed mesh for geodesic computation if available
+    const mesh = this.state.smoothedMesh || this.state.workingMesh;
     const cupAxis = this.state.separation.cupAxis;
 
     // Compute centroid as reference center (no sphere fit needed yet)

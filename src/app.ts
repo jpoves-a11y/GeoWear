@@ -275,8 +275,13 @@ export class App {
   private async stepGeodesics(): Promise<void> {
     const p = this.ensurePipeline();
     try {
+      this.status.setStatus('Smoothing mesh...');
+      this.showLoading('Smoothing + computing geodesics...');
+
+      // Smooth before geodesics so tessellation noise is filtered out
+      p.stepSmooth(this.params.smoothingIterations);
+
       this.status.setStatus('Computing geodesics...');
-      this.showLoading('Computing geodesics...');
       await p.stepComputeGeodesicsAsync(this.params.geodesicCount);
 
       // Use the mesh group offset so geodesics align with the displayed mesh
