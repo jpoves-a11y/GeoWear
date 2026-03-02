@@ -115,6 +115,9 @@ export class MeshViewer {
     mesh.name = 'original-mesh';
     this.originalGroup.add(mesh);
 
+    // Reset group position before centering (critical for second+ loads)
+    this.originalGroup.position.set(0, 0, 0);
+
     // Auto-center and focus camera
     const box = new THREE.Box3().setFromBufferAttribute(geometry.attributes.position as THREE.BufferAttribute);
     const center = box.getCenter(new THREE.Vector3());

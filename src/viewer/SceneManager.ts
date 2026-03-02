@@ -4,6 +4,7 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { Timer } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 
@@ -16,7 +17,7 @@ export class SceneManager {
 
   private canvas: HTMLCanvasElement;
   private container: HTMLElement;
-  private clock = new THREE.Clock();
+  private timer = new Timer();
   private frameCallbacks: Array<(dt: number) => void> = [];
   private animationId: number = 0;
   private fpsElement: HTMLElement | null;
@@ -50,7 +51,7 @@ export class SceneManager {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.sortObjects = true; // Enable renderOrder sorting for transparency
@@ -158,14 +159,22 @@ export class SceneManager {
     let distance = maxDim / (2 * Math.tan(fov / 2));
     distance *= 1.5; // margin
 
+    // Adapt camera planes and controls to mesh size
+    this.camera.near = Math.max(distance * 0.001, 0.001);
+    this.camera.far = distance * 20;
+    this.camera.updateProjectionMatrix();
+
+    this.controls.minDistance = distance * 0.1;
+    this.controls.maxDistance = distance * 10;
     this.controls.target.copy(center);
     this.camera.position.copy(
       center.clone().add(new THREE.Vector3(0, distance * 0.5, distance))
     );
     this.controls.update();
     
-    // Adjust fog
-    this.scene.fog = new THREE.FogExp2(0x0d1117, 0.5 / distance);
+    // Adjust fog — color must match scene background for correct blending
+    const bgColor = (this.scene.background as THREE.Color)?.getHex?.() ?? 0xe8e8e8;
+    this.scene.fog = new THREE.FogExp2(bgColor, 0.5 / distance);
   }
 
   /** Get a screenshot as data URL */
@@ -186,7 +195,8 @@ export class SceneManager {
   private animate = (): void => {
     this.animationId = requestAnimationFrame(this.animate);
 
-    const dt = this.clock.getDelta();
+    this.timer.update();
+    const dt = this.timer.getDelta();
 
     this.controls.update();
 
