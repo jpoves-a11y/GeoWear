@@ -182,13 +182,14 @@ function buildCluster(id: number, type: AnomalyType, points: AnomalyPoint[]): An
 }
 
 /**
- * Find the primary wear zone (largest dip cluster by absolute deviation magnitude).
+ * Find the primary wear zone (largest bump cluster by max deviation magnitude).
+ * Positive deviation = outside reference sphere = material worn away.
  */
 export function findPrimaryWearZone(clusters: AnomalyCluster[]): AnomalyCluster | null {
-  const dipClusters = clusters.filter(c => c.type === 'dip');
-  if (dipClusters.length === 0) return null;
+  const bumpClusters = clusters.filter(c => c.type === 'bump');
+  if (bumpClusters.length === 0) return null;
 
-  // Sort by: largest absolute minDeviation (deepest dip)
-  dipClusters.sort((a, b) => a.minDeviation - b.minDeviation);
-  return dipClusters[0];
+  // Sort by: largest maxDeviation (most wear)
+  bumpClusters.sort((a, b) => b.maxDeviation - a.maxDeviation);
+  return bumpClusters[0];
 }

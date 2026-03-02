@@ -74,9 +74,9 @@ export class ResultsPanel {
     this.addMetric(section, 'Geodesics', results.geodesicCount.toString());
     this.addMetric(section, 'Anomaly Points', results.totalAnomalyPoints.toLocaleString(), 
       results.totalAnomalyPoints > 0 ? 'warning' : 'success');
-    this.addMetric(section, 'Bump Clusters', results.bumpClusters.length.toString());
-    this.addMetric(section, 'Dip Clusters', results.dipClusters.length.toString(),
-      results.dipClusters.length > 0 ? 'danger' : 'success');
+    this.addMetric(section, 'Wear Clusters', results.bumpClusters.length.toString(),
+      results.bumpClusters.length > 0 ? 'danger' : 'success');
+    this.addMetric(section, 'Dip Clusters', results.dipClusters.length.toString());
     this.addMetric(section, 'Processing Time',
       `${(results.processingTimeMs / 1000).toFixed(1)}`, 's');
 
@@ -125,14 +125,14 @@ export class ResultsPanel {
       if (c.minDeviation < maxDip) maxDip = c.minDeviation;
     }
 
-    this.addMetric(section, 'Max Bump', `+${maxBump.toFixed(2)}`, 'μm',
+    this.addMetric(section, 'Max Wear', `+${maxBump.toFixed(2)}`, 'μm',
       maxBump > 10 ? 'danger' : maxBump > 5 ? 'warning' : 'success');
     this.addMetric(section, 'Max Dip', `${maxDip.toFixed(2)}`, 'μm',
       Math.abs(maxDip) > 10 ? 'danger' : Math.abs(maxDip) > 5 ? 'warning' : 'success');
 
     if (results.primaryWearZone) {
       const pwz = results.primaryWearZone;
-      this.addMetric(section, 'Primary Wear Depth', `${pwz.minDeviation.toFixed(2)}`, 'μm', 'danger');
+      this.addMetric(section, 'Primary Wear Depth', `+${pwz.maxDeviation.toFixed(2)}`, 'μm', 'danger');
       this.addMetric(section, 'Primary Wear Area', pwz.area.toFixed(2), 'mm²');
     }
 
@@ -142,21 +142,21 @@ export class ResultsPanel {
   private addVolumeSection(results: AnalysisResults): void {
     const section = this.createSection('Volume Analysis');
 
-    this.addMetric(section, 'Bump Volume (excess)',
+    this.addMetric(section, 'Wear Volume',
       results.totalBumpVolume.toFixed(4), 'mm³',
-      results.totalBumpVolume > 0.1 ? 'warning' : 'success');
-    this.addMetric(section, 'Dip Volume (missing)',
+      results.totalBumpVolume > 0.1 ? 'danger' : 'success');
+    this.addMetric(section, 'Dip Volume',
       results.totalDipVolume.toFixed(4), 'mm³',
-      results.totalDipVolume > 0.1 ? 'danger' : 'success');
+      results.totalDipVolume > 0.1 ? 'warning' : 'success');
     this.addMetric(section, 'Total Defect Volume',
       (results.totalBumpVolume + results.totalDipVolume).toFixed(4), 'mm³');
 
     // Mass estimates
     const density = 0.935; // g/cm³ = mg/mm³
-    this.addMetric(section, 'Bump Mass',
-      (results.totalBumpVolume * density).toFixed(4), 'mg');
-    this.addMetric(section, 'Dip Mass (wear)',
-      (results.totalDipVolume * density).toFixed(4), 'mg', 'danger');
+    this.addMetric(section, 'Wear Mass',
+      (results.totalBumpVolume * density).toFixed(4), 'mg', 'danger');
+    this.addMetric(section, 'Dip Mass',
+      (results.totalDipVolume * density).toFixed(4), 'mg');
 
     this.container.appendChild(section);
   }

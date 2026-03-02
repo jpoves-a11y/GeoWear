@@ -90,7 +90,7 @@ export function computeDefectVolumes(
       signedTetraVolume(s0, v1, v2, s1) +
       signedTetraVolume(s0, s1, v2, s2);
 
-    // Sign convention: positive = mesh is outside sphere (bump), negative = inside (dip)
+    // Sign convention: positive = mesh is outside sphere (wear), negative = inside (dip)
     if (avgDev > 0) {
       totalBumpVolume += Math.abs(vol);
     } else {
@@ -173,15 +173,16 @@ function signedTetraVolume(
 }
 
 /**
- * Compute the wear vector from the deepest point to the pole.
+ * Compute the wear vector from the most-worn point to the pole.
  *
- * The "deepest point" is chosen among all dip-cluster vertices that
- * fall within the 70% of the active surface closest to the cup bottom
- * (pole). Among those candidates, the vertex with the largest
- * absolute deviation (deepest wear) is selected.
+ * The "most-worn point" is chosen among all bump-cluster vertices
+ * (positive deviation = outside reference sphere = material worn away)
+ * that fall within the 70% of the active surface closest to the cup
+ * bottom (pole). Among those candidates, the vertex with the largest
+ * deviation (most wear) is selected.
  */
 export function computeWearVector(
-  dipClusters: AnomalyCluster[],
+  wearClusters: AnomalyCluster[],
   polePosition: THREE.Vector3,
   sphereCenter: THREE.Vector3,
   cupAxis: THREE.Vector3
@@ -193,12 +194,12 @@ export function computeWearVector(
   distance: number;
   maxDepth: number;
 } | null {
-  if (dipClusters.length === 0) return null;
+  if (wearClusters.length === 0) return null;
 
   const pole = polePosition.clone();
   const candidates: { pos: THREE.Vector3; dev: number; distToPole: number }[] = [];
 
-  for (const cluster of dipClusters) {
+  for (const cluster of wearClusters) {
     for (const p of cluster.points) {
       const d = p.position.distanceTo(pole);
       candidates.push({ pos: p.position.clone(), dev: p.deviation, distToPole: d });
@@ -214,10 +215,10 @@ export function computeWearVector(
   const cutoff = Math.max(1, Math.ceil(candidates.length * 0.7));
   const filtered = candidates.slice(0, cutoff);
 
-  // Among the filtered set, find the vertex with deepest dip
+  // Among the filtered set, find the vertex with most wear (highest positive deviation)
   let bestCandidate = filtered[0];
   for (const c of filtered) {
-    if (Math.abs(c.dev) > Math.abs(bestCandidate.dev)) {
+    if (c.dev > bestCandidate.dev) {
       bestCandidate = c;
     }
   }
@@ -237,6 +238,6 @@ export function computeWearVector(
     direction,
     angle,
     distance,
-    maxDepth: Math.abs(bestCandidate.dev),
+    maxDepth: bestCandidate.dev,
   };
 }

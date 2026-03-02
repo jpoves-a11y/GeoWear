@@ -36,7 +36,7 @@ export function computeVertexDeviations(
     const dy = positions[i * 3 + 1] - sphereCenter.y;
     const dz = positions[i * 3 + 2] - sphereCenter.z;
     const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    // Positive = bump (outside sphere), Negative = dip (inside sphere / wear)
+    // Positive = wear (outside sphere, material worn away), Negative = dip (inside sphere)
     deviations[i] = (r - sphereRadius) * 1000; // mm to μm
   }
 

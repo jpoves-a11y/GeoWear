@@ -349,11 +349,11 @@ export class WearAnalysisPipeline {
     this.state.results.totalDipVolume = volumeResult.totalDipVolume;
     this.state.results.totalWearVolume = volumeResult.totalWearVolume;
 
-    // Compute wear vector (use all dip clusters, weighted by proximity to cup bottom)
-    if (this.state.results.dipClusters.length > 0 && this.state.polePosition && this.state.separation) {
+    // Compute wear vector from bump clusters (positive deviation = outside sphere = wear)
+    if (this.state.results.bumpClusters.length > 0 && this.state.polePosition && this.state.separation) {
       const cupAxisVec = new THREE.Vector3(...this.state.separation.cupAxis);
       this.state.results.wearVector = computeWearVector(
-        this.state.results.dipClusters,
+        this.state.results.bumpClusters,
         this.state.polePosition,
         this.state.sphereFit.center,
         cupAxisVec

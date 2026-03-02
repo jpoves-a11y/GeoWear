@@ -105,7 +105,7 @@ export class AnnotationManager {
 
     const isBump = cluster.type === 'bump';
     const icon = isBump ? '▲' : '▼';
-    const typeLabel = isBump ? 'Bump' : 'Wear';
+    const typeLabel = isBump ? 'Wear' : 'Dip';
     const devStr = isBump
       ? `+${cluster.maxDeviation.toFixed(1)}`
       : `${cluster.minDeviation.toFixed(1)}`;

@@ -147,7 +147,7 @@ export class HeatMapRenderer {
     if (midLabel) midLabel.textContent = `${((minValue + maxValue) / 2).toFixed(1)}`;
     if (minLabel) minLabel.textContent = `${minValue.toFixed(1)}`;
 
-    // Update bump/dip CSS colors to match the current color map
+    // Update wear/dip CSS colors to match the current color map
     const maxColor = lut.getColor(1);
     const minColor = lut.getColor(0);
     const root = document.documentElement;
