@@ -204,11 +204,26 @@ export class MeshViewer {
    * Show or hide inner mesh wireframe.
    */
   /**
-   * Toggle visibility of outer mesh + ghost (trimmed rim) mesh.
+   * Toggle context meshes between opaque and translucent.
    */
-  public setContextVisible(visible: boolean): void {
-    if (this.outerMeshObject) this.outerMeshObject.visible = visible;
-    if (this.ghostMeshObject) this.ghostMeshObject.visible = visible;
+  public setContextOpaque(opaque: boolean): void {
+    const opacity = opaque ? 1.0 : 0.06;
+    const depthWrite = opaque;
+    const transparent = !opaque;
+    if (this.outerMeshObject) {
+      const mat = this.outerMeshObject.material as THREE.MeshStandardMaterial;
+      mat.opacity = opacity;
+      mat.transparent = transparent;
+      mat.depthWrite = depthWrite;
+      mat.needsUpdate = true;
+    }
+    if (this.ghostMeshObject) {
+      const mat = this.ghostMeshObject.material as THREE.MeshStandardMaterial;
+      mat.opacity = opacity;
+      mat.transparent = transparent;
+      mat.depthWrite = depthWrite;
+      mat.needsUpdate = true;
+    }
   }
 
   public setWireframe(visible: boolean): void {

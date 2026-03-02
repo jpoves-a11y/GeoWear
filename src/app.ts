@@ -70,7 +70,7 @@ export class App {
       onToggleHeatmap: (v: boolean) => this.toggleHeatMap(v),
       onToggleAnnotations: (v: boolean) => this.annotations.setVisible(v),
       onToggleRefSphere: (v: boolean) => this.toggleRefSphere(v),
-      onToggleContext: (v: boolean) => this.meshViewer.setContextVisible(v),
+      onToggleContext: (opaque: boolean) => this.meshViewer.setContextOpaque(opaque),
       onExportPNG: () => this.exportPNG(),
       onExportCSV: () => this.exportCSV(),
       onExportSTL: () => this.exportSTL(),
@@ -345,9 +345,13 @@ export class App {
       p.stepComputeVolumes(this.params.thresholdMicrons, this.params.density);
 
       if (p.state.results) {
-        // Cluster annotations (use correct offset)
+        // Cluster annotations (use correct offset + vertex deviations for accurate positioning)
         const allClusters = [...p.state.results.bumpClusters, ...p.state.results.dipClusters];
-        this.annotations.addClusterAnnotations(allClusters, offset);
+        this.annotations.addClusterAnnotations(
+          allClusters, offset,
+          p.state.workingMesh?.positions,
+          p.state.vertexDeviations ?? undefined
+        );
 
         // Wear vector (use correct offset)
         if (p.state.results.wearVector && p.state.polePosition) {
@@ -423,7 +427,11 @@ export class App {
       ...results.bumpClusters,
       ...results.dipClusters,
     ];
-    this.annotations.addClusterAnnotations(allClusters, offset);
+    this.annotations.addClusterAnnotations(
+      allClusters, offset,
+      p.state.workingMesh?.positions,
+      p.state.vertexDeviations ?? undefined
+    );
 
     // Wear vector
     if (results.wearVector && p.state.polePosition) {

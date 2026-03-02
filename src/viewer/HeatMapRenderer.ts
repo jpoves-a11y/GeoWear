@@ -146,6 +146,19 @@ export class HeatMapRenderer {
     if (maxLabel) maxLabel.textContent = `+${maxValue.toFixed(1)}`;
     if (midLabel) midLabel.textContent = `${((minValue + maxValue) / 2).toFixed(1)}`;
     if (minLabel) minLabel.textContent = `${minValue.toFixed(1)}`;
+
+    // Update bump/dip CSS colors to match the current color map
+    const maxColor = lut.getColor(1);
+    const minColor = lut.getColor(0);
+    const root = document.documentElement;
+    if (maxColor) {
+      root.style.setProperty('--bump-color',
+        `rgb(${Math.round(maxColor.r * 255)}, ${Math.round(maxColor.g * 255)}, ${Math.round(maxColor.b * 255)})`);
+    }
+    if (minColor) {
+      root.style.setProperty('--dip-color',
+        `rgb(${Math.round(minColor.r * 255)}, ${Math.round(minColor.g * 255)}, ${Math.round(minColor.b * 255)})`);
+    }
   }
 
   /**

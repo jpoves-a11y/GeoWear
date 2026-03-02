@@ -24,15 +24,58 @@ export class AnnotationManager {
 
   /**
    * Add annotations for anomaly clusters.
+   * Optionally use vertex deviations to position labels at the actual
+   * max/min deviation vertex on the surface (matching the heat map).
    */
   addClusterAnnotations(
     clusters: AnomalyCluster[],
-    groupOffset: THREE.Vector3
+    groupOffset: THREE.Vector3,
+    meshPositions?: Float32Array,
+    vertexDeviations?: Float32Array
   ): void {
     this.clearAnnotations();
 
+    // Pre-compute actual max bump / min dip vertex positions from full mesh
+    let globalMaxBumpPos: THREE.Vector3 | null = null;
+    let globalMaxDipPos: THREE.Vector3 | null = null;
+
+    if (meshPositions && vertexDeviations) {
+      let maxBump = -Infinity;
+      let minDip = Infinity;
+      const vertexCount = vertexDeviations.length;
+      for (let i = 0; i < vertexCount; i++) {
+        const d = vertexDeviations[i];
+        if (d > maxBump) {
+          maxBump = d;
+          globalMaxBumpPos = new THREE.Vector3(
+            meshPositions[i * 3],
+            meshPositions[i * 3 + 1],
+            meshPositions[i * 3 + 2]
+          );
+        }
+        if (d < minDip) {
+          minDip = d;
+          globalMaxDipPos = new THREE.Vector3(
+            meshPositions[i * 3],
+            meshPositions[i * 3 + 1],
+            meshPositions[i * 3 + 2]
+          );
+        }
+      }
+    }
+
     for (const cluster of clusters) {
-      const label = this.createLabel(cluster, groupOffset);
+      // Choose position: use global max/min vertex if available
+      let labelPos: THREE.Vector3;
+      if (cluster.type === 'bump' && globalMaxBumpPos) {
+        labelPos = globalMaxBumpPos;
+      } else if (cluster.type === 'dip' && globalMaxDipPos) {
+        labelPos = globalMaxDipPos;
+      } else {
+        labelPos = cluster.maxDeviationPoint;
+      }
+
+      const label = this.createLabel(cluster, groupOffset, labelPos);
       this.annotations.push(label);
       this.annotationGroup.add(label);
     }
@@ -56,7 +99,7 @@ export class AnnotationManager {
   /**
    * Create a CSS2D label for a cluster.
    */
-  private createLabel(cluster: AnomalyCluster, groupOffset: THREE.Vector3): CSS2DObject {
+  private createLabel(cluster: AnomalyCluster, groupOffset: THREE.Vector3, position?: THREE.Vector3): CSS2DObject {
     const div = document.createElement('div');
     div.className = `annotation-label ${cluster.type}`;
 
@@ -89,8 +132,9 @@ export class AnnotationManager {
     });
 
     const label = new CSS2DObject(div);
-    // Position at the point of maximum deviation, not the centroid
-    label.position.copy(cluster.maxDeviationPoint).add(groupOffset);
+    // Position at the provided position (global max) or fallback to cluster max
+    const pos = position || cluster.maxDeviationPoint;
+    label.position.copy(pos).add(groupOffset);
     label.position.y += 0.3; // slight offset above surface
     return label;
   }
