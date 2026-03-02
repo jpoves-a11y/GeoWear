@@ -350,15 +350,25 @@ export class App {
     try {
       this.showLoading('Analyzing deviations...');
       this.status.setStatus('Analyzing deviations...');
+      this.setProgress(0);
 
       // Yield so the loading overlay / spinner can paint
-      await new Promise<void>(r => setTimeout(r, 50));
+      await new Promise<void>(r => setTimeout(r, 30));
+
+      // 1. Deviation analysis (~25%)
+      this.updateLoadingText('Computing vertex deviations...');
+      this.setProgress(5);
+      await new Promise<void>(r => setTimeout(r, 0));
 
       p.stepAnalyzeDeviations(this.params.thresholdMicrons);
+      this.setProgress(25);
+
+      // 2. Heat map (~40%)
+      this.updateLoadingText('Generating heat map...');
+      await new Promise<void>(r => setTimeout(r, 0));
 
       const offset = this.meshViewer.getGroupOffset();
 
-      // Heat map — opaque, no transparency
       if (p.state.vertexDeviations && p.state.workingMesh) {
         this.meshViewer.setInnerTransparency(1.0);
         const colors = this.heatMap.generateColors(
@@ -370,8 +380,12 @@ export class App {
         this.meshViewer.applyVertexColors(colors);
         this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
       }
+      this.setProgress(40);
 
-      // Geodesic lines (use correct offset)
+      // 3. Geodesic rendering (~55%)
+      this.updateLoadingText('Rendering geodesics...');
+      await new Promise<void>(r => setTimeout(r, 0));
+
       if (p.state.geodesics.length > 0) {
         this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset, true, p.state.curvatureThreshold || 0);
         this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
@@ -379,16 +393,21 @@ export class App {
       if (p.state.polePosition) {
         this.geodesicRenderer.renderPole(p.state.polePosition, offset);
       }
+      this.setProgress(55);
 
-      // Volumes — yield before heavy computation
-      this.status.setStatus('Computing defect volumes...');
+      // 4. Volume computation (~75%)
       this.updateLoadingText('Computing defect volumes...');
-      await new Promise<void>(r => setTimeout(r, 50));
+      this.status.setStatus('Computing defect volumes...');
+      await new Promise<void>(r => setTimeout(r, 0));
 
       p.stepComputeVolumes(this.params.thresholdMicrons, this.params.density);
+      this.setProgress(75);
+
+      // 5. Annotations & wear vector (~90%)
+      this.updateLoadingText('Building annotations...');
+      await new Promise<void>(r => setTimeout(r, 0));
 
       if (p.state.results) {
-        // Cluster annotations (use correct offset + vertex deviations for accurate positioning)
         const allClusters = [...p.state.results.bumpClusters, ...p.state.results.dipClusters];
         this.annotations.addClusterAnnotations(
           allClusters, offset,
@@ -396,7 +415,6 @@ export class App {
           p.state.vertexDeviations ?? undefined
         );
 
-        // Wear vector (use correct offset)
         if (p.state.results.wearVector && p.state.polePosition) {
           const wv = p.state.results.wearVector;
           this.annotations.renderWearVector(
@@ -409,6 +427,7 @@ export class App {
         this.resultsPanel.show(p.state.results);
       }
 
+      this.setProgress(100);
       this.status.setStatus(`Analysis complete: ${p.state.results?.totalAnomalyPoints || 0} anomaly points`);
       this.hideLoading();
       this.controls.markStepCompleted('analyze');
@@ -591,5 +610,12 @@ export class App {
   private updateLoadingText(text: string): void {
     const txt = document.getElementById('loading-text');
     if (txt) txt.textContent = text;
+  }
+
+  private setProgress(percent: number): void {
+    const bar = document.getElementById('progress-bar');
+    const pText = document.getElementById('progress-text');
+    if (bar) bar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+    if (pText) pText.textContent = `${Math.round(percent)}%`;
   }
 }

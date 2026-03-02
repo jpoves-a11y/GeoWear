@@ -6,6 +6,57 @@
 import * as THREE from 'three';
 import type { AnomalyPoint, AnomalyCluster, AnomalyType } from '../types';
 
+// ----- Grid-based spatial index for fast neighbor queries -----
+
+class SpatialGrid {
+  private cellSize: number;
+  private inv: number;
+  private cells = new Map<string, number[]>();
+
+  constructor(cellSize: number) {
+    this.cellSize = cellSize;
+    this.inv = 1 / cellSize;
+  }
+
+  private key(x: number, y: number, z: number): string {
+    return `${(x * this.inv) | 0}_${(y * this.inv) | 0}_${(z * this.inv) | 0}`;
+  }
+
+  insert(index: number, pos: THREE.Vector3): void {
+    const k = this.key(pos.x, pos.y, pos.z);
+    const arr = this.cells.get(k);
+    if (arr) arr.push(index);
+    else this.cells.set(k, [index]);
+  }
+
+  /** Return indices of all points within eps of query point */
+  queryBall(pos: THREE.Vector3, eps: number, points: AnomalyPoint[]): number[] {
+    const eps2 = eps * eps;
+    const result: number[] = [];
+    const cx = (pos.x * this.inv) | 0;
+    const cy = (pos.y * this.inv) | 0;
+    const cz = (pos.z * this.inv) | 0;
+    // Check 3×3×3 neighboring cells
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const k = `${cx + dx}_${cy + dy}_${cz + dz}`;
+          const cell = this.cells.get(k);
+          if (!cell) continue;
+          for (const idx of cell) {
+            const p = points[idx].position;
+            const ddx = p.x - pos.x, ddy = p.y - pos.y, ddz = p.z - pos.z;
+            if (ddx * ddx + ddy * ddy + ddz * ddz <= eps2) {
+              result.push(idx);
+            }
+          }
+        }
+      }
+    }
+    return result;
+  }
+}
+
 /**
  * Cluster anomaly points into contiguous regions using DBSCAN-like spatial clustering.
  *
@@ -36,7 +87,7 @@ export function clusterAnomalies(
 }
 
 /**
- * DBSCAN clustering algorithm for anomaly points.
+ * DBSCAN clustering algorithm with grid-accelerated neighbor queries.
  */
 function dbscan(
   points: AnomalyPoint[],
@@ -47,6 +98,10 @@ function dbscan(
   const n = points.length;
   if (n === 0) return [];
 
+  // Build spatial index
+  const grid = new SpatialGrid(eps);
+  for (let i = 0; i < n; i++) grid.insert(i, points[i].position);
+
   const labels = new Int32Array(n).fill(-1); // -1 = unvisited
   const clusters: AnomalyCluster[] = [];
   let clusterId = 0;
@@ -54,8 +109,8 @@ function dbscan(
   for (let i = 0; i < n; i++) {
     if (labels[i] !== -1) continue;
 
-    // Find neighbors
-    const neighborIndices = regionQuery(points, i, eps);
+    // Find neighbors via grid
+    const neighborIndices = grid.queryBall(points[i].position, eps, points);
 
     if (neighborIndices.length < minPoints) {
       labels[i] = -2; // noise
@@ -80,7 +135,7 @@ function dbscan(
       labels[j] = clusterId;
       clusterPoints.push(points[j]);
 
-      const jNeighbors = regionQuery(points, j, eps);
+      const jNeighbors = grid.queryBall(points[j].position, eps, points);
       if (jNeighbors.length >= minPoints) {
         for (const k of jNeighbors) {
           if (labels[k] === -1 || labels[k] === -2) {
@@ -108,23 +163,6 @@ function dbscan(
   }
 
   return clusters;
-}
-
-/**
- * Find all points within eps distance of point at index.
- */
-function regionQuery(points: AnomalyPoint[], index: number, eps: number): number[] {
-  const result: number[] = [];
-  const p = points[index].position;
-
-  for (let i = 0; i < points.length; i++) {
-    const d = p.distanceTo(points[i].position);
-    if (d <= eps) {
-      result.push(i);
-    }
-  }
-
-  return result;
 }
 
 /**
