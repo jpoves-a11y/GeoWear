@@ -31,7 +31,7 @@ export class MeshViewer {
 
     // Light neutral gray for initial display and inner wear surface
     this.innerMaterial = new THREE.MeshStandardMaterial({
-      color: 0xd8d8d8,
+      color: 0xe5e5e5,
       metalness: 0.1,
       roughness: 0.6,
       side: THREE.DoubleSide,
@@ -305,8 +305,19 @@ export class MeshViewer {
   }
 
   /** Get the position offset applied to the group */
-  private getGroupOffset(): THREE.Vector3 {
+  public getGroupOffset(): THREE.Vector3 {
     return this.originalGroup.position.clone().negate();
+  }
+
+  /**
+   * Make the inner mesh semi-transparent so geodesics are visible on top.
+   */
+  public setInnerTransparency(opacity: number): void {
+    if (!this.innerMeshObject) return;
+    const mat = this.innerMeshObject.material as THREE.MeshStandardMaterial;
+    mat.transparent = opacity < 1;
+    mat.opacity = opacity;
+    mat.needsUpdate = true;
   }
 
   /**

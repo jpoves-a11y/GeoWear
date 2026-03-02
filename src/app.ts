@@ -278,11 +278,19 @@ export class App {
       this.status.setStatus('Computing geodesics...');
       this.showLoading('Computing geodesics...');
       await p.stepComputeGeodesicsAsync(this.params.geodesicCount);
+
+      // Use the mesh group offset so geodesics align with the displayed mesh
+      const offset = this.meshViewer.getGroupOffset();
+
       if (p.state.polePosition) {
-        this.geodesicRenderer.renderPole(p.state.polePosition, new THREE.Vector3());
+        this.geodesicRenderer.renderPole(p.state.polePosition, offset);
       }
       // Render geodesics with regularity coloring
-      this.geodesicRenderer.renderGeodesics(p.state.geodesics, new THREE.Vector3());
+      this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset);
+
+      // Make inner face slightly transparent so geodesics show on top
+      this.meshViewer.setInnerTransparency(0.55);
+
       const regularCount = p.state.geodesics.filter(g => g.isRegular).length;
       const irregularCount = p.state.geodesics.length - regularCount;
       this.status.setStatus(`Geodesics: ${regularCount} regular, ${irregularCount} irregular`);
@@ -351,7 +359,7 @@ export class App {
   private applyVisualization(): void {
     if (!this.pipeline || !this.pipeline.state.results) return;
     const p = this.pipeline;
-    const zeroOffset = new THREE.Vector3();
+    const offset = this.meshViewer.getGroupOffset();
 
     // Show inner mesh (trimmed, opaque)
     if (p.state.workingMesh) {
@@ -384,12 +392,13 @@ export class App {
 
     // Geodesics
     if (p.state.geodesics.length > 0) {
-      this.geodesicRenderer.renderGeodesics(p.state.geodesics, zeroOffset);
+      this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset);
+      this.meshViewer.setInnerTransparency(0.55);
     }
 
     // Pole
     if (p.state.polePosition) {
-      this.geodesicRenderer.renderPole(p.state.polePosition, zeroOffset);
+      this.geodesicRenderer.renderPole(p.state.polePosition, offset);
     }
 
     // Clusters & annotations
@@ -398,13 +407,13 @@ export class App {
       ...results.bumpClusters,
       ...results.dipClusters,
     ];
-    this.annotations.addClusterAnnotations(allClusters, zeroOffset);
+    this.annotations.addClusterAnnotations(allClusters, offset);
 
     // Wear vector
     if (results.wearVector && p.state.polePosition) {
       const wv = results.wearVector;
       this.annotations.renderWearVector(
-        wv.deepestPoint, p.state.polePosition, zeroOffset,
+        wv.deepestPoint, p.state.polePosition, offset,
         wv.maxDepth, wv.angle
       );
     }
