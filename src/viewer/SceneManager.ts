@@ -30,10 +30,10 @@ export class SceneManager {
 
     // ---- Scene ----
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xf0f0f0);
+    this.scene.background = new THREE.Color(0xe8e8e8);
 
     // Fog for depth perception
-    this.scene.fog = new THREE.FogExp2(0xf0f0f0, 0.015);
+    this.scene.fog = new THREE.FogExp2(0xe8e8e8, 0.012);
 
     // ---- Camera ----
     const aspect = this.container.clientWidth / this.container.clientHeight;
@@ -52,7 +52,7 @@ export class SceneManager {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.sortObjects = true; // Enable renderOrder sorting for transparency
 
     // ---- CSS2D Renderer (for annotations) ----
@@ -90,39 +90,44 @@ export class SceneManager {
   }
 
   private setupLighting(): void {
-    // Bright ambient base for light theme
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    // Soft ambient — not too bright, gives depth
+    const ambientLight = new THREE.AmbientLight(0xe8e8f0, 0.45);
     this.scene.add(ambientLight);
 
-    // Hemisphere light — bright sky/ground for even illumination
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xd0d0d0, 0.6);
+    // Hemisphere: warm sky / cool ground for subtle gradient
+    const hemiLight = new THREE.HemisphereLight(0xf0ece0, 0xb0b8c8, 0.5);
     hemiLight.position.set(0, 50, 0);
     this.scene.add(hemiLight);
 
-    // Main directional light
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-    dirLight.position.set(20, 40, 30);
-    dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 2048;
-    dirLight.shadow.mapSize.height = 2048;
-    dirLight.shadow.camera.near = 0.5;
-    dirLight.shadow.camera.far = 200;
-    dirLight.shadow.camera.left = -50;
-    dirLight.shadow.camera.right = 50;
-    dirLight.shadow.camera.top = 50;
-    dirLight.shadow.camera.bottom = -50;
-    dirLight.shadow.bias = -0.0001;
-    this.scene.add(dirLight);
+    // Key light — warm white, main shadow caster (top-right-front)
+    const keyLight = new THREE.DirectionalLight(0xfff5e8, 1.2);
+    keyLight.position.set(25, 45, 35);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.width = 2048;
+    keyLight.shadow.mapSize.height = 2048;
+    keyLight.shadow.camera.near = 0.5;
+    keyLight.shadow.camera.far = 200;
+    keyLight.shadow.camera.left = -50;
+    keyLight.shadow.camera.right = 50;
+    keyLight.shadow.camera.top = 50;
+    keyLight.shadow.camera.bottom = -50;
+    keyLight.shadow.bias = -0.0001;
+    this.scene.add(keyLight);
 
-    // Fill light (opposite side, softer)
-    const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
-    fillLight.position.set(-15, 20, -20);
+    // Fill light — cool tint, opposite side, softer (left-front)
+    const fillLight = new THREE.DirectionalLight(0xd8e4f0, 0.5);
+    fillLight.position.set(-20, 25, 15);
     this.scene.add(fillLight);
 
-    // Rim light (back)
-    const rimLight = new THREE.DirectionalLight(0xffffff, 0.2);
-    rimLight.position.set(0, -10, -30);
+    // Rim/back light — subtle edge definition
+    const rimLight = new THREE.DirectionalLight(0xc0d0e0, 0.35);
+    rimLight.position.set(5, 10, -35);
     this.scene.add(rimLight);
+
+    // Bottom fill — very soft, reduces harsh underside shadows
+    const bottomLight = new THREE.DirectionalLight(0xe0e0e8, 0.15);
+    bottomLight.position.set(0, -30, 10);
+    this.scene.add(bottomLight);
   }
 
   private setupHelpers(): void {

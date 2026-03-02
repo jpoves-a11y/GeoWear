@@ -29,11 +29,11 @@ export class MeshViewer {
     this.originalGroup.name = 'loaded-mesh';
     this.sceneManager.scene.add(this.originalGroup);
 
-    // Very light gray/white for initial display and inner wear surface
+    // Slightly warm off-white for a professional clinical look
     this.innerMaterial = new THREE.MeshStandardMaterial({
-      color: 0xf5f5f5,
-      metalness: 0.05,
-      roughness: 0.5,
+      color: 0xe0ddd8,
+      metalness: 0.08,
+      roughness: 0.55,
       side: THREE.DoubleSide,
       transparent: false,
     });
