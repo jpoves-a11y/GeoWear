@@ -153,32 +153,35 @@ export class WearAnalysisPipeline {
     // Use smoothed mesh for sphere fitting (same mesh used for geodesics)
     const mesh = this.state.smoothedMesh || this.state.workingMesh;
 
-    // If geodesics are available, fit using only regular geodesic vertices
+    // If geodesics are available, fit using only regular geodesic point positions.
+    // Note: mesh-plane intersection points have vertexIndex = -1, so we use
+    // the GeodesicPoint.position directly instead of indexing into mesh.positions.
     if (this.state.geodesics.length > 0) {
-      const regularVertexSet = new Set<number>();
+      const regularPoints: Array<[number, number, number]> = [];
       for (const geo of this.state.geodesics) {
         if (geo.isRegular) {
           for (const p of geo.points) {
-            regularVertexSet.add(p.vertexIndex);
+            regularPoints.push(p.position);
           }
         }
       }
 
-      // If we have enough regular vertices, fit with those only
-      if (regularVertexSet.size >= 20) {
-        const regularPositions = new Float32Array(regularVertexSet.size * 3);
-        let idx = 0;
-        for (const vi of regularVertexSet) {
-          regularPositions[idx++] = mesh.positions[vi * 3];
-          regularPositions[idx++] = mesh.positions[vi * 3 + 1];
-          regularPositions[idx++] = mesh.positions[vi * 3 + 2];
+      // If we have enough regular points, fit with those only
+      if (regularPoints.length >= 20) {
+        const regularPositions = new Float32Array(regularPoints.length * 3);
+        for (let i = 0; i < regularPoints.length; i++) {
+          regularPositions[i * 3]     = regularPoints[i][0];
+          regularPositions[i * 3 + 1] = regularPoints[i][1];
+          regularPositions[i * 3 + 2] = regularPoints[i][2];
         }
-        this.state.sphereFit = fitSphereRobust(regularPositions, regularVertexSet.size);
+        console.log(`Sphere fit: using ${regularPoints.length} regular geodesic points (${this.state.geodesics.filter(g => g.isRegular).length} regular geodesics)`);
+        this.state.sphereFit = fitSphereRobust(regularPositions, regularPoints.length);
         return this.state.sphereFit;
       }
     }
 
     // Fallback: fit with all vertices
+    console.warn('Sphere fit: not enough regular geodesic points, using all mesh vertices');
     this.state.sphereFit = fitSphereRobust(
       mesh.positions,
       mesh.vertexCount

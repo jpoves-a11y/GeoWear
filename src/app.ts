@@ -138,8 +138,34 @@ export class App {
     try {
       const buffer = await file.arrayBuffer();
 
+      // Yield to allow the UI to update before heavy parsing
+      await new Promise(resolve => setTimeout(resolve, 0));
+
       // Use MeshViewer's loadSTL for parsing & display geometry
+      this.status.setStatus('Parsing STL geometry...');
       const { geometry, meshData: rawMesh } = await this.meshViewer.loadSTL(buffer, file.name);
+
+      // Validate parsed geometry
+      if (rawMesh.vertexCount === 0) {
+        throw new Error('STL file contains no vertices');
+      }
+      if (rawMesh.faceCount === 0) {
+        throw new Error('STL file contains no faces');
+      }
+
+      // Check for NaN/Infinity in positions
+      let hasInvalid = false;
+      for (let i = 0; i < Math.min(rawMesh.positions.length, 300); i++) {
+        if (!isFinite(rawMesh.positions[i])) { hasInvalid = true; break; }
+      }
+      if (hasInvalid) {
+        throw new Error('STL file contains invalid coordinate values (NaN or Infinity)');
+      }
+
+      console.log(`Parsed STL: ${rawMesh.vertexCount} vertices, ${rawMesh.faceCount} faces`);
+
+      // Yield before heavy vertex welding
+      await new Promise(resolve => setTimeout(resolve, 0));
 
       // Weld vertices for adjacency graph construction
       this.status.setStatus('Welding vertices...');
@@ -154,12 +180,21 @@ export class App {
         faceCount: indices.length / 3,
       };
 
+      if (meshData.vertexCount === 0) {
+        throw new Error('Vertex welding produced no vertices — check the STL file');
+      }
+
+      console.log(`Welded: ${rawMesh.vertexCount} → ${meshData.vertexCount} vertices, ${meshData.faceCount} faces`);
+
       this.currentMeshData = meshData;
       this.currentResults = null;
       this.pipeline = null;
 
       // Clear previous visualization
       this.clearVisualization();
+
+      // Yield before display
+      await new Promise(resolve => setTimeout(resolve, 0));
 
       // Display original mesh
       this.meshViewer.displayOriginalMesh(geometry);
