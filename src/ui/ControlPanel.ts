@@ -75,11 +75,11 @@ export class ControlPanel {
     this.analysisButtons['trim'] = { '2. Trim Rim (7%)': () => this.callbacks.onStepTrim() };
     this.buttonControllers['trim'] = steps.add(this.analysisButtons['trim'], '2. Trim Rim (7%)');
 
-    this.analysisButtons['fit'] = { '3. Fit Sphere': () => this.callbacks.onStepFitSphere() };
-    this.buttonControllers['fit'] = steps.add(this.analysisButtons['fit'], '3. Fit Sphere');
+    this.analysisButtons['geodesics'] = { '3. Compute Geodesics': () => this.callbacks.onStepGeodesics() };
+    this.buttonControllers['geodesics'] = steps.add(this.analysisButtons['geodesics'], '3. Compute Geodesics');
 
-    this.analysisButtons['geodesics'] = { '4. Compute Geodesics': () => this.callbacks.onStepGeodesics() };
-    this.buttonControllers['geodesics'] = steps.add(this.analysisButtons['geodesics'], '4. Compute Geodesics');
+    this.analysisButtons['fit'] = { '4. Fit Sphere': () => this.callbacks.onStepFitSphere() };
+    this.buttonControllers['fit'] = steps.add(this.analysisButtons['fit'], '4. Fit Sphere');
 
     this.analysisButtons['analyze'] = { '5. Analyze & Quantify': () => this.callbacks.onStepAnalyze() };
     this.buttonControllers['analyze'] = steps.add(this.analysisButtons['analyze'], '5. Analyze & Quantify');

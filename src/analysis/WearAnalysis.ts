@@ -24,6 +24,7 @@ export interface PipelineState {
   trimResult: TrimResult | null;
   workingMesh: MeshData | null;
   graph: MeshGraph | null;
+  referenceCenter: [number, number, number] | null; // centroid used before sphere fit
   sphereFit: SphereFitResult | null;
   ellipsoidFit: EllipsoidFitResult | null;
   poleVertex: number;
@@ -40,6 +41,7 @@ export class WearAnalysisPipeline {
     trimResult: null,
     workingMesh: null,
     graph: null,
+    referenceCenter: null,
     sphereFit: null,
     ellipsoidFit: null,
     poleVertex: 0,
@@ -76,17 +78,17 @@ export class WearAnalysisPipeline {
     this.progress('trimming', 0.1, `Trimming rim (${params.rimTrimPercent}%)...`);
     this.stepTrimRim(params.rimTrimPercent);
 
-    // Step 3: Fit sphere
-    this.progress('fitting', 0.2, 'Fitting reference sphere...');
+    // Step 3: Build graph and compute geodesics (before sphere fit)
+    this.progress('geodesics', 0.2, `Computing ${params.geodesicCount} geodesics...`);
+    await this.stepComputeGeodesicsAsync(params.geodesicCount);
+
+    // Step 4: Fit sphere (using only regular geodesic vertices)
+    this.progress('fitting', 0.8, 'Fitting reference sphere (regular geodesics only)...');
     this.stepFitSphere();
 
-    // Step 4: Fit ellipsoid
-    this.progress('fitting', 0.25, 'Fitting ellipsoid...');
+    // Step 5: Fit ellipsoid
+    this.progress('fitting', 0.85, 'Fitting ellipsoid...');
     this.stepFitEllipsoid();
-
-    // Step 5: Build graph and compute geodesics
-    this.progress('geodesics', 0.3, `Computing ${params.geodesicCount} geodesics...`);
-    await this.stepComputeGeodesicsAsync(params.geodesicCount);
 
     // Step 6: Analyze deviations
     this.progress('analyzing', 0.85, 'Analyzing deviations...');
@@ -128,6 +130,33 @@ export class WearAnalysisPipeline {
   stepFitSphere(): SphereFitResult {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
 
+    // If geodesics are available, fit using only regular geodesic vertices
+    if (this.state.geodesics.length > 0) {
+      const regularVertexSet = new Set<number>();
+      for (const geo of this.state.geodesics) {
+        if (geo.isRegular) {
+          for (const p of geo.points) {
+            regularVertexSet.add(p.vertexIndex);
+          }
+        }
+      }
+
+      // If we have enough regular vertices, fit with those only
+      if (regularVertexSet.size >= 20) {
+        const regularPositions = new Float32Array(regularVertexSet.size * 3);
+        const mesh = this.state.workingMesh;
+        let idx = 0;
+        for (const vi of regularVertexSet) {
+          regularPositions[idx++] = mesh.positions[vi * 3];
+          regularPositions[idx++] = mesh.positions[vi * 3 + 1];
+          regularPositions[idx++] = mesh.positions[vi * 3 + 2];
+        }
+        this.state.sphereFit = fitSphereRobust(regularPositions, regularVertexSet.size);
+        return this.state.sphereFit;
+      }
+    }
+
+    // Fallback: fit with all vertices
     this.state.sphereFit = fitSphereRobust(
       this.state.workingMesh.positions,
       this.state.workingMesh.vertexCount
@@ -147,24 +176,31 @@ export class WearAnalysisPipeline {
 
   async stepComputeGeodesicsAsync(geodesicCount: number = 360): Promise<Geodesic[]> {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
-    if (!this.state.sphereFit) throw new Error('Run sphere fit first');
     if (!this.state.separation) throw new Error('Run separation first');
 
     const mesh = this.state.workingMesh;
-    const sphereCenter: [number, number, number] = [
-      this.state.sphereFit.center.x,
-      this.state.sphereFit.center.y,
-      this.state.sphereFit.center.z,
-    ];
     const cupAxis = this.state.separation.cupAxis;
+
+    // Compute centroid as reference center (no sphere fit needed yet)
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      cx += mesh.positions[i];
+      cy += mesh.positions[i + 1];
+      cz += mesh.positions[i + 2];
+    }
+    cx /= mesh.vertexCount;
+    cy /= mesh.vertexCount;
+    cz /= mesh.vertexCount;
+    const referenceCenter: [number, number, number] = [cx, cy, cz];
+    this.state.referenceCenter = referenceCenter;
 
     // Build mesh graph
     this.progress('geodesics', 0.3, 'Building mesh adjacency graph...');
     this.state.graph = MeshGraph.build(mesh.positions, mesh.indices, mesh.vertexCount);
 
-    // Find pole
+    // Find pole using centroid as reference
     this.state.poleVertex = findPoleVertex(
-      mesh.positions, mesh.vertexCount, sphereCenter, cupAxis
+      mesh.positions, mesh.vertexCount, referenceCenter, cupAxis
     );
     this.state.polePosition = new THREE.Vector3(
       mesh.positions[this.state.poleVertex * 3],
@@ -174,23 +210,48 @@ export class WearAnalysisPipeline {
 
     // Compute geodesics (with yield for UI updates)
     this.state.geodesics = await new Promise<Geodesic[]>((resolve) => {
-      // Use setTimeout to allow UI to update between batches
       setTimeout(() => {
         const result = computeGeodesics(
           mesh.positions,
           mesh.vertexCount,
           this.state.graph!,
           this.state.poleVertex,
-          sphereCenter,
+          referenceCenter,
           cupAxis,
           geodesicCount,
           (progress: number) => {
-            this.progress('geodesics', 0.3 + progress * 0.55, `Computing geodesic ${Math.round(progress * geodesicCount)}/${geodesicCount}`);
+            this.progress('geodesics', 0.3 + progress * 0.45, `Computing geodesic ${Math.round(progress * geodesicCount)}/${geodesicCount}`);
           }
         );
         resolve(result);
       }, 0);
     });
+
+    // --- Classify geodesics as regular/irregular using 2nd derivative (curvature) ---
+    // Compute RMS of second derivative for each geodesic
+    const rmsValues: number[] = [];
+    for (const geo of this.state.geodesics) {
+      let sumSq = 0;
+      let count = 0;
+      for (const p of geo.points) {
+        sumSq += p.secondDerivative * p.secondDerivative;
+        count++;
+      }
+      rmsValues.push(count > 0 ? Math.sqrt(sumSq / count) : 0);
+    }
+
+    // Threshold = 2× median RMS (adaptive to the mesh)
+    const sortedRms = [...rmsValues].sort((a, b) => a - b);
+    const medianRms = sortedRms[Math.floor(sortedRms.length / 2)] || 0;
+    const curvatureThreshold = medianRms * 2;
+
+    let regularCount = 0;
+    for (let i = 0; i < this.state.geodesics.length; i++) {
+      this.state.geodesics[i].isRegular = rmsValues[i] <= curvatureThreshold;
+      if (this.state.geodesics[i].isRegular) regularCount++;
+    }
+
+    this.progress('geodesics', 0.8, `Classified: ${regularCount} regular, ${this.state.geodesics.length - regularCount} irregular geodesics`);
 
     return this.state.geodesics;
   }

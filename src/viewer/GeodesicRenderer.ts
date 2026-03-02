@@ -46,24 +46,13 @@ export class GeodesicRenderer {
           )
         );
 
-        // Color based on deviation: green=nominal, red=bump, blue=dip
-        const dev = point.deviation;
+        // Color: regular geodesics = green, irregular = red/orange
         let r: number, g: number, b: number;
-        if (Math.abs(dev) <= 1) {
-          // Nominal
-          r = 0.2; g = 0.8; b = 0.2;
-        } else if (dev > 0) {
-          // Bump
-          const intensity = Math.min(1, dev / 50);
-          r = 0.8 + 0.2 * intensity;
-          g = 0.3 * (1 - intensity);
-          b = 0.1;
+        if (geo.isRegular) {
+          r = 0.1; g = 0.75; b = 0.2;
         } else {
-          // Dip
-          const intensity = Math.min(1, Math.abs(dev) / 50);
-          r = 0.2 * (1 - intensity);
-          g = 0.1;
-          b = 0.5 + 0.5 * intensity;
+          // Irregular: orange-red
+          r = 0.95; g = 0.3; b = 0.1;
         }
         lineColors.push(r, g, b);
       }
@@ -97,7 +86,7 @@ export class GeodesicRenderer {
 
     const geometry = new THREE.SphereGeometry(0.3, 16, 16);
     const material = new THREE.MeshBasicMaterial({
-      color: 0x00d4ff,
+      color: 0x0077cc,
       transparent: true,
       opacity: 0.9,
     });

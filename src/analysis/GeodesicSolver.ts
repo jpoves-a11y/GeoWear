@@ -273,6 +273,7 @@ export function computeGeodesics(
       maxDeviation: maxDev,
       minDeviation: minDev,
       anomalyCount,
+      isRegular: true, // classified later by curvature analysis
     });
 
     if (onProgress) {

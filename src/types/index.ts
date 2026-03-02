@@ -66,6 +66,7 @@ export interface Geodesic {
   maxDeviation: number;
   minDeviation: number;
   anomalyCount: number;
+  isRegular: boolean;      // true if curvature is consistent with regular sphere
 }
 
 /** Anomaly classification */

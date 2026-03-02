@@ -411,15 +411,39 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
   }
 
   const heightRange = maxHeight - minHeight;
-  // Cup axis points toward the pole (at height = maxHeight)
-  // Rim is at height = minHeight
-  // We want to remove the `percent` closest to the rim (lowest heights)
-  
-  // Threshold: keep only vertices whose height is above (minHeight + percent% of range)
-  const threshold = minHeight + (percent / 100) * heightRange;
 
-  // Filter triangles: keep only if ALL three vertices are above the threshold
-  // (i.e., away from the rim toward the pole)
+  // --- Detect which end is the rim using boundary edges ---
+  // Boundary edges belong to exactly one triangle; their vertices form the rim.
+  const edgeFaceCount = new Map<string, number>();
+  for (let f = 0; f < faceCount; f++) {
+    for (let e = 0; e < 3; e++) {
+      const a = indices[f * 3 + e];
+      const b = indices[f * 3 + ((e + 1) % 3)];
+      const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+      edgeFaceCount.set(key, (edgeFaceCount.get(key) || 0) + 1);
+    }
+  }
+  const boundaryVerts = new Set<number>();
+  for (const [key, count] of edgeFaceCount) {
+    if (count === 1) {
+      const parts = key.split('_');
+      boundaryVerts.add(Number(parts[0]));
+      boundaryVerts.add(Number(parts[1]));
+    }
+  }
+  // Average height of boundary (rim) vertices
+  let rimHeightSum = 0;
+  for (const v of boundaryVerts) rimHeightSum += heights[v];
+  const avgRimHeight = boundaryVerts.size > 0 ? rimHeightSum / boundaryVerts.size : minHeight;
+  const midHeight = (minHeight + maxHeight) / 2;
+  const rimIsAtMax = avgRimHeight > midHeight;
+
+  // Threshold: remove `percent%` of height range from the rim end
+  const threshold = rimIsAtMax
+    ? maxHeight - (percent / 100) * heightRange   // rim at max → cut from max
+    : minHeight + (percent / 100) * heightRange;   // rim at min → cut from min
+
+  // Filter triangles: keep faces AWAY from the rim
   const keptFaces: number[] = [];
   
   for (let f = 0; f < faceCount; f++) {
@@ -427,9 +451,16 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
 
-    // Keep face only if ALL three vertices are above the threshold (away from rim)
-    if (heights[i0] > threshold && heights[i1] > threshold && heights[i2] > threshold) {
-      keptFaces.push(f);
+    if (rimIsAtMax) {
+      // Rim at max → keep faces with ALL vertices BELOW threshold
+      if (heights[i0] < threshold && heights[i1] < threshold && heights[i2] < threshold) {
+        keptFaces.push(f);
+      }
+    } else {
+      // Rim at min → keep faces with ALL vertices ABOVE threshold
+      if (heights[i0] > threshold && heights[i1] > threshold && heights[i2] > threshold) {
+        keptFaces.push(f);
+      }
     }
   }
 

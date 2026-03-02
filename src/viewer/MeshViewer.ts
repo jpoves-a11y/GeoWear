@@ -231,7 +231,7 @@ export class MeshViewer {
       color: 0x00ff88,
       wireframe: true,
       transparent: true,
-      opacity: 0.15,
+      opacity: 0.05,
     });
     this.referenceSphereObject = new THREE.Mesh(sphereGeo, sphereMat);
     this.referenceSphereObject.position.copy(center).sub(this.getGroupOffset());

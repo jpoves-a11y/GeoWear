@@ -257,7 +257,7 @@ export class App {
   private async stepFitSphere(): Promise<void> {
     const p = this.ensurePipeline();
     try {
-      this.status.setStatus('Fitting reference sphere...');
+      this.status.setStatus('Fitting reference sphere (regular geodesics)...');
       const fit = p.stepFitSphere();
       // Also compute ellipsoid while we are at it
       p.stepFitEllipsoid();
@@ -281,7 +281,11 @@ export class App {
       if (p.state.polePosition) {
         this.geodesicRenderer.renderPole(p.state.polePosition, new THREE.Vector3());
       }
-      this.status.setStatus(`Computed ${p.state.geodesics.length} geodesics`);
+      // Render geodesics with regularity coloring
+      this.geodesicRenderer.renderGeodesics(p.state.geodesics, new THREE.Vector3());
+      const regularCount = p.state.geodesics.filter(g => g.isRegular).length;
+      const irregularCount = p.state.geodesics.length - regularCount;
+      this.status.setStatus(`Geodesics: ${regularCount} regular, ${irregularCount} irregular`);
       this.hideLoading();
       this.controls.markStepCompleted('geodesics');
     } catch (e) {
