@@ -386,7 +386,6 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
   const faceCount = meshData.faceCount;
 
   // --- Detect rim using boundary edges ---
-  // Boundary edges belong to exactly one triangle; their vertices form the rim.
   const edgeFaceCount = new Map<string, number>();
   for (let f = 0; f < faceCount; f++) {
     for (let e = 0; e < 3; e++) {
@@ -405,74 +404,112 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
     }
   }
 
-  // Compute mesh centroid
+  // --- Build adjacency for BFS geodesic distance ---
+  const adj: Array<number[]> = new Array(vertexCount);
+  for (let i = 0; i < vertexCount; i++) adj[i] = [];
+  for (let f = 0; f < faceCount; f++) {
+    const a = indices[f * 3], b = indices[f * 3 + 1], c = indices[f * 3 + 2];
+    adj[a].push(b); adj[a].push(c);
+    adj[b].push(a); adj[b].push(c);
+    adj[c].push(a); adj[c].push(b);
+  }
+
+  // --- Compute geodesic distance from boundary using Dijkstra ---
+  // This ensures homogeneous trimming: every point at the same
+  // mesh-walking distance from the rim edge gets treated equally.
+  const dist = new Float32Array(vertexCount);
+  dist.fill(Infinity);
+
+  // Priority queue (simple array-based for correctness)
+  // Entry: [distance, vertexIndex]
+  const heap: Array<[number, number]> = [];
+  const push = (d: number, v: number) => {
+    heap.push([d, v]);
+    let i = heap.length - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (heap[parent][0] <= heap[i][0]) break;
+      [heap[parent], heap[i]] = [heap[i], heap[parent]];
+      i = parent;
+    }
+  };
+  const pop = (): [number, number] | undefined => {
+    if (heap.length === 0) return undefined;
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length > 0) {
+      heap[0] = last;
+      let i = 0;
+      while (true) {
+        let smallest = i;
+        const l = 2 * i + 1, r = 2 * i + 2;
+        if (l < heap.length && heap[l][0] < heap[smallest][0]) smallest = l;
+        if (r < heap.length && heap[r][0] < heap[smallest][0]) smallest = r;
+        if (smallest === i) break;
+        [heap[smallest], heap[i]] = [heap[i], heap[smallest]];
+        i = smallest;
+      }
+    }
+    return top;
+  };
+
+  // Seed: all boundary vertices at distance 0
+  for (const bv of boundaryVerts) {
+    dist[bv] = 0;
+    push(0, bv);
+  }
+
+  // Dijkstra from all boundary vertices simultaneously
+  const visited = new Uint8Array(vertexCount);
+  while (heap.length > 0) {
+    const [d, u] = pop()!;
+    if (visited[u]) continue;
+    visited[u] = 1;
+    const neighbors = adj[u];
+    for (let i = 0; i < neighbors.length; i++) {
+      const v = neighbors[i];
+      if (visited[v]) continue;
+      const dx = positions[v * 3] - positions[u * 3];
+      const dy = positions[v * 3 + 1] - positions[u * 3 + 1];
+      const dz = positions[v * 3 + 2] - positions[u * 3 + 2];
+      const edgeLen = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const newDist = d + edgeLen;
+      if (newDist < dist[v]) {
+        dist[v] = newDist;
+        push(newDist, v);
+      }
+    }
+  }
+
+  // Find max geodesic distance from boundary
+  let maxDist = 0;
+  for (let i = 0; i < vertexCount; i++) {
+    if (dist[i] !== Infinity && dist[i] > maxDist) maxDist = dist[i];
+  }
+
+  // Threshold: remove vertices within percent% of max geodesic distance from rim
+  const distThreshold = (percent / 100) * maxDist;
+
+  // Also compute heights for TrimResult metadata
   let cx = 0, cy = 0, cz = 0;
   for (let i = 0; i < positions.length; i += 3) {
-    cx += positions[i];
-    cy += positions[i + 1];
-    cz += positions[i + 2];
+    cx += positions[i]; cy += positions[i + 1]; cz += positions[i + 2];
   }
-  cx /= vertexCount;
-  cy /= vertexCount;
-  cz /= vertexCount;
-
-  // Determine trim axis from boundary:
-  // Vector from rim center → mesh center naturally points toward the pole
-  let ax: number, ay: number, az: number;
-  let refX: number, refY: number, refZ: number;
-
-  if (boundaryVerts.size > 10) {
-    // Compute centroid of boundary (rim) vertices
-    let rimCx = 0, rimCy = 0, rimCz = 0;
-    for (const bv of boundaryVerts) {
-      rimCx += positions[bv * 3];
-      rimCy += positions[bv * 3 + 1];
-      rimCz += positions[bv * 3 + 2];
-    }
-    rimCx /= boundaryVerts.size;
-    rimCy /= boundaryVerts.size;
-    rimCz /= boundaryVerts.size;
-
-    ax = cx - rimCx;
-    ay = cy - rimCy;
-    az = cz - rimCz;
-    const axLen = Math.sqrt(ax * ax + ay * ay + az * az);
-    if (axLen > 1e-10) { ax /= axLen; ay /= axLen; az /= axLen; }
-    else { ax = cupAxis[0]; ay = cupAxis[1]; az = cupAxis[2]; }
-
-    // Project from rim center so boundary vertices have height ≈ 0
-    refX = rimCx; refY = rimCy; refZ = rimCz;
-  } else {
-    // Fallback to provided cupAxis when no boundary detected
-    ax = cupAxis[0]; ay = cupAxis[1]; az = cupAxis[2];
-    refX = cx; refY = cy; refZ = cz;
-  }
-
-  // Project each vertex onto trim axis
-  const heights = new Float32Array(vertexCount);
+  cx /= vertexCount; cy /= vertexCount; cz /= vertexCount;
   let minHeight = Infinity, maxHeight = -Infinity;
   for (let i = 0; i < vertexCount; i++) {
-    const dx = positions[i * 3] - refX;
-    const dy = positions[i * 3 + 1] - refY;
-    const dz = positions[i * 3 + 2] - refZ;
-    const h = dx * ax + dy * ay + dz * az;
-    heights[i] = h;
+    const h = (positions[i*3]-cx)*cupAxis[0] + (positions[i*3+1]-cy)*cupAxis[1] + (positions[i*3+2]-cz)*cupAxis[2];
     if (h < minHeight) minHeight = h;
     if (h > maxHeight) maxHeight = h;
   }
 
-  const heightRange = maxHeight - minHeight;
-
-  // Threshold: remove percent% of height range from the rim end (low heights)
-  const threshold = minHeight + (percent / 100) * heightRange;
-
-  // Filter: keep faces where ALL vertices are above threshold (away from rim)
+  // Filter: keep faces where ALL vertices are beyond threshold (away from rim)
   const keptFaces: number[] = [];
   for (let f = 0; f < faceCount; f++) {
     const i0 = indices[f * 3];
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
-    if (heights[i0] > threshold && heights[i1] > threshold && heights[i2] > threshold) {
+    if (dist[i0] > distThreshold && dist[i1] > distThreshold && dist[i2] > distThreshold) {
       keptFaces.push(f);
     }
   }

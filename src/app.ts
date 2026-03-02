@@ -320,10 +320,11 @@ export class App {
       // Heat map — opaque, no transparency
       if (p.state.vertexDeviations && p.state.workingMesh) {
         this.meshViewer.setInnerTransparency(1.0);
-        const colors = this.heatMap.generateDivergingColors(
+        const colors = this.heatMap.generateColors(
           p.state.vertexDeviations,
           this.params.colorRangeMin,
-          this.params.colorRangeMax
+          this.params.colorRangeMax,
+          this.params.colorMapName
         );
         this.meshViewer.applyVertexColors(colors);
         this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
@@ -389,10 +390,11 @@ export class App {
 
     // Heat map
     if (p.state.vertexDeviations) {
-      const colors = this.heatMap.generateDivergingColors(
+      const colors = this.heatMap.generateColors(
         p.state.vertexDeviations,
         this.params.colorRangeMin,
-        this.params.colorRangeMax
+        this.params.colorRangeMax,
+        this.params.colorMapName
       );
       this.meshViewer.applyVertexColors(colors);
       this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
@@ -447,10 +449,11 @@ export class App {
       this.meshViewer.removeVertexColors();
       this.heatMap.hideLegend();
     } else if (this.pipeline?.state.vertexDeviations) {
-      const colors = this.heatMap.generateDivergingColors(
+      const colors = this.heatMap.generateColors(
         this.pipeline.state.vertexDeviations,
         this.params.colorRangeMin,
-        this.params.colorRangeMax
+        this.params.colorRangeMax,
+        this.params.colorMapName
       );
       this.meshViewer.applyVertexColors(colors);
       this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
@@ -473,10 +476,11 @@ export class App {
 
     // If color range changed, update heat map in real time
     if (colorChanged && this.pipeline?.state.vertexDeviations) {
-      const colors = this.heatMap.generateDivergingColors(
+      const colors = this.heatMap.generateColors(
         this.pipeline.state.vertexDeviations,
         this.params.colorRangeMin,
-        this.params.colorRangeMax
+        this.params.colorRangeMax,
+        this.params.colorMapName
       );
       this.meshViewer.applyVertexColors(colors);
       this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);

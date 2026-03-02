@@ -95,7 +95,7 @@ export class ControlPanel {
       .name('Geodesics')
       .onChange(() => this.callbacks.onParamsChange(this.params));
 
-    folder.add(this.params, 'rimTrimPercent', 0, 20, 0.5)
+    folder.add(this.params, 'rimTrimPercent', 0, 50, 0.5)
       .name('Rim Trim %')
       .onChange(() => this.callbacks.onParamsChange(this.params));
 
