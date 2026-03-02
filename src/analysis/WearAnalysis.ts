@@ -244,7 +244,8 @@ export class WearAnalysisPipeline {
           geodesicCount,
           (progress: number) => {
             this.progress('geodesics', 0.3 + progress * 0.45, `Computing geodesic ${Math.round(progress * geodesicCount)}/${geodesicCount}`);
-          }
+          },
+          mesh.indices
         );
         resolve(result);
       }, 0);
