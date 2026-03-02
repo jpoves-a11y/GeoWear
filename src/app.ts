@@ -315,8 +315,11 @@ export class App {
       this.status.setStatus('Analyzing deviations...');
       p.stepAnalyzeDeviations(this.params.thresholdMicrons);
 
-      // Heat map
+      const offset = this.meshViewer.getGroupOffset();
+
+      // Heat map — opaque, no transparency
       if (p.state.vertexDeviations && p.state.workingMesh) {
+        this.meshViewer.setInnerTransparency(1.0);
         const colors = this.heatMap.generateDivergingColors(
           p.state.vertexDeviations,
           this.params.colorRangeMin,
@@ -326,9 +329,13 @@ export class App {
         this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
       }
 
-      // Geodesic lines
+      // Geodesic lines (use correct offset)
       if (p.state.geodesics.length > 0) {
-        this.geodesicRenderer.renderGeodesics(p.state.geodesics, new THREE.Vector3());
+        this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset);
+        this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
+      }
+      if (p.state.polePosition) {
+        this.geodesicRenderer.renderPole(p.state.polePosition, offset);
       }
 
       // Volumes
@@ -336,15 +343,15 @@ export class App {
       p.stepComputeVolumes(this.params.thresholdMicrons, this.params.density);
 
       if (p.state.results) {
-        // Cluster annotations
+        // Cluster annotations (use correct offset)
         const allClusters = [...p.state.results.bumpClusters, ...p.state.results.dipClusters];
-        this.annotations.addClusterAnnotations(allClusters, new THREE.Vector3());
+        this.annotations.addClusterAnnotations(allClusters, offset);
 
-        // Wear vector
+        // Wear vector (use correct offset)
         if (p.state.results.wearVector && p.state.polePosition) {
           const wv = p.state.results.wearVector;
           this.annotations.renderWearVector(
-            wv.deepestPoint, p.state.polePosition, new THREE.Vector3(),
+            wv.deepestPoint, p.state.polePosition, offset,
             wv.maxDepth, wv.angle
           );
         }
@@ -400,7 +407,6 @@ export class App {
     if (p.state.geodesics.length > 0) {
       this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset);
       this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
-      this.meshViewer.setInnerTransparency(0.55);
     }
 
     // Pole
