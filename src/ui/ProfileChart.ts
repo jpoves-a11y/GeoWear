@@ -31,6 +31,8 @@ interface OuterProfilePoint {
   y: number;
 }
 
+type OuterChain = OuterProfilePoint[];
+
 export class ProfileChart {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -48,6 +50,7 @@ export class ProfileChart {
   // Outer mesh section points (real geometry)
   private outerMesh: MeshData | null = null;
   private outerProfilePoints: OuterProfilePoint[] = [];
+  private outerChains: OuterChain[] = [];
   
   // Projection axes (stored for sphere projection)
   private uAxis = { x: 1, y: 0, z: 0 };
@@ -407,11 +410,18 @@ export class ProfileChart {
     
     if (segments.length < 2) return;
     
-    // Chain segments into ordered polylines by matching endpoints
-    const eps = 0.02; // tolerance for matching endpoints
+    // Compute adaptive tolerance based on mean segment length
+    let totalLen = 0;
+    for (const seg of segments) {
+      totalLen += Math.sqrt((seg.bx - seg.ax) ** 2 + (seg.by - seg.ay) ** 2);
+    }
+    const meanLen = totalLen / segments.length;
+    const eps = Math.max(0.05, meanLen * 0.6); // adaptive tolerance
+    const epsSq = eps * eps;
+    
     const used = new Array(segments.length).fill(false);
     
-    // Build the longest chain
+    // Build chains by connecting segments at matching endpoints
     const chains: { x: number; y: number }[][] = [];
     
     for (let start = 0; start < segments.length; start++) {
@@ -427,24 +437,25 @@ export class ProfileChart {
       while (extended) {
         extended = false;
         const tail = chain[chain.length - 1];
+        let bestIdx = -1;
+        let bestDist = epsSq;
+        let bestEnd = 'a';
+        
         for (let i = 0; i < segments.length; i++) {
           if (used[i]) continue;
           const seg = segments[i];
-          
           const daa = (seg.ax - tail.x) ** 2 + (seg.ay - tail.y) ** 2;
           const dba = (seg.bx - tail.x) ** 2 + (seg.by - tail.y) ** 2;
           
-          if (daa < eps * eps) {
-            chain.push({ x: seg.bx, y: seg.by });
-            used[i] = true;
-            extended = true;
-            break;
-          } else if (dba < eps * eps) {
-            chain.push({ x: seg.ax, y: seg.ay });
-            used[i] = true;
-            extended = true;
-            break;
-          }
+          if (daa < bestDist) { bestDist = daa; bestIdx = i; bestEnd = 'a'; }
+          if (dba < bestDist) { bestDist = dba; bestIdx = i; bestEnd = 'b'; }
+        }
+        
+        if (bestIdx >= 0) {
+          const seg = segments[bestIdx];
+          chain.push(bestEnd === 'a' ? { x: seg.bx, y: seg.by } : { x: seg.ax, y: seg.ay });
+          used[bestIdx] = true;
+          extended = true;
         }
       }
       
@@ -453,33 +464,88 @@ export class ProfileChart {
       while (extended) {
         extended = false;
         const head = chain[0];
+        let bestIdx = -1;
+        let bestDist = epsSq;
+        let bestEnd = 'a';
+        
         for (let i = 0; i < segments.length; i++) {
           if (used[i]) continue;
           const seg = segments[i];
-          
           const daa = (seg.ax - head.x) ** 2 + (seg.ay - head.y) ** 2;
           const dba = (seg.bx - head.x) ** 2 + (seg.by - head.y) ** 2;
           
-          if (daa < eps * eps) {
-            chain.unshift({ x: seg.bx, y: seg.by });
-            used[i] = true;
-            extended = true;
-            break;
-          } else if (dba < eps * eps) {
-            chain.unshift({ x: seg.ax, y: seg.ay });
-            used[i] = true;
-            extended = true;
-            break;
-          }
+          if (daa < bestDist) { bestDist = daa; bestIdx = i; bestEnd = 'a'; }
+          if (dba < bestDist) { bestDist = dba; bestIdx = i; bestEnd = 'b'; }
+        }
+        
+        if (bestIdx >= 0) {
+          const seg = segments[bestIdx];
+          chain.unshift(bestEnd === 'a' ? { x: seg.bx, y: seg.by } : { x: seg.ax, y: seg.ay });
+          used[bestIdx] = true;
+          extended = true;
         }
       }
       
       chains.push(chain);
     }
     
-    // Use the longest chain as the outer contour
-    chains.sort((a, b) => b.length - a.length);
-    this.outerProfilePoints = chains[0] || [];
+    // Merge chains whose endpoints are close (with wider tolerance)
+    const mergeTol = eps * 3;
+    const mergeTolSq = mergeTol * mergeTol;
+    let merged = true;
+    while (merged) {
+      merged = false;
+      for (let i = 0; i < chains.length && !merged; i++) {
+        const ci = chains[i];
+        if (ci.length === 0) continue;
+        const ciHead = ci[0];
+        const ciTail = ci[ci.length - 1];
+        
+        for (let j = i + 1; j < chains.length && !merged; j++) {
+          const cj = chains[j];
+          if (cj.length === 0) continue;
+          const cjHead = cj[0];
+          const cjTail = cj[cj.length - 1];
+          
+          // Check 4 possible connections
+          const d_tailHead = (ciTail.x - cjHead.x) ** 2 + (ciTail.y - cjHead.y) ** 2;
+          const d_tailTail = (ciTail.x - cjTail.x) ** 2 + (ciTail.y - cjTail.y) ** 2;
+          const d_headHead = (ciHead.x - cjHead.x) ** 2 + (ciHead.y - cjHead.y) ** 2;
+          const d_headTail = (ciHead.x - cjTail.x) ** 2 + (ciHead.y - cjTail.y) ** 2;
+          
+          if (d_tailHead < mergeTolSq) {
+            // ci.tail -> cj.head: append cj to ci
+            chains[i] = [...ci, ...cj];
+            chains.splice(j, 1);
+            merged = true;
+          } else if (d_tailTail < mergeTolSq) {
+            // ci.tail -> cj.tail: append reversed cj
+            chains[i] = [...ci, ...cj.reverse()];
+            chains.splice(j, 1);
+            merged = true;
+          } else if (d_headHead < mergeTolSq) {
+            // ci.head -> cj.head: prepend reversed cj
+            chains[i] = [...cj.reverse(), ...ci];
+            chains.splice(j, 1);
+            merged = true;
+          } else if (d_headTail < mergeTolSq) {
+            // cj.tail -> ci.head: prepend cj
+            chains[i] = [...cj, ...ci];
+            chains.splice(j, 1);
+            merged = true;
+          }
+        }
+      }
+    }
+    
+    // Filter out tiny chains (noise) — keep chains with >= 5 points
+    const validChains = chains.filter(c => c.length >= 5);
+    
+    // Store all valid chains for drawing
+    this.outerChains = validChains;
+    // Also keep the longest chain as the main outer profile
+    validChains.sort((a, b) => b.length - a.length);
+    this.outerProfilePoints = validChains[0] || [];
   }
 
   private computeBounds(): void {
@@ -750,26 +816,30 @@ export class ProfileChart {
    */
   private drawOuterLayer(): void {
     if (!this.data) return;
-    if (this.outerProfilePoints.length < 3) return;
+    if (this.outerChains.length === 0) return;
 
     const ctx = this.ctx;
     
-    // Draw only the outer surface contour line (dark gray, no fill)
+    // Draw all outer surface contour chains (dark gray, no fill)
     ctx.strokeStyle = 'rgba(80, 80, 80, 0.85)';
     ctx.lineWidth = 2;
     ctx.setLineDash([]);
-    ctx.beginPath();
-    for (let i = 0; i < this.outerProfilePoints.length; i++) {
-      const pt = this.outerProfilePoints[i];
-      const sx = this.dataToScreenX(pt.x);
-      const sy = this.dataToScreenY(pt.y);
-      if (i === 0) {
-        ctx.moveTo(sx, sy);
-      } else {
-        ctx.lineTo(sx, sy);
+    
+    for (const chain of this.outerChains) {
+      if (chain.length < 3) continue;
+      ctx.beginPath();
+      for (let i = 0; i < chain.length; i++) {
+        const pt = chain[i];
+        const sx = this.dataToScreenX(pt.x);
+        const sy = this.dataToScreenY(pt.y);
+        if (i === 0) {
+          ctx.moveTo(sx, sy);
+        } else {
+          ctx.lineTo(sx, sy);
+        }
       }
+      ctx.stroke();
     }
-    ctx.stroke();
   }
 
   private drawProfile(): void {
