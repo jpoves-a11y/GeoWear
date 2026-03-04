@@ -121,6 +121,9 @@ export class ProfileWindowManager {
     const win = document.createElement('div');
     win.className = 'profile-window';
     win.id = id;
+    // Set initial size explicitly to prevent auto-resize issues
+    win.style.width = '550px';
+    win.style.height = '400px';
     win.innerHTML = `
       <div class="profile-window-header">
         <span class="profile-window-title">Section ${dg.angleA}° — ${dg.angleB}°</span>
@@ -210,22 +213,50 @@ export class ProfileWindowManager {
       this.bringToFront(win);
     });
 
-    // Handle resize events with ResizeObserver
-    const content = win.element.querySelector('.profile-window-content') as HTMLElement;
+    // Handle resize events with ResizeObserver (with debounce to prevent infinite loop)
     const canvas = win.element.querySelector('.profile-chart-canvas') as HTMLCanvasElement;
+    let lastWidth = 0;
+    let lastHeight = 0;
+    let resizeTimeout: number | null = null;
     
-    const resizeObserver = new ResizeObserver(() => {
-      // Update canvas size to match container
+    const resizeObserver = new ResizeObserver((entries) => {
+      // Get the new size from the content rect
+      const entry = entries[0];
+      if (!entry) return;
+      
       const rect = canvas.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        canvas.width = rect.width * window.devicePixelRatio;
-        canvas.height = rect.height * window.devicePixelRatio;
-        win.chart.render();
+      const newWidth = Math.floor(rect.width);
+      const newHeight = Math.floor(rect.height);
+      
+      // Only update if size actually changed significantly (avoid loop)
+      if (Math.abs(newWidth - lastWidth) < 2 && Math.abs(newHeight - lastHeight) < 2) return;
+      if (newWidth < 100 || newHeight < 100) return;
+      
+      // Debounce the resize
+      if (resizeTimeout) {
+        clearTimeout(resizeTimeout);
       }
+      
+      resizeTimeout = window.setTimeout(() => {
+        lastWidth = newWidth;
+        lastHeight = newHeight;
+        canvas.width = newWidth * window.devicePixelRatio;
+        canvas.height = newHeight * window.devicePixelRatio;
+        win.chart.render();
+      }, 50);
     });
     
-    resizeObserver.observe(content);
+    // Only observe the window element, not content
     resizeObserver.observe(win.element);
+    
+    // Initialize canvas size immediately
+    const initialRect = canvas.getBoundingClientRect();
+    if (initialRect.width > 100 && initialRect.height > 100) {
+      lastWidth = Math.floor(initialRect.width);
+      lastHeight = Math.floor(initialRect.height);
+      canvas.width = lastWidth * window.devicePixelRatio;
+      canvas.height = lastHeight * window.devicePixelRatio;
+    }
   }
 
   private bringToFront(win: ProfileWindow): void {

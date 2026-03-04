@@ -555,43 +555,65 @@ export class ProfileChart {
 
   /**
    * Draw the outer layer (external cup surface) for context.
-   * This shows the wall thickness of the UHMWPE liner.
+   * Uses the actual inner profile displaced outward by wall thickness.
    */
   private drawOuterLayer(): void {
-    if (this.sphereRadius <= 0 || this.wallThickness <= 0) return;
+    if (this.wallThickness <= 0 || this.profilePoints.length < 3) return;
+    if (!this.data) return;
 
     const ctx = this.ctx;
     
-    // Project sphere center to profile plane
-    const scx = this.sphereCenter[0] - this.centroid.x;
-    const scy = this.sphereCenter[1] - this.centroid.y;
-    const scz = this.sphereCenter[2] - this.centroid.z;
-    const cx = scx * this.uAxis.x + scy * this.uAxis.y + scz * this.uAxis.z;
-    const cy = scx * this.vAxis.x + scy * this.vAxis.y + scz * this.vAxis.z;
+    // Compute outer profile points by displacing inner points radially outward
+    const outerPoints: { x: number; y: number }[] = [];
     
-    // Outer radius = inner radius + wall thickness
-    const outerR = this.sphereRadius + this.wallThickness;
-    const innerR = this.sphereRadius;
+    for (const pt of this.profilePoints) {
+      const orig = pt.original;
+      const pos = orig.position;
+      
+      // Direction from sphere center to point (radial direction)
+      const dx = pos[0] - this.sphereCenter[0];
+      const dy = pos[1] - this.sphereCenter[1];
+      const dz = pos[2] - this.sphereCenter[2];
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (dist < 0.001) continue;
+      
+      // Normalize to get radial direction
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const nz = dz / dist;
+      
+      // Outer point = inner point + normal * wall thickness
+      const outerX = pos[0] + nx * this.wallThickness;
+      const outerY = pos[1] + ny * this.wallThickness;
+      const outerZ = pos[2] + nz * this.wallThickness;
+      
+      // Project outer point to 2D profile plane
+      const odx = outerX - this.centroid.x;
+      const ody = outerY - this.centroid.y;
+      const odz = outerZ - this.centroid.z;
+      
+      const u = odx * this.uAxis.x + ody * this.uAxis.y + odz * this.uAxis.z;
+      const v = odx * this.vAxis.x + ody * this.vAxis.y + odz * this.vAxis.z;
+      
+      outerPoints.push({ x: u, y: v });
+    }
+    
+    if (outerPoints.length < 3) return;
 
-    // Draw the wall area between inner and outer as a filled region
-    // Only draw the upper hemisphere (the observable cup shape)
+    // Draw the wall area between inner and outer profiles
     ctx.fillStyle = this.COLORS.outerFill;
     ctx.strokeStyle = this.COLORS.outerStroke;
     ctx.lineWidth = 1.5;
 
-    const numPoints = 80;
-    
     // Create path for the wall cross-section band
     ctx.beginPath();
     
-    // Draw outer arc (from left edge going up and around to right edge)
-    for (let i = 0; i <= numPoints; i++) {
-      // Angle from -90° to +90° (the upper hemisphere visible portion)
-      const angle = (-Math.PI / 2) + (i / numPoints) * Math.PI;
-      const px = cx + outerR * Math.cos(angle);
-      const py = cy + outerR * Math.sin(angle);
-      const sx = this.dataToScreenX(px);
-      const sy = this.dataToScreenY(py);
+    // Draw outer profile (forward direction)
+    for (let i = 0; i < outerPoints.length; i++) {
+      const pt = outerPoints[i];
+      const sx = this.dataToScreenX(pt.x);
+      const sy = this.dataToScreenY(pt.y);
       
       if (i === 0) {
         ctx.moveTo(sx, sy);
@@ -600,13 +622,11 @@ export class ProfileChart {
       }
     }
     
-    // Close to inner arc (from right edge going back around to left edge)
-    for (let i = numPoints; i >= 0; i--) {
-      const angle = (-Math.PI / 2) + (i / numPoints) * Math.PI;
-      const px = cx + innerR * Math.cos(angle);
-      const py = cy + innerR * Math.sin(angle);
-      const sx = this.dataToScreenX(px);
-      const sy = this.dataToScreenY(py);
+    // Connect to inner profile (reverse direction to close the shape)
+    for (let i = this.profilePoints.length - 1; i >= 0; i--) {
+      const pt = this.profilePoints[i];
+      const sx = this.dataToScreenX(pt.x);
+      const sy = this.dataToScreenY(pt.y);
       ctx.lineTo(sx, sy);
     }
     
@@ -615,12 +635,10 @@ export class ProfileChart {
     
     // Draw outer edge line
     ctx.beginPath();
-    for (let i = 0; i <= numPoints; i++) {
-      const angle = (-Math.PI / 2) + (i / numPoints) * Math.PI;
-      const px = cx + outerR * Math.cos(angle);
-      const py = cy + outerR * Math.sin(angle);
-      const sx = this.dataToScreenX(px);
-      const sy = this.dataToScreenY(py);
+    for (let i = 0; i < outerPoints.length; i++) {
+      const pt = outerPoints[i];
+      const sx = this.dataToScreenX(pt.x);
+      const sy = this.dataToScreenY(pt.y);
       
       if (i === 0) {
         ctx.moveTo(sx, sy);
@@ -630,37 +648,39 @@ export class ProfileChart {
     }
     ctx.stroke();
 
-    // Draw the edge lines connecting inner and outer at the rim (bottom edges)
+    // Draw edge lines at the rim (connecting inner and outer at endpoints)
     ctx.strokeStyle = this.COLORS.outer;
     ctx.lineWidth = 1;
     
-    // Left edge
-    const leftInnerX = this.dataToScreenX(cx - innerR);
-    const leftInnerY = this.dataToScreenY(cy);
-    const leftOuterX = this.dataToScreenX(cx - outerR);
-    const leftOuterY = this.dataToScreenY(cy);
-    ctx.beginPath();
-    ctx.moveTo(leftInnerX, leftInnerY);
-    ctx.lineTo(leftOuterX, leftOuterY);
-    ctx.stroke();
-    
-    // Right edge
-    const rightInnerX = this.dataToScreenX(cx + innerR);
-    const rightInnerY = this.dataToScreenY(cy);
-    const rightOuterX = this.dataToScreenX(cx + outerR);
-    const rightOuterY = this.dataToScreenY(cy);
-    ctx.beginPath();
-    ctx.moveTo(rightInnerX, rightInnerY);
-    ctx.lineTo(rightOuterX, rightOuterY);
-    ctx.stroke();
+    // Left edge (first points)
+    if (outerPoints.length > 0 && this.profilePoints.length > 0) {
+      const innerFirst = this.profilePoints[0];
+      const outerFirst = outerPoints[0];
+      ctx.beginPath();
+      ctx.moveTo(this.dataToScreenX(innerFirst.x), this.dataToScreenY(innerFirst.y));
+      ctx.lineTo(this.dataToScreenX(outerFirst.x), this.dataToScreenY(outerFirst.y));
+      ctx.stroke();
+      
+      // Right edge (last points)
+      const innerLast = this.profilePoints[this.profilePoints.length - 1];
+      const outerLast = outerPoints[outerPoints.length - 1];
+      ctx.beginPath();
+      ctx.moveTo(this.dataToScreenX(innerLast.x), this.dataToScreenY(innerLast.y));
+      ctx.lineTo(this.dataToScreenX(outerLast.x), this.dataToScreenY(outerLast.y));
+      ctx.stroke();
+    }
 
     // Label for outer layer
-    ctx.fillStyle = this.COLORS.outerStroke;
-    ctx.font = '9px sans-serif';
-    ctx.textAlign = 'right';
-    const olabelX = this.dataToScreenX(cx - outerR * 0.85);
-    const olabelY = this.dataToScreenY(cy + outerR * 0.5);
-    ctx.fillText('Outer surface', olabelX - 3, olabelY);
+    if (outerPoints.length > 0) {
+      ctx.fillStyle = this.COLORS.outerStroke;
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'left';
+      const labelIdx = Math.floor(outerPoints.length * 0.15);
+      const labelPt = outerPoints[labelIdx];
+      const labelX = this.dataToScreenX(labelPt.x);
+      const labelY = this.dataToScreenY(labelPt.y);
+      ctx.fillText('Outer surface', labelX - 60, labelY - 5);
+    }
   }
 
   private drawProfile(): void {

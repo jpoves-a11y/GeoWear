@@ -151,6 +151,132 @@ export class GeodesicRenderer {
   }
 
   /**
+   * Render geodesics in batches to avoid UI freezing.
+   * Processes BATCH_SIZE geodesics at a time, yielding between batches.
+   */
+  async renderGeodesicsAsync(
+    geodesics: Geodesic[],
+    groupOffset: THREE.Vector3,
+    visible: boolean = true,
+    curvatureThreshold: number = 0,
+    onProgress?: (progress: number) => void
+  ): Promise<void> {
+    this.clear();
+    this.curvatureThreshold = curvatureThreshold;
+
+    const BATCH_SIZE = 6; // Process 6 geodesics per batch
+    const total = geodesics.length;
+
+    // Lazily create shared marker geometry / material
+    if (!GeodesicRenderer.markerGeo) {
+      GeodesicRenderer.markerGeo = new THREE.SphereGeometry(0.18, 8, 8);
+    }
+    if (!GeodesicRenderer.markerMat) {
+      GeodesicRenderer.markerMat = new THREE.MeshBasicMaterial({
+        color: 0xff2222,
+        transparent: true,
+        opacity: 0.85,
+      });
+    }
+
+    for (let batch = 0; batch < total; batch += BATCH_SIZE) {
+      const endIdx = Math.min(batch + BATCH_SIZE, total);
+      
+      for (let idx = batch; idx < endIdx; idx++) {
+        const geo = geodesics[idx];
+        if (geo.points.length < 2) continue;
+
+        const linePoints: THREE.Vector3[] = [];
+        const lineColors: number[] = [];
+
+        for (const pt of geo.points) {
+          const pos = new THREE.Vector3(
+            pt.position[0] + groupOffset.x,
+            pt.position[1] + groupOffset.y,
+            pt.position[2] + groupOffset.z,
+          );
+          linePoints.push(pos);
+
+          const absD2 = Math.abs(pt.secondDerivative);
+          const isIrregular = curvatureThreshold > 0 && absD2 > curvatureThreshold;
+
+          let r: number, g: number, b: number;
+          if (isIrregular) {
+            const severity = Math.min((absD2 - curvatureThreshold) / curvatureThreshold, 1);
+            r = 0.95;
+            g = 0.35 * (1 - severity);
+            b = 0.05;
+          } else {
+            r = 0.1; g = 0.75; b = 0.2;
+          }
+          lineColors.push(r, g, b);
+        }
+
+        // Irregularity peak markers
+        if (curvatureThreshold > 0) {
+          let inIrregular = false;
+          let peakIdx = -1;
+          let peakVal = 0;
+
+          for (let i = 0; i < geo.points.length; i++) {
+            const absD2 = Math.abs(geo.points[i].secondDerivative);
+            const isIrr = absD2 > curvatureThreshold;
+
+            if (isIrr) {
+              if (!inIrregular) {
+                inIrregular = true;
+                peakIdx = i;
+                peakVal = absD2;
+              } else if (absD2 > peakVal) {
+                peakIdx = i;
+                peakVal = absD2;
+              }
+            }
+
+            if (inIrregular && (!isIrr || i === geo.points.length - 1)) {
+              const marker = new THREE.Mesh(
+                GeodesicRenderer.markerGeo!,
+                GeodesicRenderer.markerMat!,
+              );
+              marker.position.copy(linePoints[peakIdx]);
+              marker.name = 'irregularity-marker';
+              this.irregularityMarkers.push(marker);
+              this.geodesicGroup.add(marker);
+
+              if (!isIrr) inIrregular = false;
+            }
+          }
+        }
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(linePoints);
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(lineColors, 3));
+
+        const material = new THREE.LineBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.6,
+          linewidth: 1,
+        });
+
+        const line = new THREE.Line(geometry, material);
+        line.name = `geodesic-${geo.angle}`;
+        line.visible = visible;
+        this.geodesicLines.push(line);
+        this.lineRegularity.push(geo.isRegular);
+        this.geodesicGroup.add(line);
+      }
+
+      // Report progress and yield to UI
+      if (onProgress) {
+        onProgress(endIdx / total);
+      }
+      
+      // Yield to allow UI updates
+      await new Promise<void>(r => setTimeout(r, 0));
+    }
+  }
+
+  /**
    * Render the pole marker.
    */
   renderPole(position: THREE.Vector3, groupOffset: THREE.Vector3): void {

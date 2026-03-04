@@ -414,12 +414,20 @@ export class App {
       }
       this.setProgress(40);
 
-      // 3. Geodesic rendering (~55%)
+      // 3. Geodesic rendering (~55%) - async batched for UI responsiveness
       this.updateLoadingText('Rendering geodesics...');
       await new Promise<void>(r => setTimeout(r, 0));
 
       if (p.state.geodesics.length > 0) {
-        this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset, true, p.state.curvatureThreshold || 0);
+        await this.geodesicRenderer.renderGeodesicsAsync(
+          p.state.geodesics, 
+          offset, 
+          true, 
+          p.state.curvatureThreshold || 0,
+          (progress) => {
+            this.setProgress(40 + progress * 15); // 40% to 55%
+          }
+        );
         this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
       }
       if (p.state.polePosition) {
