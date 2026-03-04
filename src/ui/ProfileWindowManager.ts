@@ -99,15 +99,23 @@ export class ProfileWindowManager {
     const element = this.createWindowElement(windowId, doubleGeodesic);
     this.windowContainer.appendChild(element);
 
-    // Create chart
+    // Create chart with loading indicator
     const canvas = element.querySelector('.profile-chart-canvas') as HTMLCanvasElement;
+    const loadingOverlay = element.querySelector('.profile-loading-overlay') as HTMLElement;
     const chart = new ProfileChart(canvas);
     chart.setSphereRadius(this.sphereRadius);
     chart.setSphereCenter(this.sphereCenter);
     if (this.outerMesh) {
       chart.setOuterMesh(this.outerMesh);
     }
-    chart.setData(doubleGeodesic);
+    
+    // Defer heavy processing to show window immediately with loading indicator
+    setTimeout(() => {
+      chart.setData(doubleGeodesic);
+      if (loadingOverlay) {
+        loadingOverlay.classList.add('hidden');
+      }
+    }, 50);
 
     // Calculate initial position with offset
     const offsetX = 50 + (this.nextWindowOffset % 5) * 30;
@@ -148,6 +156,10 @@ export class ProfileWindowManager {
         </div>
       </div>
       <div class="profile-window-content">
+        <div class="profile-loading-overlay">
+          <div class="profile-loading-spinner"></div>
+          <span>Computing profile...</span>
+        </div>
         <canvas class="profile-chart-canvas" width="500" height="300"></canvas>
         <div class="profile-chart-controls">
           <label class="profile-checkbox">

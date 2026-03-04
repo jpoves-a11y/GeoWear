@@ -661,89 +661,26 @@ export class ProfileChart {
    * or falls back to radial displacement if no outer mesh is available.
    */
   private drawOuterLayer(): void {
-    if (this.profilePoints.length < 3) return;
     if (!this.data) return;
 
     const ctx = this.ctx;
     
-    // Use real outer mesh intersection if available, otherwise fallback to displacement
+    // Use real outer mesh intersection if available
     let outerPoints: { x: number; y: number }[];
     
     if (this.outerProfilePoints.length >= 3) {
       // Use real outer mesh section
       outerPoints = this.outerProfilePoints;
-    } else if (this.wallThickness > 0) {
-      // Fallback: compute outer profile by displacing inner points radially outward
-      outerPoints = [];
-      for (const pt of this.profilePoints) {
-        const orig = pt.original;
-        const pos = orig.position;
-        
-        const dx = pos[0] - this.sphereCenter[0];
-        const dy = pos[1] - this.sphereCenter[1];
-        const dz = pos[2] - this.sphereCenter[2];
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        
-        if (dist < 0.001) continue;
-        
-        const nx = dx / dist;
-        const ny = dy / dist;
-        const nz = dz / dist;
-        
-        const outerX = pos[0] + nx * this.wallThickness;
-        const outerY = pos[1] + ny * this.wallThickness;
-        const outerZ = pos[2] + nz * this.wallThickness;
-        
-        const odx = outerX - this.centroid.x;
-        const ody = outerY - this.centroid.y;
-        const odz = outerZ - this.centroid.z;
-        
-        const u = odx * this.uAxis.x + ody * this.uAxis.y + odz * this.uAxis.z;
-        const v = odx * this.vAxis.x + ody * this.vAxis.y + odz * this.vAxis.z;
-        
-        outerPoints.push({ x: u, y: v });
-      }
     } else {
+      // No outer mesh available
       return;
     }
     
     if (outerPoints.length < 3) return;
 
-    // Draw the wall area as semi-transparent gray fill
-    ctx.fillStyle = 'rgba(180, 180, 180, 0.25)';
-    ctx.strokeStyle = 'rgba(120, 120, 120, 0.6)';
-    ctx.lineWidth = 1.5;
-
-    // Create path for the wall cross-section band
-    ctx.beginPath();
-    
-    // Draw outer profile (forward direction)
-    for (let i = 0; i < outerPoints.length; i++) {
-      const pt = outerPoints[i];
-      const sx = this.dataToScreenX(pt.x);
-      const sy = this.dataToScreenY(pt.y);
-      
-      if (i === 0) {
-        ctx.moveTo(sx, sy);
-      } else {
-        ctx.lineTo(sx, sy);
-      }
-    }
-    
-    // Connect to inner profile (reverse direction to close the shape)
-    for (let i = this.profilePoints.length - 1; i >= 0; i--) {
-      const pt = this.profilePoints[i];
-      const sx = this.dataToScreenX(pt.x);
-      const sy = this.dataToScreenY(pt.y);
-      ctx.lineTo(sx, sy);
-    }
-    
-    ctx.closePath();
-    ctx.fill();
-    
-    // Draw outer edge line (gray)
-    ctx.strokeStyle = 'rgba(100, 100, 100, 0.7)';
-    ctx.lineWidth = 1.5;
+    // Draw only the outer surface line (gray)
+    ctx.strokeStyle = 'rgba(80, 80, 80, 0.8)';
+    ctx.lineWidth = 2;
     ctx.beginPath();
     for (let i = 0; i < outerPoints.length; i++) {
       const pt = outerPoints[i];
@@ -757,28 +694,6 @@ export class ProfileChart {
       }
     }
     ctx.stroke();
-
-    // Draw edge lines at the rim (connecting inner and outer at endpoints)
-    ctx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
-    ctx.lineWidth = 1;
-    
-    // Left edge (first points)
-    if (outerPoints.length > 0 && this.profilePoints.length > 0) {
-      const innerFirst = this.profilePoints[0];
-      const outerFirst = outerPoints[0];
-      ctx.beginPath();
-      ctx.moveTo(this.dataToScreenX(innerFirst.x), this.dataToScreenY(innerFirst.y));
-      ctx.lineTo(this.dataToScreenX(outerFirst.x), this.dataToScreenY(outerFirst.y));
-      ctx.stroke();
-      
-      // Right edge (last points)
-      const innerLast = this.profilePoints[this.profilePoints.length - 1];
-      const outerLast = outerPoints[outerPoints.length - 1];
-      ctx.beginPath();
-      ctx.moveTo(this.dataToScreenX(innerLast.x), this.dataToScreenY(innerLast.y));
-      ctx.lineTo(this.dataToScreenX(outerLast.x), this.dataToScreenY(outerLast.y));
-      ctx.stroke();
-    }
   }
 
   private drawProfile(): void {
