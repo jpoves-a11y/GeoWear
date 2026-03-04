@@ -209,6 +209,23 @@ export class ProfileWindowManager {
     win.element.addEventListener('mousedown', () => {
       this.bringToFront(win);
     });
+
+    // Handle resize events with ResizeObserver
+    const content = win.element.querySelector('.profile-window-content') as HTMLElement;
+    const canvas = win.element.querySelector('.profile-chart-canvas') as HTMLCanvasElement;
+    
+    const resizeObserver = new ResizeObserver(() => {
+      // Update canvas size to match container
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        canvas.width = rect.width * window.devicePixelRatio;
+        canvas.height = rect.height * window.devicePixelRatio;
+        win.chart.render();
+      }
+    });
+    
+    resizeObserver.observe(content);
+    resizeObserver.observe(win.element);
   }
 
   private bringToFront(win: ProfileWindow): void {

@@ -32,7 +32,9 @@ export class ProfileChart {
   private data: DoubleGeodesic | null = null;
   private sphereRadius: number = 0;
   private sphereCenter: [number, number, number] = [0, 0, 0];
+  private wallThickness: number = 6; // Typical UHMWPE liner wall thickness in mm
   private showSphere: boolean = true;
+  private showOuterLayer: boolean = true;
   
   // Projected profile points
   private profilePoints: ProfilePoint[] = [];
@@ -61,6 +63,9 @@ export class ProfileChart {
     irregular: '#d32f2f',
     sphere: '#0077cc',
     sphereFill: 'rgba(0, 119, 204, 0.1)',
+    outer: '#00b4ff',
+    outerFill: 'rgba(0, 180, 255, 0.12)',
+    outerStroke: 'rgba(0, 180, 255, 0.5)',
     grid: '#e0e0e0',
     gridMajor: '#c0c0c0',
     text: '#333333',
@@ -159,6 +164,22 @@ export class ProfileChart {
 
   setSphereCenter(center: [number, number, number]): void {
     this.sphereCenter = center;
+    this.render();
+  }
+
+  /**
+   * Set wall thickness for outer layer visualization.
+   */
+  setWallThickness(thickness: number): void {
+    this.wallThickness = thickness;
+    this.render();
+  }
+
+  /**
+   * Toggle showing outer layer.
+   */
+  setShowOuterLayer(show: boolean): void {
+    this.showOuterLayer = show;
     this.render();
   }
 
@@ -392,6 +413,11 @@ export class ProfileChart {
     // Draw grid
     this.drawGrid();
 
+    // Draw outer layer (external cup surface) - semi-transparent for context
+    if (this.showOuterLayer && this.sphereRadius > 0) {
+      this.drawOuterLayer();
+    }
+
     // Draw ideal sphere arc
     if (this.showSphere && this.sphereRadius > 0) {
       this.drawSphereArc();
@@ -525,6 +551,116 @@ export class ProfileChart {
     const labelX = this.dataToScreenX(cx + r * 0.7);
     const labelY = this.dataToScreenY(cy + r * 0.7);
     ctx.fillText('Ideal sphere', labelX + 5, labelY);
+  }
+
+  /**
+   * Draw the outer layer (external cup surface) for context.
+   * This shows the wall thickness of the UHMWPE liner.
+   */
+  private drawOuterLayer(): void {
+    if (this.sphereRadius <= 0 || this.wallThickness <= 0) return;
+
+    const ctx = this.ctx;
+    
+    // Project sphere center to profile plane
+    const scx = this.sphereCenter[0] - this.centroid.x;
+    const scy = this.sphereCenter[1] - this.centroid.y;
+    const scz = this.sphereCenter[2] - this.centroid.z;
+    const cx = scx * this.uAxis.x + scy * this.uAxis.y + scz * this.uAxis.z;
+    const cy = scx * this.vAxis.x + scy * this.vAxis.y + scz * this.vAxis.z;
+    
+    // Outer radius = inner radius + wall thickness
+    const outerR = this.sphereRadius + this.wallThickness;
+    const innerR = this.sphereRadius;
+
+    // Draw the wall area between inner and outer as a filled region
+    // Only draw the upper hemisphere (the observable cup shape)
+    ctx.fillStyle = this.COLORS.outerFill;
+    ctx.strokeStyle = this.COLORS.outerStroke;
+    ctx.lineWidth = 1.5;
+
+    const numPoints = 80;
+    
+    // Create path for the wall cross-section band
+    ctx.beginPath();
+    
+    // Draw outer arc (from left edge going up and around to right edge)
+    for (let i = 0; i <= numPoints; i++) {
+      // Angle from -90° to +90° (the upper hemisphere visible portion)
+      const angle = (-Math.PI / 2) + (i / numPoints) * Math.PI;
+      const px = cx + outerR * Math.cos(angle);
+      const py = cy + outerR * Math.sin(angle);
+      const sx = this.dataToScreenX(px);
+      const sy = this.dataToScreenY(py);
+      
+      if (i === 0) {
+        ctx.moveTo(sx, sy);
+      } else {
+        ctx.lineTo(sx, sy);
+      }
+    }
+    
+    // Close to inner arc (from right edge going back around to left edge)
+    for (let i = numPoints; i >= 0; i--) {
+      const angle = (-Math.PI / 2) + (i / numPoints) * Math.PI;
+      const px = cx + innerR * Math.cos(angle);
+      const py = cy + innerR * Math.sin(angle);
+      const sx = this.dataToScreenX(px);
+      const sy = this.dataToScreenY(py);
+      ctx.lineTo(sx, sy);
+    }
+    
+    ctx.closePath();
+    ctx.fill();
+    
+    // Draw outer edge line
+    ctx.beginPath();
+    for (let i = 0; i <= numPoints; i++) {
+      const angle = (-Math.PI / 2) + (i / numPoints) * Math.PI;
+      const px = cx + outerR * Math.cos(angle);
+      const py = cy + outerR * Math.sin(angle);
+      const sx = this.dataToScreenX(px);
+      const sy = this.dataToScreenY(py);
+      
+      if (i === 0) {
+        ctx.moveTo(sx, sy);
+      } else {
+        ctx.lineTo(sx, sy);
+      }
+    }
+    ctx.stroke();
+
+    // Draw the edge lines connecting inner and outer at the rim (bottom edges)
+    ctx.strokeStyle = this.COLORS.outer;
+    ctx.lineWidth = 1;
+    
+    // Left edge
+    const leftInnerX = this.dataToScreenX(cx - innerR);
+    const leftInnerY = this.dataToScreenY(cy);
+    const leftOuterX = this.dataToScreenX(cx - outerR);
+    const leftOuterY = this.dataToScreenY(cy);
+    ctx.beginPath();
+    ctx.moveTo(leftInnerX, leftInnerY);
+    ctx.lineTo(leftOuterX, leftOuterY);
+    ctx.stroke();
+    
+    // Right edge
+    const rightInnerX = this.dataToScreenX(cx + innerR);
+    const rightInnerY = this.dataToScreenY(cy);
+    const rightOuterX = this.dataToScreenX(cx + outerR);
+    const rightOuterY = this.dataToScreenY(cy);
+    ctx.beginPath();
+    ctx.moveTo(rightInnerX, rightInnerY);
+    ctx.lineTo(rightOuterX, rightOuterY);
+    ctx.stroke();
+
+    // Label for outer layer
+    ctx.fillStyle = this.COLORS.outerStroke;
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'right';
+    const olabelX = this.dataToScreenX(cx - outerR * 0.85);
+    const olabelY = this.dataToScreenY(cy + outerR * 0.5);
+    ctx.fillText('Outer surface', olabelX - 3, olabelY);
   }
 
   private drawProfile(): void {
