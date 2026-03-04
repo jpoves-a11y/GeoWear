@@ -69,6 +69,17 @@ export interface Geodesic {
   isRegular: boolean;      // true if curvature is consistent with regular sphere
 }
 
+/** Double geodesic: two opposing geodesics combined edge-to-edge through the pole */
+export interface DoubleGeodesic {
+  angleA: number;          // first geodesic angle (e.g., 0°)
+  angleB: number;          // opposite geodesic angle (e.g., 180°)
+  points: GeodesicPoint[]; // combined points: rimA → pole → rimB
+  totalLength: number;     // total arc length edge-to-edge
+  poleIndex: number;       // index of pole point in combined array
+  geodesicA: Geodesic;     // reference to original geodesic A
+  geodesicB: Geodesic;     // reference to original geodesic B
+}
+
 /** Anomaly classification */
 export type AnomalyType = 'bump' | 'dip';
 

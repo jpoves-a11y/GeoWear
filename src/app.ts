@@ -4,18 +4,20 @@
 // ============================================================
 
 import * as THREE from 'three';
-import type { MeshData, AnalysisParams, AnalysisResults } from './types';
+import type { MeshData, AnalysisParams, AnalysisResults, DoubleGeodesic } from './types';
 import { DEFAULT_PARAMS } from './types';
 import { weldVertices, buildTriangleIndices } from './utils/geometry';
 import { SceneManager } from './viewer/SceneManager';
 import { MeshViewer } from './viewer/MeshViewer';
 import { HeatMapRenderer } from './viewer/HeatMapRenderer';
 import { GeodesicRenderer } from './viewer/GeodesicRenderer';
+import { GeodesicInteractionManager } from './viewer/GeodesicInteractionManager';
 import { AnnotationManager } from './viewer/Annotations';
 import { ControlPanel, type ControlCallbacks } from './ui/ControlPanel';
 import { ResultsPanel } from './ui/ResultsPanel';
 import { ExportManager } from './ui/ExportManager';
 import { StatusBar } from './ui/StatusBar';
+import { ProfileWindowManager } from './ui/ProfileWindowManager';
 import { WearAnalysisPipeline } from './analysis/WearAnalysis';
 
 export class App {
@@ -24,6 +26,7 @@ export class App {
   private meshViewer!: MeshViewer;
   private heatMap!: HeatMapRenderer;
   private geodesicRenderer!: GeodesicRenderer;
+  private geodesicInteraction!: GeodesicInteractionManager;
   private annotations!: AnnotationManager;
 
   // UI
@@ -31,6 +34,11 @@ export class App {
   private resultsPanel!: ResultsPanel;
   private exporter!: ExportManager;
   private status!: StatusBar;
+  private profileWindows!: ProfileWindowManager;
+
+  // Section mode UI
+  private sectionModeBtn!: HTMLButtonElement;
+  private sectionModeActive: boolean = false;
 
   // State
   private pipeline: WearAnalysisPipeline | null = null;
@@ -48,14 +56,35 @@ export class App {
     this.meshViewer = new MeshViewer(this.scene);
     this.heatMap = new HeatMapRenderer();
     this.geodesicRenderer = new GeodesicRenderer(this.scene);
+    this.geodesicInteraction = new GeodesicInteractionManager(this.scene);
     this.annotations = new AnnotationManager(this.scene);
 
     // UI modules
     this.status = new StatusBar();
     this.resultsPanel = new ResultsPanel();
+    this.profileWindows = new ProfileWindowManager();
+    
     this.resultsPanel.setGeodesicSelectHandler((angle: number) => {
       this.geodesicRenderer.highlightGeodesic(angle);
     });
+
+    // Setup geodesic interaction callbacks
+    this.geodesicInteraction.setCallbacks({
+      onHover: (dg: DoubleGeodesic | null) => {
+        if (dg) {
+          this.geodesicRenderer.highlightDoubleGeodesic(dg.angleA, dg.angleB);
+        } else {
+          this.geodesicRenderer.resetHighlight();
+        }
+      },
+      onSelect: (dg: DoubleGeodesic) => {
+        this.openGeodesicProfile(dg);
+      },
+    });
+
+    // Setup section mode button
+    this.sectionModeBtn = document.getElementById('btn-section-mode') as HTMLButtonElement;
+    this.setupSectionModeButton();
 
     const callbacks: ControlCallbacks = {
       onLoadSTL: () => this.openFileDialog(),
@@ -338,6 +367,9 @@ export class App {
       this.status.setStatus(`Geodesics: ${regularCount} regular, ${irregularCount} irregular`);
       this.hideLoading();
       this.controls.markStepCompleted('geodesics');
+      
+      // Enable section profile mode
+      this.enableSectionModeButton();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
       this.hideLoading();
@@ -478,6 +510,9 @@ export class App {
     if (p.state.geodesics.length > 0) {
       this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset, true, p.state.curvatureThreshold || 0);
       this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
+      
+      // Enable section profile mode
+      this.enableSectionModeButton();
     }
 
     // Pole
@@ -515,6 +550,8 @@ export class App {
     this.meshViewer.removeVertexColors();
     this.heatMap.hideLegend();
     this.resultsPanel.hide();
+    this.profileWindows.closeAll();
+    this.disableSectionModeButton();
   }
 
   private toggleHeatMap(visible: boolean): void {
@@ -589,6 +626,55 @@ export class App {
     if (!this.currentResults) { this.status.setStatus('Run analysis first'); return; }
     await this.exporter.exportPDF(this.currentResults, this.fileName);
     this.status.setStatus('PDF report exported');
+  }
+
+  // ---- Section Profile Mode ----
+
+  private setupSectionModeButton(): void {
+    this.sectionModeBtn.addEventListener('click', () => {
+      this.toggleSectionMode();
+    });
+  }
+
+  private toggleSectionMode(): void {
+    this.sectionModeActive = !this.sectionModeActive;
+    this.geodesicInteraction.setEnabled(this.sectionModeActive);
+    this.sectionModeBtn.classList.toggle('active', this.sectionModeActive);
+    
+    if (this.sectionModeActive) {
+      this.status.setStatus('Section mode: Click on a geodesic to view its profile');
+    } else {
+      this.geodesicRenderer.resetHighlight();
+      this.status.setStatus('Section mode disabled');
+    }
+  }
+
+  private enableSectionModeButton(): void {
+    this.sectionModeBtn.disabled = false;
+    
+    // Also update geodesic interaction with geodesic data
+    if (this.pipeline?.state.geodesics.length) {
+      const offset = this.meshViewer.getGroupOffset();
+      this.geodesicInteraction.setGeodesics(this.pipeline.state.geodesics, offset);
+      
+      // Set sphere radius for profile charts
+      if (this.pipeline.state.sphereFit) {
+        this.profileWindows.setSphereRadius(this.pipeline.state.sphereFit.radius);
+      }
+    }
+  }
+
+  private disableSectionModeButton(): void {
+    this.sectionModeBtn.disabled = true;
+    this.sectionModeBtn.classList.remove('active');
+    this.sectionModeActive = false;
+    this.geodesicInteraction.setEnabled(false);
+  }
+
+  private openGeodesicProfile(dg: DoubleGeodesic): void {
+    // Open profile window for the selected double geodesic
+    this.profileWindows.openWindow(dg);
+    this.status.setStatus(`Opened profile for geodesic ${dg.angleA}° — ${dg.angleB}°`);
   }
 
   // ---- Loading overlay ----

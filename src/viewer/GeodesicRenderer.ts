@@ -202,6 +202,28 @@ export class GeodesicRenderer {
   }
 
   /**
+   * Highlight a double geodesic (pair of opposing geodesics).
+   * Both geodesics in the pair are highlighted, others dimmed.
+   */
+  highlightDoubleGeodesic(angleA: number, angleB: number): void {
+    for (const line of this.geodesicLines) {
+      const lineAngle = parseFloat(line.name.replace('geodesic-', ''));
+      const mat = line.material as THREE.LineBasicMaterial;
+      
+      const isMatch = Math.abs(lineAngle - angleA) < 0.5 || Math.abs(lineAngle - angleB) < 0.5;
+      
+      if (isMatch) {
+        mat.opacity = 1.0;
+        mat.linewidth = 3;
+      } else {
+        mat.opacity = 0.15;
+        mat.linewidth = 1;
+      }
+      mat.needsUpdate = true;
+    }
+  }
+
+  /**
    * Set visibility of all geodesics.
    */
   setVisible(visible: boolean): void {

@@ -580,3 +580,208 @@ html, body {
   
   .view-hint { display: none; }
 }
+
+/* ---------- Profile Windows ---------- */
+#profile-windows-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 999;
+}
+
+.profile-window {
+  position: fixed;
+  min-width: 520px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.profile-window-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  cursor: move;
+  user-select: none;
+}
+
+.profile-window-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.profile-window-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.profile-window-controls button {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.profile-window-controls button:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.profile-btn-close:hover {
+  background: var(--danger) !important;
+  color: white !important;
+}
+
+.profile-window-content {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profile-chart-canvas {
+  width: 100%;
+  height: 280px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: #fafafa;
+  cursor: crosshair;
+}
+
+.profile-chart-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.profile-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.profile-checkbox input {
+  accent-color: var(--accent-primary);
+}
+
+.profile-btn-reset {
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.profile-btn-reset:hover {
+  background: var(--accent-primary);
+  color: white;
+  border-color: var(--accent-primary);
+}
+
+/* ---------- Minimized Windows Bar ---------- */
+.minimized-windows-bar {
+  position: fixed;
+  bottom: var(--statusbar-height);
+  left: var(--sidebar-width);
+  right: 0;
+  height: 32px;
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 4px;
+  z-index: 998;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.minimized-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.minimized-tab:hover {
+  background: var(--accent-primary);
+  color: white;
+  border-color: var(--accent-primary);
+}
+
+.minimized-tab span {
+  pointer-events: auto;
+}
+
+.min-tab-close {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+}
+
+.min-tab-close:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+/* Section mode button active state */
+#btn-section-mode.active {
+  background: var(--accent-primary);
+  color: white;
+}
+
+#btn-section-mode:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+#btn-section-mode svg {
+  display: block;
+}
