@@ -1,7 +1,7 @@
 // ============================================================
 // GeoWear — ProfileChart
 // 2D profile visualization of geodesic sections
-// Shows radial distance vs arc length with irregularity coloring
+// Shows the actual geometric cross-section profile
 // ============================================================
 
 import type { DoubleGeodesic, GeodesicPoint } from '../types';
@@ -9,15 +9,21 @@ import type { DoubleGeodesic, GeodesicPoint } from '../types';
 interface ViewTransform {
   offsetX: number;
   offsetY: number;
-  scaleX: number;
-  scaleY: number;
+  scale: number;
 }
 
 interface DataBounds {
-  minArc: number;
-  maxArc: number;
-  minRadius: number;
-  maxRadius: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+interface ProfilePoint {
+  x: number;           // horizontal position in profile plane
+  y: number;           // vertical position in profile plane  
+  original: GeodesicPoint;
+  isIrregular: boolean;
 }
 
 export class ProfileChart {
@@ -25,11 +31,20 @@ export class ProfileChart {
   private ctx: CanvasRenderingContext2D;
   private data: DoubleGeodesic | null = null;
   private sphereRadius: number = 0;
+  private sphereCenter: [number, number, number] = [0, 0, 0];
   private showSphere: boolean = true;
   
+  // Projected profile points
+  private profilePoints: ProfilePoint[] = [];
+  
+  // Projection axes (stored for sphere projection)
+  private uAxis = { x: 1, y: 0, z: 0 };
+  private vAxis = { x: 0, y: 1, z: 0 };
+  private centroid = { x: 0, y: 0, z: 0 };
+  
   // View state for pan/zoom
-  private view: ViewTransform = { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 };
-  private bounds: DataBounds = { minArc: 0, maxArc: 1, minRadius: 0, maxRadius: 1 };
+  private view: ViewTransform = { offsetX: 0, offsetY: 0, scale: 1 };
+  private bounds: DataBounds = { minX: 0, maxX: 1, minY: 0, maxY: 1 };
   
   // Interaction state
   private isDragging = false;
@@ -37,19 +52,22 @@ export class ProfileChart {
   private lastMouseY = 0;
   
   // Tooltip state
-  private hoveredPoint: GeodesicPoint | null = null;
+  private hoveredPoint: ProfilePoint | null = null;
   
   // Layout constants
-  private readonly MARGIN = { top: 20, right: 20, bottom: 40, left: 60 };
+  private readonly MARGIN = { top: 30, right: 30, bottom: 50, left: 60 };
   private readonly COLORS = {
     regular: '#1a8f3e',
     irregular: '#d32f2f',
     sphere: '#0077cc',
+    sphereFill: 'rgba(0, 119, 204, 0.1)',
     grid: '#e0e0e0',
     gridMajor: '#c0c0c0',
     text: '#333333',
     background: '#fafafa',
     pole: '#0077cc',
+    profile: '#2d5016',
+    profileFill: 'rgba(45, 80, 22, 0.15)',
   };
 
   constructor(canvas: HTMLCanvasElement) {
@@ -64,7 +82,7 @@ export class ProfileChart {
     // Mouse wheel for zoom
     this.canvas.addEventListener('wheel', (e: WheelEvent) => {
       e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      const factor = e.deltaY < 0 ? 1.15 : 0.87;
       
       // Zoom centered on mouse position
       const rect = this.canvas.getBoundingClientRect();
@@ -76,12 +94,10 @@ export class ProfileChart {
       const dataY = this.screenToDataY(mouseY);
       
       // Apply zoom
-      this.view.scaleX *= factor;
-      this.view.scaleY *= factor;
+      this.view.scale *= factor;
       
       // Clamp scale
-      this.view.scaleX = Math.max(0.5, Math.min(10, this.view.scaleX));
-      this.view.scaleY = Math.max(0.5, Math.min(10, this.view.scaleY));
+      this.view.scale = Math.max(0.3, Math.min(15, this.view.scale));
       
       // Adjust offset to keep mouse point fixed
       const newScreenX = this.dataToScreenX(dataX);
@@ -134,15 +150,20 @@ export class ProfileChart {
   }
 
   /**
-   * Set sphere radius for ideal sphere line.
+   * Set sphere center and radius for ideal sphere visualization.
    */
   setSphereRadius(radius: number): void {
     this.sphereRadius = radius;
     this.render();
   }
 
+  setSphereCenter(center: [number, number, number]): void {
+    this.sphereCenter = center;
+    this.render();
+  }
+
   /**
-   * Toggle showing the ideal sphere line.
+   * Toggle showing the ideal sphere arc.
    */
   setShowSphere(show: boolean): void {
     this.showSphere = show;
@@ -150,57 +171,140 @@ export class ProfileChart {
   }
 
   /**
-   * Set data to display.
+   * Set data to display and compute the 2D profile projection.
    */
   setData(data: DoubleGeodesic): void {
     this.data = data;
+    this.computeProfileProjection();
     this.computeBounds();
     this.resetView();
   }
 
+  /**
+   * Project 3D geodesic points onto a 2D profile plane.
+   * The profile plane is the plane containing the geodesic.
+   */
+  private computeProfileProjection(): void {
+    this.profilePoints = [];
+    if (!this.data || this.data.points.length < 3) return;
+
+    const points = this.data.points;
+    
+    // Get 3D positions
+    const positions = points.map(pt => ({
+      x: pt.position[0],
+      y: pt.position[1],
+      z: pt.position[2],
+    }));
+
+    // Compute the plane of the geodesic using first, middle, and last points
+    const p1 = positions[0];
+    const p2 = positions[Math.floor(positions.length / 2)];
+    const p3 = positions[positions.length - 1];
+
+    // Vectors in the plane
+    const v1 = { x: p2.x - p1.x, y: p2.y - p1.y, z: p2.z - p1.z };
+    const v2 = { x: p3.x - p1.x, y: p3.y - p1.y, z: p3.z - p1.z };
+
+    // Normal to the plane (cross product)
+    const normal = {
+      x: v1.y * v2.z - v1.z * v2.y,
+      y: v1.z * v2.x - v1.x * v2.z,
+      z: v1.x * v2.y - v1.y * v2.x,
+    };
+    const normalLen = Math.sqrt(normal.x ** 2 + normal.y ** 2 + normal.z ** 2);
+    if (normalLen < 1e-10) return;
+    normal.x /= normalLen;
+    normal.y /= normalLen;
+    normal.z /= normalLen;
+
+    // Define local coordinate system in the plane
+    // U axis: from first point to last point (horizontal in profile)
+    this.uAxis = { x: p3.x - p1.x, y: p3.y - p1.y, z: p3.z - p1.z };
+    const uLen = Math.sqrt(this.uAxis.x ** 2 + this.uAxis.y ** 2 + this.uAxis.z ** 2);
+    this.uAxis.x /= uLen;
+    this.uAxis.y /= uLen;
+    this.uAxis.z /= uLen;
+
+    // V axis: perpendicular to U in the plane (up in profile)
+    // V = normal × U
+    this.vAxis = {
+      x: normal.y * this.uAxis.z - normal.z * this.uAxis.y,
+      y: normal.z * this.uAxis.x - normal.x * this.uAxis.z,
+      z: normal.x * this.uAxis.y - normal.y * this.uAxis.x,
+    };
+
+    // Origin for projection (centroid of the geodesic)
+    this.centroid = positions.reduce(
+      (acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y, z: acc.z + p.z }),
+      { x: 0, y: 0, z: 0 }
+    );
+    this.centroid.x /= positions.length;
+    this.centroid.y /= positions.length;
+    this.centroid.z /= positions.length;
+
+    // Curvature threshold for irregularity detection
+    const curvatureThreshold = 0.01;
+
+    // Project each point
+    for (let i = 0; i < points.length; i++) {
+      const pt = points[i];
+      const pos = positions[i];
+      
+      // Vector from centroid to point
+      const dx = pos.x - this.centroid.x;
+      const dy = pos.y - this.centroid.y;
+      const dz = pos.z - this.centroid.z;
+
+      // Project onto local axes
+      const u = dx * this.uAxis.x + dy * this.uAxis.y + dz * this.uAxis.z;
+      const v = dx * this.vAxis.x + dy * this.vAxis.y + dz * this.vAxis.z;
+
+      const isIrregular = Math.abs(pt.secondDerivative) > curvatureThreshold;
+
+      this.profilePoints.push({
+        x: u,
+        y: v,
+        original: pt,
+        isIrregular,
+      });
+    }
+  }
+
   private computeBounds(): void {
-    if (!this.data || this.data.points.length === 0) {
-      this.bounds = { minArc: 0, maxArc: 1, minRadius: 0, maxRadius: 1 };
+    if (this.profilePoints.length === 0) {
+      this.bounds = { minX: -1, maxX: 1, minY: -1, maxY: 1 };
       return;
     }
 
-    const points = this.data.points;
-    let minArc = Infinity, maxArc = -Infinity;
-    let minRadius = Infinity, maxRadius = -Infinity;
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
 
-    for (const pt of points) {
-      const radius = this.getRadius(pt);
-      minArc = Math.min(minArc, pt.arcLength);
-      maxArc = Math.max(maxArc, pt.arcLength);
-      minRadius = Math.min(minRadius, radius);
-      maxRadius = Math.max(maxRadius, radius);
+    for (const pt of this.profilePoints) {
+      minX = Math.min(minX, pt.x);
+      maxX = Math.max(maxX, pt.x);
+      minY = Math.min(minY, pt.y);
+      maxY = Math.max(maxY, pt.y);
     }
 
-    // Add some padding
-    const arcPad = (maxArc - minArc) * 0.05;
-    const radPad = (maxRadius - minRadius) * 0.1;
+    // Add padding and ensure aspect ratio
+    const rangeX = maxX - minX;
+    const rangeY = maxY - minY;
+    const padding = Math.max(rangeX, rangeY) * 0.1;
     
     this.bounds = {
-      minArc: minArc - arcPad,
-      maxArc: maxArc + arcPad,
-      minRadius: minRadius - radPad,
-      maxRadius: maxRadius + radPad,
+      minX: minX - padding,
+      maxX: maxX + padding,
+      minY: minY - padding,
+      maxY: maxY + padding,
     };
-  }
-
-  /**
-   * Get radius (distance from sphere center) for a point.
-   */
-  private getRadius(pt: GeodesicPoint): number {
-    // deviation is in μm, convert to mm and add to sphere radius
-    return this.sphereRadius + pt.deviation / 1000;
   }
 
   /**
    * Reset view to show all data.
    */
   resetView(): void {
-    this.view = { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 };
+    this.view = { offsetX: 0, offsetY: 0, scale: 1 };
     this.render();
   }
 
@@ -214,40 +318,56 @@ export class ProfileChart {
   }
 
   private dataToScreenX(dataX: number): number {
-    const normalized = (dataX - this.bounds.minArc) / (this.bounds.maxArc - this.bounds.minArc);
-    return this.MARGIN.left + normalized * this.getPlotWidth() * this.view.scaleX + this.view.offsetX;
+    const rangeX = this.bounds.maxX - this.bounds.minX;
+    const rangeY = this.bounds.maxY - this.bounds.minY;
+    const range = Math.max(rangeX, rangeY);
+    const normalized = (dataX - this.bounds.minX) / range;
+    const plotSize = Math.min(this.getPlotWidth(), this.getPlotHeight());
+    return this.MARGIN.left + (this.getPlotWidth() - plotSize) / 2 + normalized * plotSize * this.view.scale + this.view.offsetX;
   }
 
   private dataToScreenY(dataY: number): number {
-    // Y is inverted (higher values = lower on screen)
-    const normalized = (dataY - this.bounds.minRadius) / (this.bounds.maxRadius - this.bounds.minRadius);
-    return this.MARGIN.top + (1 - normalized) * this.getPlotHeight() * this.view.scaleY + this.view.offsetY;
+    const rangeX = this.bounds.maxX - this.bounds.minX;
+    const rangeY = this.bounds.maxY - this.bounds.minY;
+    const range = Math.max(rangeX, rangeY);
+    // Y is inverted and offset to center
+    const normalized = (dataY - this.bounds.minY) / range;
+    const plotSize = Math.min(this.getPlotWidth(), this.getPlotHeight());
+    return this.MARGIN.top + (this.getPlotHeight() - plotSize) / 2 + (1 - normalized) * plotSize * this.view.scale + this.view.offsetY;
   }
 
   private screenToDataX(screenX: number): number {
-    const normalized = (screenX - this.MARGIN.left - this.view.offsetX) / (this.getPlotWidth() * this.view.scaleX);
-    return this.bounds.minArc + normalized * (this.bounds.maxArc - this.bounds.minArc);
+    const rangeX = this.bounds.maxX - this.bounds.minX;
+    const rangeY = this.bounds.maxY - this.bounds.minY;
+    const range = Math.max(rangeX, rangeY);
+    const plotSize = Math.min(this.getPlotWidth(), this.getPlotHeight());
+    const normalized = (screenX - this.MARGIN.left - (this.getPlotWidth() - plotSize) / 2 - this.view.offsetX) / (plotSize * this.view.scale);
+    return this.bounds.minX + normalized * range;
   }
 
   private screenToDataY(screenY: number): number {
-    const normalized = 1 - (screenY - this.MARGIN.top - this.view.offsetY) / (this.getPlotHeight() * this.view.scaleY);
-    return this.bounds.minRadius + normalized * (this.bounds.maxRadius - this.bounds.minRadius);
+    const rangeX = this.bounds.maxX - this.bounds.minX;
+    const rangeY = this.bounds.maxY - this.bounds.minY;
+    const range = Math.max(rangeX, rangeY);
+    const plotSize = Math.min(this.getPlotWidth(), this.getPlotHeight());
+    const normalized = 1 - (screenY - this.MARGIN.top - (this.getPlotHeight() - plotSize) / 2 - this.view.offsetY) / (plotSize * this.view.scale);
+    return this.bounds.minY + normalized * range;
   }
 
   private updateHoveredPoint(mouseX: number, mouseY: number): void {
-    if (!this.data) {
+    if (this.profilePoints.length === 0) {
       this.hoveredPoint = null;
       return;
     }
 
-    const dataX = this.screenToDataX(mouseX);
-    const threshold = (this.bounds.maxArc - this.bounds.minArc) * 0.02 / this.view.scaleX;
-    
-    let closest: GeodesicPoint | null = null;
+    const threshold = 15; // pixels
+    let closest: ProfilePoint | null = null;
     let closestDist = Infinity;
 
-    for (const pt of this.data.points) {
-      const dist = Math.abs(pt.arcLength - dataX);
+    for (const pt of this.profilePoints) {
+      const sx = this.dataToScreenX(pt.x);
+      const sy = this.dataToScreenY(pt.y);
+      const dist = Math.sqrt((sx - mouseX) ** 2 + (sy - mouseY) ** 2);
       if (dist < threshold && dist < closestDist) {
         closest = pt;
         closestDist = dist;
@@ -272,13 +392,13 @@ export class ProfileChart {
     // Draw grid
     this.drawGrid();
 
-    // Draw ideal sphere line
+    // Draw ideal sphere arc
     if (this.showSphere && this.sphereRadius > 0) {
-      this.drawSphereLine();
+      this.drawSphereArc();
     }
 
     // Draw profile
-    if (this.data) {
+    if (this.profilePoints.length > 0) {
       this.drawProfile();
     }
 
@@ -286,7 +406,7 @@ export class ProfileChart {
     this.drawAxes();
 
     // Draw pole marker
-    if (this.data) {
+    if (this.data && this.profilePoints.length > 0) {
       this.drawPoleMarker();
     }
 
@@ -294,41 +414,55 @@ export class ProfileChart {
     if (this.hoveredPoint) {
       this.drawTooltip();
     }
+
+    // Draw title
+    this.drawTitle();
+  }
+
+  private drawTitle(): void {
+    if (!this.data) return;
+    const ctx = this.ctx;
+    ctx.fillStyle = this.COLORS.text;
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      `Cross-Section Profile: ${this.data.angleA}° — ${this.data.angleB}°`,
+      this.canvas.width / 2,
+      15
+    );
   }
 
   private drawGrid(): void {
     const ctx = this.ctx;
-    
-    // Calculate nice grid intervals
-    const arcRange = this.bounds.maxArc - this.bounds.minArc;
-    const radRange = this.bounds.maxRadius - this.bounds.minRadius;
-    const arcStep = this.niceInterval(arcRange / 8);
-    const radStep = this.niceInterval(radRange / 6);
+    const rangeX = this.bounds.maxX - this.bounds.minX;
+    const rangeY = this.bounds.maxY - this.bounds.minY;
+    const range = Math.max(rangeX, rangeY);
+    const step = this.niceInterval(range / 6 / this.view.scale);
 
     ctx.strokeStyle = this.COLORS.grid;
     ctx.lineWidth = 0.5;
-    ctx.setLineDash([2, 2]);
+    ctx.setLineDash([3, 3]);
 
-    // Vertical grid lines (arc length)
-    const arcStart = Math.ceil(this.bounds.minArc / arcStep) * arcStep;
-    for (let arc = arcStart; arc <= this.bounds.maxArc; arc += arcStep) {
-      const x = this.dataToScreenX(arc);
-      if (x >= this.MARGIN.left && x <= this.canvas.width - this.MARGIN.right) {
+    // Vertical grid lines
+    const xStart = Math.ceil(this.bounds.minX / step) * step;
+    for (let x = xStart; x <= this.bounds.maxX; x += step) {
+      const sx = this.dataToScreenX(x);
+      if (sx >= this.MARGIN.left && sx <= this.canvas.width - this.MARGIN.right) {
         ctx.beginPath();
-        ctx.moveTo(x, this.MARGIN.top);
-        ctx.lineTo(x, this.canvas.height - this.MARGIN.bottom);
+        ctx.moveTo(sx, this.MARGIN.top);
+        ctx.lineTo(sx, this.canvas.height - this.MARGIN.bottom);
         ctx.stroke();
       }
     }
 
-    // Horizontal grid lines (radius)
-    const radStart = Math.ceil(this.bounds.minRadius / radStep) * radStep;
-    for (let rad = radStart; rad <= this.bounds.maxRadius; rad += radStep) {
-      const y = this.dataToScreenY(rad);
-      if (y >= this.MARGIN.top && y <= this.canvas.height - this.MARGIN.bottom) {
+    // Horizontal grid lines
+    const yStart = Math.ceil(this.bounds.minY / step) * step;
+    for (let y = yStart; y <= this.bounds.maxY; y += step) {
+      const sy = this.dataToScreenY(y);
+      if (sy >= this.MARGIN.top && sy <= this.canvas.height - this.MARGIN.bottom) {
         ctx.beginPath();
-        ctx.moveTo(this.MARGIN.left, y);
-        ctx.lineTo(this.canvas.width - this.MARGIN.right, y);
+        ctx.moveTo(this.MARGIN.left, sy);
+        ctx.lineTo(this.canvas.width - this.MARGIN.right, sy);
         ctx.stroke();
       }
     }
@@ -346,116 +480,144 @@ export class ProfileChart {
     return 10 * magnitude;
   }
 
-  private drawSphereLine(): void {
-    const ctx = this.ctx;
-    const y = this.dataToScreenY(this.sphereRadius);
+  private drawSphereArc(): void {
+    if (this.sphereRadius <= 0) return;
 
+    const ctx = this.ctx;
+    
+    // Project sphere center to profile plane
+    const scx = this.sphereCenter[0] - this.centroid.x;
+    const scy = this.sphereCenter[1] - this.centroid.y;
+    const scz = this.sphereCenter[2] - this.centroid.z;
+    const cx = scx * this.uAxis.x + scy * this.uAxis.y + scz * this.uAxis.z;
+    const cy = scx * this.vAxis.x + scy * this.vAxis.y + scz * this.vAxis.z;
+    const r = this.sphereRadius;
+
+    // Draw arc of ideal sphere (full circle intersected with the geodesic plane)
     ctx.strokeStyle = this.COLORS.sphere;
     ctx.lineWidth = 2;
-    ctx.setLineDash([8, 4]);
+    ctx.setLineDash([6, 4]);
 
     ctx.beginPath();
-    ctx.moveTo(this.MARGIN.left, y);
-    ctx.lineTo(this.canvas.width - this.MARGIN.right, y);
+    // Sample points along the arc
+    const numPoints = 120;
+    for (let i = 0; i <= numPoints; i++) {
+      const angle = (i / numPoints) * Math.PI * 2;
+      const px = cx + r * Math.cos(angle);
+      const py = cy + r * Math.sin(angle);
+      const sx = this.dataToScreenX(px);
+      const sy = this.dataToScreenY(py);
+      
+      if (i === 0) {
+        ctx.moveTo(sx, sy);
+      } else {
+        ctx.lineTo(sx, sy);
+      }
+    }
+    ctx.closePath();
     ctx.stroke();
-
     ctx.setLineDash([]);
 
     // Label
     ctx.fillStyle = this.COLORS.sphere;
     ctx.font = '10px sans-serif';
-    ctx.fillText('Ideal sphere', this.canvas.width - this.MARGIN.right - 60, y - 5);
+    ctx.textAlign = 'left';
+    const labelX = this.dataToScreenX(cx + r * 0.7);
+    const labelY = this.dataToScreenY(cy + r * 0.7);
+    ctx.fillText('Ideal sphere', labelX + 5, labelY);
   }
 
   private drawProfile(): void {
-    if (!this.data || this.data.points.length < 2) return;
+    if (this.profilePoints.length < 2) return;
 
     const ctx = this.ctx;
-    const points = this.data.points;
-    const curvatureThreshold = 0.01; // threshold for irregularity (based on second derivative)
 
-    ctx.lineWidth = 2;
+    // Draw filled area under profile
+    ctx.fillStyle = this.COLORS.profileFill;
+    ctx.beginPath();
+    for (let i = 0; i < this.profilePoints.length; i++) {
+      const pt = this.profilePoints[i];
+      const sx = this.dataToScreenX(pt.x);
+      const sy = this.dataToScreenY(pt.y);
+      if (i === 0) {
+        ctx.moveTo(sx, sy);
+      } else {
+        ctx.lineTo(sx, sy);
+      }
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // Draw profile line with color coding
+    ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Draw segments with color based on irregularity
-    for (let i = 0; i < points.length - 1; i++) {
-      const pt1 = points[i];
-      const pt2 = points[i + 1];
+    for (let i = 0; i < this.profilePoints.length - 1; i++) {
+      const pt1 = this.profilePoints[i];
+      const pt2 = this.profilePoints[i + 1];
       
-      const x1 = this.dataToScreenX(pt1.arcLength);
-      const y1 = this.dataToScreenY(this.getRadius(pt1));
-      const x2 = this.dataToScreenX(pt2.arcLength);
-      const y2 = this.dataToScreenY(this.getRadius(pt2));
+      const sx1 = this.dataToScreenX(pt1.x);
+      const sy1 = this.dataToScreenY(pt1.y);
+      const sx2 = this.dataToScreenX(pt2.x);
+      const sy2 = this.dataToScreenY(pt2.y);
 
-      // Check if segment is within visible area
-      if (x2 < this.MARGIN.left || x1 > this.canvas.width - this.MARGIN.right) continue;
-
-      // Determine color based on irregularity
-      const isIrregular = Math.abs(pt1.secondDerivative) > curvatureThreshold || 
-                          Math.abs(pt2.secondDerivative) > curvatureThreshold;
-      
+      // Color based on irregularity
+      const isIrregular = pt1.isIrregular || pt2.isIrregular;
       ctx.strokeStyle = isIrregular ? this.COLORS.irregular : this.COLORS.regular;
+      
       ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
+      ctx.moveTo(sx1, sy1);
+      ctx.lineTo(sx2, sy2);
       ctx.stroke();
     }
 
-    // Draw irregular points as dots
+    // Draw irregularity markers
     ctx.fillStyle = this.COLORS.irregular;
-    for (const pt of points) {
-      if (Math.abs(pt.secondDerivative) > curvatureThreshold) {
-        const x = this.dataToScreenX(pt.arcLength);
-        const y = this.dataToScreenY(this.getRadius(pt));
-        
-        if (x >= this.MARGIN.left && x <= this.canvas.width - this.MARGIN.right) {
-          ctx.beginPath();
-          ctx.arc(x, y, 3, 0, Math.PI * 2);
-          ctx.fill();
-        }
+    for (const pt of this.profilePoints) {
+      if (pt.isIrregular) {
+        const sx = this.dataToScreenX(pt.x);
+        const sy = this.dataToScreenY(pt.y);
+        ctx.beginPath();
+        ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
   }
 
   private drawPoleMarker(): void {
-    if (!this.data) return;
+    if (!this.data || this.profilePoints.length === 0) return;
+
+    const poleIdx = this.data.poleIndex;
+    if (poleIdx < 0 || poleIdx >= this.profilePoints.length) return;
 
     const ctx = this.ctx;
-    const polePoint = this.data.points[this.data.poleIndex];
-    const x = this.dataToScreenX(polePoint.arcLength);
-    const y = this.dataToScreenY(this.getRadius(polePoint));
-
-    // Vertical line at pole
-    ctx.strokeStyle = this.COLORS.pole;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(x, this.MARGIN.top);
-    ctx.lineTo(x, this.canvas.height - this.MARGIN.bottom);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    const polePt = this.profilePoints[poleIdx];
+    const sx = this.dataToScreenX(polePt.x);
+    const sy = this.dataToScreenY(polePt.y);
 
     // Pole point marker
     ctx.fillStyle = this.COLORS.pole;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.arc(sx, sy, 6, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
 
     // Label
     ctx.fillStyle = this.COLORS.pole;
-    ctx.font = 'bold 10px sans-serif';
-    ctx.fillText('Pole', x + 8, this.MARGIN.top + 15);
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Pole', sx, sy - 12);
   }
 
   private drawAxes(): void {
     const ctx = this.ctx;
-    
-    // Calculate nice intervals
-    const arcRange = this.bounds.maxArc - this.bounds.minArc;
-    const radRange = this.bounds.maxRadius - this.bounds.minRadius;
-    const arcStep = this.niceInterval(arcRange / 8);
-    const radStep = this.niceInterval(radRange / 6);
+    const rangeX = this.bounds.maxX - this.bounds.minX;
+    const rangeY = this.bounds.maxY - this.bounds.minY;
+    const range = Math.max(rangeX, rangeY);
+    const step = this.niceInterval(range / 6 / this.view.scale);
 
     ctx.fillStyle = this.COLORS.text;
     ctx.strokeStyle = this.COLORS.text;
@@ -476,30 +638,28 @@ export class ProfileChart {
     // X-axis labels
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
-    const arcStart = Math.ceil(this.bounds.minArc / arcStep) * arcStep;
-    for (let arc = arcStart; arc <= this.bounds.maxArc; arc += arcStep) {
-      const x = this.dataToScreenX(arc);
-      if (x >= this.MARGIN.left && x <= this.canvas.width - this.MARGIN.right) {
-        ctx.fillText(arc.toFixed(1), x, this.canvas.height - this.MARGIN.bottom + 15);
-        // Tick mark
+    const xStart = Math.ceil(this.bounds.minX / step) * step;
+    for (let x = xStart; x <= this.bounds.maxX; x += step) {
+      const sx = this.dataToScreenX(x);
+      if (sx >= this.MARGIN.left + 20 && sx <= this.canvas.width - this.MARGIN.right - 20) {
+        ctx.fillText(x.toFixed(1), sx, this.canvas.height - this.MARGIN.bottom + 15);
         ctx.beginPath();
-        ctx.moveTo(x, this.canvas.height - this.MARGIN.bottom);
-        ctx.lineTo(x, this.canvas.height - this.MARGIN.bottom + 4);
+        ctx.moveTo(sx, this.canvas.height - this.MARGIN.bottom);
+        ctx.lineTo(sx, this.canvas.height - this.MARGIN.bottom + 4);
         ctx.stroke();
       }
     }
 
     // Y-axis labels
     ctx.textAlign = 'right';
-    const radStart = Math.ceil(this.bounds.minRadius / radStep) * radStep;
-    for (let rad = radStart; rad <= this.bounds.maxRadius; rad += radStep) {
-      const y = this.dataToScreenY(rad);
-      if (y >= this.MARGIN.top && y <= this.canvas.height - this.MARGIN.bottom) {
-        ctx.fillText(rad.toFixed(2), this.MARGIN.left - 5, y + 3);
-        // Tick mark
+    const yStart = Math.ceil(this.bounds.minY / step) * step;
+    for (let y = yStart; y <= this.bounds.maxY; y += step) {
+      const sy = this.dataToScreenY(y);
+      if (sy >= this.MARGIN.top + 10 && sy <= this.canvas.height - this.MARGIN.bottom - 10) {
+        ctx.fillText(y.toFixed(1), this.MARGIN.left - 8, sy + 3);
         ctx.beginPath();
-        ctx.moveTo(this.MARGIN.left - 4, y);
-        ctx.lineTo(this.MARGIN.left, y);
+        ctx.moveTo(this.MARGIN.left - 4, sy);
+        ctx.lineTo(this.MARGIN.left, sy);
         ctx.stroke();
       }
     }
@@ -507,12 +667,12 @@ export class ProfileChart {
     // Axis labels
     ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Arc Length (mm)', this.canvas.width / 2, this.canvas.height - 5);
+    ctx.fillText('Horizontal Position (mm)', this.canvas.width / 2, this.canvas.height - 8);
     
     ctx.save();
-    ctx.translate(12, this.canvas.height / 2);
+    ctx.translate(15, this.canvas.height / 2);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillText('Radius (mm)', 0, 0);
+    ctx.fillText('Vertical Position (mm)', 0, 0);
     ctx.restore();
   }
 
@@ -521,53 +681,55 @@ export class ProfileChart {
 
     const ctx = this.ctx;
     const pt = this.hoveredPoint;
-    const x = this.dataToScreenX(pt.arcLength);
-    const y = this.dataToScreenY(this.getRadius(pt));
+    const sx = this.dataToScreenX(pt.x);
+    const sy = this.dataToScreenY(pt.y);
 
     // Highlight point
     ctx.fillStyle = '#ffcc00';
     ctx.strokeStyle = '#333';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.arc(sx, sy, 7, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
     // Tooltip box
     const text = [
-      `Arc: ${pt.arcLength.toFixed(2)} mm`,
-      `Radius: ${this.getRadius(pt).toFixed(3)} mm`,
-      `Deviation: ${pt.deviation.toFixed(1)} μm`,
+      `Arc Length: ${pt.original.arcLength.toFixed(2)} mm`,
+      `Deviation: ${pt.original.deviation.toFixed(1)} μm`,
+      pt.isIrregular ? '⚠ Irregular zone' : '✓ Regular',
     ];
 
     ctx.font = '11px sans-serif';
     const maxWidth = Math.max(...text.map(t => ctx.measureText(t).width));
-    const boxWidth = maxWidth + 16;
-    const boxHeight = text.length * 16 + 12;
+    const boxWidth = maxWidth + 20;
+    const boxHeight = text.length * 17 + 14;
     
-    let boxX = x + 10;
-    let boxY = y - boxHeight - 10;
+    let boxX = sx + 12;
+    let boxY = sy - boxHeight - 8;
     
     // Keep tooltip in bounds
     if (boxX + boxWidth > this.canvas.width - 5) {
-      boxX = x - boxWidth - 10;
+      boxX = sx - boxWidth - 12;
     }
     if (boxY < 5) {
-      boxY = y + 10;
+      boxY = sy + 12;
     }
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.strokeStyle = '#ccc';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 4);
+    ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 5);
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = '#333';
     ctx.textAlign = 'left';
     for (let i = 0; i < text.length; i++) {
-      ctx.fillText(text[i], boxX + 8, boxY + 18 + i * 16);
+      const color = i === 2 ? (pt.isIrregular ? this.COLORS.irregular : this.COLORS.regular) : '#333';
+      ctx.fillStyle = color;
+      ctx.fillText(text[i], boxX + 10, boxY + 20 + i * 17);
     }
   }
 
@@ -575,6 +737,6 @@ export class ProfileChart {
    * Dispose resources.
    */
   dispose(): void {
-    // Remove event listeners (canvas will be removed by parent)
+    // Canvas will be removed by parent
   }
 }

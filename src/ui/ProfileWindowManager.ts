@@ -20,6 +20,7 @@ export class ProfileWindowManager {
   private windowContainer: HTMLElement;
   private minimizedBar: HTMLElement;
   private sphereRadius: number = 0;
+  private sphereCenter: [number, number, number] = [0, 0, 0];
   private nextWindowOffset = 0;
 
   constructor() {
@@ -55,6 +56,17 @@ export class ProfileWindowManager {
   }
 
   /**
+   * Set the reference sphere center (needed for profile chart).
+   */
+  setSphereCenter(center: [number, number, number]): void {
+    this.sphereCenter = center;
+    // Update existing windows
+    for (const win of this.windows.values()) {
+      win.chart.setSphereCenter(center);
+    }
+  }
+
+  /**
    * Open a new profile window for a double geodesic.
    */
   openWindow(doubleGeodesic: DoubleGeodesic): ProfileWindow {
@@ -79,6 +91,7 @@ export class ProfileWindowManager {
     const canvas = element.querySelector('.profile-chart-canvas') as HTMLCanvasElement;
     const chart = new ProfileChart(canvas);
     chart.setSphereRadius(this.sphereRadius);
+    chart.setSphereCenter(this.sphereCenter);
     chart.setData(doubleGeodesic);
 
     // Calculate initial position with offset

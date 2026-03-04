@@ -657,9 +657,11 @@ export class App {
       const offset = this.meshViewer.getGroupOffset();
       this.geodesicInteraction.setGeodesics(this.pipeline.state.geodesics, offset);
       
-      // Set sphere radius for profile charts
+      // Set sphere radius and center for profile charts
       if (this.pipeline.state.sphereFit) {
         this.profileWindows.setSphereRadius(this.pipeline.state.sphereFit.radius);
+        const center = this.pipeline.state.sphereFit.center;
+        this.profileWindows.setSphereCenter([center.x, center.y, center.z]);
       }
     }
   }
