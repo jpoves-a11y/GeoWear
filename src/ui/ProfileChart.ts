@@ -40,6 +40,7 @@ export class ProfileChart {
   private wallThickness: number = 6; // Fallback if no outer mesh
   private showSphere: boolean = true;
   private showOuterLayer: boolean = true;
+  private loadingOverlay: HTMLElement | null = null;
   
   // Projected profile points
   private profilePoints: ProfilePoint[] = [];
@@ -85,9 +86,10 @@ export class ProfileChart {
     profileFill: 'rgba(45, 80, 22, 0.15)',
   };
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, loadingOverlay?: HTMLElement) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
+    this.loadingOverlay = loadingOverlay || null;
     
     this.setupEvents();
     this.render();
@@ -214,14 +216,34 @@ export class ProfileChart {
   }
 
   /**
+   * Show the loading indicator overlay.
+   */
+  private showLoading(): void {
+    if (this.loadingOverlay) {
+      this.loadingOverlay.classList.remove('hidden');
+    }
+  }
+
+  /**
+   * Hide the loading indicator overlay.
+   */
+  private hideLoading(): void {
+    if (this.loadingOverlay) {
+      this.loadingOverlay.classList.add('hidden');
+    }
+  }
+
+  /**
    * Set data to display and compute the 2D profile projection.
    */
   setData(data: DoubleGeodesic): void {
+    this.showLoading();
     this.data = data;
     this.computeProfileProjection();
     this.computeOuterSection();
     this.computeBounds();
     this.resetView();
+    this.hideLoading();
   }
 
   /**
@@ -335,8 +357,8 @@ export class ProfileChart {
     const cy = this.centroid.y;
     const cz = this.centroid.z;
     
-    // Collect all intersection points
-    const intersectionPoints: { x: number; y: number; lat: number }[] = [];
+    // Collect intersection SEGMENTS (pairs of points per triangle)
+    const segments: { ax: number; ay: number; bx: number; by: number }[] = [];
     
     for (let f = 0; f < faceCount; f++) {
       const i0 = indices[f * 3];
@@ -349,15 +371,15 @@ export class ProfileChart {
       const sd2 = (positions[i2 * 3] - cx) * nx + (positions[i2 * 3 + 1] - cy) * ny + (positions[i2 * 3 + 2] - cz) * nz;
       
       // Find edges that cross the plane
-      const edges: [number, number, number, number][] = [
+      const crossings: { x: number; y: number }[] = [];
+      const edgePairs: [number, number, number, number][] = [
         [i0, i1, sd0, sd1],
         [i1, i2, sd1, sd2],
         [i2, i0, sd2, sd0],
       ];
       
-      for (const [ia, ib, sda, sdb] of edges) {
+      for (const [ia, ib, sda, sdb] of edgePairs) {
         if (sda * sdb < 0) {
-          // Edge crosses the plane
           const t = sda / (sda - sdb);
           const px = positions[ia * 3] + t * (positions[ib * 3] - positions[ia * 3]);
           const py = positions[ia * 3 + 1] + t * (positions[ib * 3 + 1] - positions[ia * 3 + 1]);
@@ -370,28 +392,94 @@ export class ProfileChart {
           const u = dx * this.uAxis.x + dy * this.uAxis.y + dz * this.uAxis.z;
           const v = dx * this.vAxis.x + dy * this.vAxis.y + dz * this.vAxis.z;
           
-          intersectionPoints.push({ x: u, y: v, lat: v }); // Use v as latitude for sorting
+          crossings.push({ x: u, y: v });
         }
       }
-    }
-    
-    if (intersectionPoints.length < 3) return;
-    
-    // Sort by latitude (vertical position) descending to get ordered contour
-    intersectionPoints.sort((a, b) => b.lat - a.lat);
-    
-    // Remove duplicates
-    const eps = 0.01;
-    const uniquePoints: OuterProfilePoint[] = [{ x: intersectionPoints[0].x, y: intersectionPoints[0].y }];
-    for (let i = 1; i < intersectionPoints.length; i++) {
-      const prev = uniquePoints[uniquePoints.length - 1];
-      const curr = intersectionPoints[i];
-      if (Math.abs(curr.x - prev.x) > eps || Math.abs(curr.y - prev.y) > eps) {
-        uniquePoints.push({ x: curr.x, y: curr.y });
+      
+      // Each triangle crossing the plane produces exactly 2 intersection points
+      if (crossings.length === 2) {
+        segments.push({
+          ax: crossings[0].x, ay: crossings[0].y,
+          bx: crossings[1].x, by: crossings[1].y,
+        });
       }
     }
     
-    this.outerProfilePoints = uniquePoints;
+    if (segments.length < 2) return;
+    
+    // Chain segments into ordered polylines by matching endpoints
+    const eps = 0.02; // tolerance for matching endpoints
+    const used = new Array(segments.length).fill(false);
+    
+    // Build the longest chain
+    const chains: { x: number; y: number }[][] = [];
+    
+    for (let start = 0; start < segments.length; start++) {
+      if (used[start]) continue;
+      
+      const chain: { x: number; y: number }[] = [];
+      chain.push({ x: segments[start].ax, y: segments[start].ay });
+      chain.push({ x: segments[start].bx, y: segments[start].by });
+      used[start] = true;
+      
+      // Extend chain forward
+      let extended = true;
+      while (extended) {
+        extended = false;
+        const tail = chain[chain.length - 1];
+        for (let i = 0; i < segments.length; i++) {
+          if (used[i]) continue;
+          const seg = segments[i];
+          
+          const daa = (seg.ax - tail.x) ** 2 + (seg.ay - tail.y) ** 2;
+          const dba = (seg.bx - tail.x) ** 2 + (seg.by - tail.y) ** 2;
+          
+          if (daa < eps * eps) {
+            chain.push({ x: seg.bx, y: seg.by });
+            used[i] = true;
+            extended = true;
+            break;
+          } else if (dba < eps * eps) {
+            chain.push({ x: seg.ax, y: seg.ay });
+            used[i] = true;
+            extended = true;
+            break;
+          }
+        }
+      }
+      
+      // Extend chain backward
+      extended = true;
+      while (extended) {
+        extended = false;
+        const head = chain[0];
+        for (let i = 0; i < segments.length; i++) {
+          if (used[i]) continue;
+          const seg = segments[i];
+          
+          const daa = (seg.ax - head.x) ** 2 + (seg.ay - head.y) ** 2;
+          const dba = (seg.bx - head.x) ** 2 + (seg.by - head.y) ** 2;
+          
+          if (daa < eps * eps) {
+            chain.unshift({ x: seg.bx, y: seg.by });
+            used[i] = true;
+            extended = true;
+            break;
+          } else if (dba < eps * eps) {
+            chain.unshift({ x: seg.ax, y: seg.ay });
+            used[i] = true;
+            extended = true;
+            break;
+          }
+        }
+      }
+      
+      chains.push(chain);
+    }
+    
+    // Use the longest chain as the outer contour
+    chains.sort((a, b) => b.length - a.length);
+    this.outerProfilePoints = chains[0] || [];
   }
 
   private computeBounds(): void {
@@ -662,31 +750,19 @@ export class ProfileChart {
    */
   private drawOuterLayer(): void {
     if (!this.data) return;
+    if (this.outerProfilePoints.length < 3) return;
 
     const ctx = this.ctx;
     
-    // Use real outer mesh intersection if available
-    let outerPoints: { x: number; y: number }[];
-    
-    if (this.outerProfilePoints.length >= 3) {
-      // Use real outer mesh section
-      outerPoints = this.outerProfilePoints;
-    } else {
-      // No outer mesh available
-      return;
-    }
-    
-    if (outerPoints.length < 3) return;
-
-    // Draw only the outer surface line (gray)
-    ctx.strokeStyle = 'rgba(80, 80, 80, 0.8)';
+    // Draw only the outer surface contour line (dark gray, no fill)
+    ctx.strokeStyle = 'rgba(80, 80, 80, 0.85)';
     ctx.lineWidth = 2;
+    ctx.setLineDash([]);
     ctx.beginPath();
-    for (let i = 0; i < outerPoints.length; i++) {
-      const pt = outerPoints[i];
+    for (let i = 0; i < this.outerProfilePoints.length; i++) {
+      const pt = this.outerProfilePoints[i];
       const sx = this.dataToScreenX(pt.x);
       const sy = this.dataToScreenY(pt.y);
-      
       if (i === 0) {
         ctx.moveTo(sx, sy);
       } else {
