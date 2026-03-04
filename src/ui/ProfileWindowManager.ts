@@ -3,7 +3,7 @@
 // Manages floating, minimizable profile windows
 // ============================================================
 
-import type { DoubleGeodesic } from '../types';
+import type { DoubleGeodesic, MeshData } from '../types';
 import { ProfileChart } from './ProfileChart';
 
 export interface ProfileWindow {
@@ -21,6 +21,7 @@ export class ProfileWindowManager {
   private minimizedBar: HTMLElement;
   private sphereRadius: number = 0;
   private sphereCenter: [number, number, number] = [0, 0, 0];
+  private outerMesh: MeshData | null = null;
   private nextWindowOffset = 0;
 
   constructor() {
@@ -67,6 +68,17 @@ export class ProfileWindowManager {
   }
 
   /**
+   * Set the outer mesh for real outer surface visualization.
+   */
+  setOuterMesh(mesh: MeshData): void {
+    this.outerMesh = mesh;
+    // Update existing windows
+    for (const win of this.windows.values()) {
+      win.chart.setOuterMesh(mesh);
+    }
+  }
+
+  /**
    * Open a new profile window for a double geodesic.
    */
   openWindow(doubleGeodesic: DoubleGeodesic): ProfileWindow {
@@ -92,6 +104,9 @@ export class ProfileWindowManager {
     const chart = new ProfileChart(canvas);
     chart.setSphereRadius(this.sphereRadius);
     chart.setSphereCenter(this.sphereCenter);
+    if (this.outerMesh) {
+      chart.setOuterMesh(this.outerMesh);
+    }
     chart.setData(doubleGeodesic);
 
     // Calculate initial position with offset

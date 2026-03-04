@@ -4,7 +4,7 @@
 // Shows the actual geometric cross-section profile
 // ============================================================
 
-import type { DoubleGeodesic, GeodesicPoint } from '../types';
+import type { DoubleGeodesic, GeodesicPoint, MeshData } from '../types';
 
 interface ViewTransform {
   offsetX: number;
@@ -26,22 +26,32 @@ interface ProfilePoint {
   isIrregular: boolean;
 }
 
+interface OuterProfilePoint {
+  x: number;
+  y: number;
+}
+
 export class ProfileChart {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private data: DoubleGeodesic | null = null;
   private sphereRadius: number = 0;
   private sphereCenter: [number, number, number] = [0, 0, 0];
-  private wallThickness: number = 6; // Typical UHMWPE liner wall thickness in mm
+  private wallThickness: number = 6; // Fallback if no outer mesh
   private showSphere: boolean = true;
   private showOuterLayer: boolean = true;
   
   // Projected profile points
   private profilePoints: ProfilePoint[] = [];
   
+  // Outer mesh section points (real geometry)
+  private outerMesh: MeshData | null = null;
+  private outerProfilePoints: OuterProfilePoint[] = [];
+  
   // Projection axes (stored for sphere projection)
   private uAxis = { x: 1, y: 0, z: 0 };
   private vAxis = { x: 0, y: 1, z: 0 };
+  private planeNormal = { x: 0, y: 0, z: 1 };
   private centroid = { x: 0, y: 0, z: 0 };
   
   // View state for pan/zoom
@@ -192,11 +202,24 @@ export class ProfileChart {
   }
 
   /**
+   * Set the outer mesh for real outer surface visualization.
+   */
+  setOuterMesh(mesh: MeshData): void {
+    this.outerMesh = mesh;
+    // If we already have profile data, recompute outer section
+    if (this.profilePoints.length > 0) {
+      this.computeOuterSection();
+      this.render();
+    }
+  }
+
+  /**
    * Set data to display and compute the 2D profile projection.
    */
   setData(data: DoubleGeodesic): void {
     this.data = data;
     this.computeProfileProjection();
+    this.computeOuterSection();
     this.computeBounds();
     this.resetView();
   }
@@ -238,6 +261,9 @@ export class ProfileChart {
     normal.x /= normalLen;
     normal.y /= normalLen;
     normal.z /= normalLen;
+    
+    // Store plane normal for outer section computation
+    this.planeNormal = { x: normal.x, y: normal.y, z: normal.z };
 
     // Define local coordinate system in the plane
     // U axis: from first point to last point (horizontal in profile)
@@ -290,6 +316,82 @@ export class ProfileChart {
         isIrregular,
       });
     }
+  }
+
+  /**
+   * Compute the intersection of the outer mesh with the geodesic plane.
+   * This gives the real outer surface cross-section profile.
+   */
+  private computeOuterSection(): void {
+    this.outerProfilePoints = [];
+    
+    if (!this.outerMesh || this.profilePoints.length < 3) return;
+    
+    const { positions, indices, faceCount } = this.outerMesh;
+    const nx = this.planeNormal.x;
+    const ny = this.planeNormal.y;
+    const nz = this.planeNormal.z;
+    const cx = this.centroid.x;
+    const cy = this.centroid.y;
+    const cz = this.centroid.z;
+    
+    // Collect all intersection points
+    const intersectionPoints: { x: number; y: number; lat: number }[] = [];
+    
+    for (let f = 0; f < faceCount; f++) {
+      const i0 = indices[f * 3];
+      const i1 = indices[f * 3 + 1];
+      const i2 = indices[f * 3 + 2];
+      
+      // Signed distances to the geodesic plane
+      const sd0 = (positions[i0 * 3] - cx) * nx + (positions[i0 * 3 + 1] - cy) * ny + (positions[i0 * 3 + 2] - cz) * nz;
+      const sd1 = (positions[i1 * 3] - cx) * nx + (positions[i1 * 3 + 1] - cy) * ny + (positions[i1 * 3 + 2] - cz) * nz;
+      const sd2 = (positions[i2 * 3] - cx) * nx + (positions[i2 * 3 + 1] - cy) * ny + (positions[i2 * 3 + 2] - cz) * nz;
+      
+      // Find edges that cross the plane
+      const edges: [number, number, number, number][] = [
+        [i0, i1, sd0, sd1],
+        [i1, i2, sd1, sd2],
+        [i2, i0, sd2, sd0],
+      ];
+      
+      for (const [ia, ib, sda, sdb] of edges) {
+        if (sda * sdb < 0) {
+          // Edge crosses the plane
+          const t = sda / (sda - sdb);
+          const px = positions[ia * 3] + t * (positions[ib * 3] - positions[ia * 3]);
+          const py = positions[ia * 3 + 1] + t * (positions[ib * 3 + 1] - positions[ia * 3 + 1]);
+          const pz = positions[ia * 3 + 2] + t * (positions[ib * 3 + 2] - positions[ia * 3 + 2]);
+          
+          // Project to 2D profile plane
+          const dx = px - cx;
+          const dy = py - cy;
+          const dz = pz - cz;
+          const u = dx * this.uAxis.x + dy * this.uAxis.y + dz * this.uAxis.z;
+          const v = dx * this.vAxis.x + dy * this.vAxis.y + dz * this.vAxis.z;
+          
+          intersectionPoints.push({ x: u, y: v, lat: v }); // Use v as latitude for sorting
+        }
+      }
+    }
+    
+    if (intersectionPoints.length < 3) return;
+    
+    // Sort by latitude (vertical position) descending to get ordered contour
+    intersectionPoints.sort((a, b) => b.lat - a.lat);
+    
+    // Remove duplicates
+    const eps = 0.01;
+    const uniquePoints: OuterProfilePoint[] = [{ x: intersectionPoints[0].x, y: intersectionPoints[0].y }];
+    for (let i = 1; i < intersectionPoints.length; i++) {
+      const prev = uniquePoints[uniquePoints.length - 1];
+      const curr = intersectionPoints[i];
+      if (Math.abs(curr.x - prev.x) > eps || Math.abs(curr.y - prev.y) > eps) {
+        uniquePoints.push({ x: curr.x, y: curr.y });
+      }
+    }
+    
+    this.outerProfilePoints = uniquePoints;
   }
 
   private computeBounds(): void {
@@ -555,49 +657,54 @@ export class ProfileChart {
 
   /**
    * Draw the outer layer (external cup surface) as transparent context.
-   * This shows the real outer profile following the inner profile shape
-   * displaced radially outward by wall thickness.
+   * This shows the real outer profile from mesh-plane intersection,
+   * or falls back to radial displacement if no outer mesh is available.
    */
   private drawOuterLayer(): void {
-    if (this.wallThickness <= 0 || this.profilePoints.length < 3) return;
+    if (this.profilePoints.length < 3) return;
     if (!this.data) return;
 
     const ctx = this.ctx;
     
-    // Compute outer profile points by displacing inner points radially outward
-    const outerPoints: { x: number; y: number }[] = [];
+    // Use real outer mesh intersection if available, otherwise fallback to displacement
+    let outerPoints: { x: number; y: number }[];
     
-    for (const pt of this.profilePoints) {
-      const orig = pt.original;
-      const pos = orig.position;
-      
-      // Direction from sphere center to point (radial direction)
-      const dx = pos[0] - this.sphereCenter[0];
-      const dy = pos[1] - this.sphereCenter[1];
-      const dz = pos[2] - this.sphereCenter[2];
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      
-      if (dist < 0.001) continue;
-      
-      // Normalize to get radial direction
-      const nx = dx / dist;
-      const ny = dy / dist;
-      const nz = dz / dist;
-      
-      // Outer point = inner point + normal * wall thickness
-      const outerX = pos[0] + nx * this.wallThickness;
-      const outerY = pos[1] + ny * this.wallThickness;
-      const outerZ = pos[2] + nz * this.wallThickness;
-      
-      // Project outer point to 2D profile plane
-      const odx = outerX - this.centroid.x;
-      const ody = outerY - this.centroid.y;
-      const odz = outerZ - this.centroid.z;
-      
-      const u = odx * this.uAxis.x + ody * this.uAxis.y + odz * this.uAxis.z;
-      const v = odx * this.vAxis.x + ody * this.vAxis.y + odz * this.vAxis.z;
-      
-      outerPoints.push({ x: u, y: v });
+    if (this.outerProfilePoints.length >= 3) {
+      // Use real outer mesh section
+      outerPoints = this.outerProfilePoints;
+    } else if (this.wallThickness > 0) {
+      // Fallback: compute outer profile by displacing inner points radially outward
+      outerPoints = [];
+      for (const pt of this.profilePoints) {
+        const orig = pt.original;
+        const pos = orig.position;
+        
+        const dx = pos[0] - this.sphereCenter[0];
+        const dy = pos[1] - this.sphereCenter[1];
+        const dz = pos[2] - this.sphereCenter[2];
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        
+        if (dist < 0.001) continue;
+        
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const nz = dz / dist;
+        
+        const outerX = pos[0] + nx * this.wallThickness;
+        const outerY = pos[1] + ny * this.wallThickness;
+        const outerZ = pos[2] + nz * this.wallThickness;
+        
+        const odx = outerX - this.centroid.x;
+        const ody = outerY - this.centroid.y;
+        const odz = outerZ - this.centroid.z;
+        
+        const u = odx * this.uAxis.x + ody * this.uAxis.y + odz * this.uAxis.z;
+        const v = odx * this.vAxis.x + ody * this.vAxis.y + odz * this.vAxis.z;
+        
+        outerPoints.push({ x: u, y: v });
+      }
+    } else {
+      return;
     }
     
     if (outerPoints.length < 3) return;

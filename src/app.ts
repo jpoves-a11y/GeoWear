@@ -671,6 +671,11 @@ export class App {
         const center = this.pipeline.state.sphereFit.center;
         this.profileWindows.setSphereCenter([center.x, center.y, center.z]);
       }
+      
+      // Set outer mesh for real outer surface visualization
+      if (this.pipeline.state.separation?.outer) {
+        this.profileWindows.setOuterMesh(this.pipeline.state.separation.outer);
+      }
     }
   }
 
