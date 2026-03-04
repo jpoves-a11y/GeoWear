@@ -346,9 +346,11 @@ export class ProfileChart {
   /**
    * Compute the intersection of the outer mesh with the geodesic plane.
    * This gives the real outer surface cross-section profile.
+   * Filters out rim/flange geometry by angular distance from the sphere center.
    */
   private computeOuterSection(): void {
     this.outerProfilePoints = [];
+    this.outerChains = [];
     
     if (!this.outerMesh || this.profilePoints.length < 3) return;
     
@@ -356,11 +358,44 @@ export class ProfileChart {
     const nx = this.planeNormal.x;
     const ny = this.planeNormal.y;
     const nz = this.planeNormal.z;
-    const cx = this.centroid.x;
-    const cy = this.centroid.y;
-    const cz = this.centroid.z;
+    
+    // Use sphere center as the plane reference point.
+    // Geodesic planes pass through the sphere center (great circle planes),
+    // NOT through the centroid of geodesic points.
+    // But we still use the centroid for 2D projection (same as inner profile).
+    const scx = this.sphereCenter[0];
+    const scy = this.sphereCenter[1];
+    const scz = this.sphereCenter[2];
+    const projCx = this.centroid.x;
+    const projCy = this.centroid.y;
+    const projCz = this.centroid.z;
+    
+    // Determine the max angular extent of the inner profile from sphere center
+    let maxAngle = 0;
+    for (const pt of this.profilePoints) {
+      const pos = pt.original.position;
+      const dx = pos[0] - scx;
+      const dy = pos[1] - scy;
+      const dz = pos[2] - scz;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (dist > 0.001) {
+        // Angle from pole axis (centroid - sphereCenter direction)
+        const pax = projCx - scx;
+        const pay = projCy - scy;
+        const paz = projCz - scz;
+        const paDist = Math.sqrt(pax * pax + pay * pay + paz * paz);
+        if (paDist > 0.001) {
+          const cosA = (dx * pax + dy * pay + dz * paz) / (dist * paDist);
+          const angle = Math.acos(Math.max(-1, Math.min(1, cosA)));
+          if (angle > maxAngle) maxAngle = angle;
+        }
+      }
+    }
+    // Add generous margin (30%) for the outer surface which extends beyond the inner
+    const angleLimit = maxAngle * 1.3 + 0.15; // extra 0.15 radians (~8.5°) margin
     
     // Collect intersection SEGMENTS (pairs of points per triangle)
+    // Filter by angular distance from the pole axis
     const segments: { ax: number; ay: number; bx: number; by: number }[] = [];
     
     for (let f = 0; f < faceCount; f++) {
@@ -368,13 +403,13 @@ export class ProfileChart {
       const i1 = indices[f * 3 + 1];
       const i2 = indices[f * 3 + 2];
       
-      // Signed distances to the geodesic plane
-      const sd0 = (positions[i0 * 3] - cx) * nx + (positions[i0 * 3 + 1] - cy) * ny + (positions[i0 * 3 + 2] - cz) * nz;
-      const sd1 = (positions[i1 * 3] - cx) * nx + (positions[i1 * 3 + 1] - cy) * ny + (positions[i1 * 3 + 2] - cz) * nz;
-      const sd2 = (positions[i2 * 3] - cx) * nx + (positions[i2 * 3 + 1] - cy) * ny + (positions[i2 * 3 + 2] - cz) * nz;
+      // Signed distances to the geodesic plane (using sphere center as plane origin)
+      const sd0 = (positions[i0 * 3] - scx) * nx + (positions[i0 * 3 + 1] - scy) * ny + (positions[i0 * 3 + 2] - scz) * nz;
+      const sd1 = (positions[i1 * 3] - scx) * nx + (positions[i1 * 3 + 1] - scy) * ny + (positions[i1 * 3 + 2] - scz) * nz;
+      const sd2 = (positions[i2 * 3] - scx) * nx + (positions[i2 * 3 + 1] - scy) * ny + (positions[i2 * 3 + 2] - scz) * nz;
       
       // Find edges that cross the plane
-      const crossings: { x: number; y: number }[] = [];
+      const crossings: { x: number; y: number; px3d: number; py3d: number; pz3d: number }[] = [];
       const edgePairs: [number, number, number, number][] = [
         [i0, i1, sd0, sd1],
         [i1, i2, sd1, sd2],
@@ -388,14 +423,31 @@ export class ProfileChart {
           const py = positions[ia * 3 + 1] + t * (positions[ib * 3 + 1] - positions[ia * 3 + 1]);
           const pz = positions[ia * 3 + 2] + t * (positions[ib * 3 + 2] - positions[ia * 3 + 2]);
           
-          // Project to 2D profile plane
-          const dx = px - cx;
-          const dy = py - cy;
-          const dz = pz - cz;
+          // Check angular distance from the pole axis
+          const dx3 = px - scx;
+          const dy3 = py - scy;
+          const dz3 = pz - scz;
+          const dist3 = Math.sqrt(dx3 * dx3 + dy3 * dy3 + dz3 * dz3);
+          if (dist3 > 0.001) {
+            const pax = projCx - scx;
+            const pay = projCy - scy;
+            const paz = projCz - scz;
+            const paDist = Math.sqrt(pax * pax + pay * pay + paz * paz);
+            const cosA = (dx3 * pax + dy3 * pay + dz3 * paz) / (dist3 * paDist);
+            const angle = Math.acos(Math.max(-1, Math.min(1, cosA)));
+            
+            // Skip points outside the angular range (rim/flange geometry)
+            if (angle > angleLimit) continue;
+          }
+          
+          // Project to 2D profile plane (relative to centroid, same as inner profile)
+          const dx = px - projCx;
+          const dy = py - projCy;
+          const dz = pz - projCz;
           const u = dx * this.uAxis.x + dy * this.uAxis.y + dz * this.uAxis.z;
           const v = dx * this.vAxis.x + dy * this.vAxis.y + dz * this.vAxis.z;
           
-          crossings.push({ x: u, y: v });
+          crossings.push({ x: u, y: v, px3d: px, py3d: py, pz3d: pz });
         }
       }
       
@@ -541,11 +593,42 @@ export class ProfileChart {
     // Filter out tiny chains (noise) — keep chains with >= 5 points
     const validChains = chains.filter(c => c.length >= 5);
     
+    // Split chains at large gaps (jump detection)
+    // A jump indicates the chain connected segments from different parts of the mesh
+    const splitChains: { x: number; y: number }[][] = [];
+    for (const chain of validChains) {
+      // Compute median segment length in chain
+      const segLens: number[] = [];
+      for (let i = 1; i < chain.length; i++) {
+        const ddx = chain[i].x - chain[i - 1].x;
+        const ddy = chain[i].y - chain[i - 1].y;
+        segLens.push(Math.sqrt(ddx * ddx + ddy * ddy));
+      }
+      segLens.sort((a, b) => a - b);
+      const medianSegLen = segLens[Math.floor(segLens.length / 2)] || 1;
+      const jumpThreshold = medianSegLen * 8; // a jump is 8x the median segment
+      
+      let current: { x: number; y: number }[] = [chain[0]];
+      for (let i = 1; i < chain.length; i++) {
+        const ddx = chain[i].x - chain[i - 1].x;
+        const ddy = chain[i].y - chain[i - 1].y;
+        const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+        if (dist > jumpThreshold && current.length >= 5) {
+          splitChains.push(current);
+          current = [];
+        }
+        current.push(chain[i]);
+      }
+      if (current.length >= 5) {
+        splitChains.push(current);
+      }
+    }
+    
     // Store all valid chains for drawing
-    this.outerChains = validChains;
+    this.outerChains = splitChains;
     // Also keep the longest chain as the main outer profile
-    validChains.sort((a, b) => b.length - a.length);
-    this.outerProfilePoints = validChains[0] || [];
+    splitChains.sort((a, b) => b.length - a.length);
+    this.outerProfilePoints = splitChains[0] || [];
   }
 
   private computeBounds(): void {
