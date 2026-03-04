@@ -554,8 +554,9 @@ export class ProfileChart {
   }
 
   /**
-   * Draw the outer layer (external cup surface) for context.
-   * Uses the actual inner profile displaced outward by wall thickness.
+   * Draw the outer layer (external cup surface) as transparent context.
+   * This shows the real outer profile following the inner profile shape
+   * displaced radially outward by wall thickness.
    */
   private drawOuterLayer(): void {
     if (this.wallThickness <= 0 || this.profilePoints.length < 3) return;
@@ -601,9 +602,9 @@ export class ProfileChart {
     
     if (outerPoints.length < 3) return;
 
-    // Draw the wall area between inner and outer profiles
-    ctx.fillStyle = this.COLORS.outerFill;
-    ctx.strokeStyle = this.COLORS.outerStroke;
+    // Draw the wall area as semi-transparent gray fill
+    ctx.fillStyle = 'rgba(180, 180, 180, 0.25)';
+    ctx.strokeStyle = 'rgba(120, 120, 120, 0.6)';
     ctx.lineWidth = 1.5;
 
     // Create path for the wall cross-section band
@@ -633,7 +634,9 @@ export class ProfileChart {
     ctx.closePath();
     ctx.fill();
     
-    // Draw outer edge line
+    // Draw outer edge line (gray)
+    ctx.strokeStyle = 'rgba(100, 100, 100, 0.7)';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     for (let i = 0; i < outerPoints.length; i++) {
       const pt = outerPoints[i];
@@ -649,7 +652,7 @@ export class ProfileChart {
     ctx.stroke();
 
     // Draw edge lines at the rim (connecting inner and outer at endpoints)
-    ctx.strokeStyle = this.COLORS.outer;
+    ctx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
     ctx.lineWidth = 1;
     
     // Left edge (first points)
@@ -668,18 +671,6 @@ export class ProfileChart {
       ctx.moveTo(this.dataToScreenX(innerLast.x), this.dataToScreenY(innerLast.y));
       ctx.lineTo(this.dataToScreenX(outerLast.x), this.dataToScreenY(outerLast.y));
       ctx.stroke();
-    }
-
-    // Label for outer layer
-    if (outerPoints.length > 0) {
-      ctx.fillStyle = this.COLORS.outerStroke;
-      ctx.font = '9px sans-serif';
-      ctx.textAlign = 'left';
-      const labelIdx = Math.floor(outerPoints.length * 0.15);
-      const labelPt = outerPoints[labelIdx];
-      const labelX = this.dataToScreenX(labelPt.x);
-      const labelY = this.dataToScreenY(labelPt.y);
-      ctx.fillText('Outer surface', labelX - 60, labelY - 5);
     }
   }
 
