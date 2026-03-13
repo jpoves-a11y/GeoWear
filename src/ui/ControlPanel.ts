@@ -293,13 +293,13 @@ export class ControlPanel {
     const isBestFit = this.params.analysisMode === 'sphere-bestfit';
 
     for (const ctrl of this.bestfitStepControllers) {
-      ctrl.domElement.parentElement.style.display = isBestFit ? '' : 'none';
+      isBestFit ? ctrl.show() : ctrl.hide();
     }
     for (const ctrl of this.pureGeodesicStepControllers) {
-      ctrl.domElement.parentElement.style.display = isBestFit ? 'none' : '';
+      isBestFit ? ctrl.hide() : ctrl.show();
     }
     for (const ctrl of this.bestfitVisControllers) {
-      ctrl.domElement.parentElement.style.display = isBestFit ? '' : 'none';
+      isBestFit ? ctrl.show() : ctrl.hide();
     }
   }
 
