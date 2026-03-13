@@ -628,8 +628,12 @@ export class WearAnalysisPipeline {
       threshold,
     };
 
-    // Also store distances as vertexDeviations for heatmap (absolute mm)
-    this.state.vertexDeviations = distances;
+    // Store deviations from commercial radius in μm for heatmap
+    const deviations = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      deviations[i] = (distances[i] - R) * 1000; // mm → μm
+    }
+    this.state.vertexDeviations = deviations;
 
     console.log(`[Wear Classification] worn=${wornCount} (${this.state.wearClassification.wornPercent.toFixed(1)}%), unworn=${unwornCount}, threshold=${threshold.toFixed(3)}mm`);
     return this.state.wearClassification;

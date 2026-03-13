@@ -236,6 +236,36 @@ export function fitSphereFixedRadius(
     cz = nz / n;
   }
 
+  // Enforce inscribed constraint: sphere must never protrude beyond
+  // the concave inner face. All vertices must satisfy dist(v, center) >= R.
+  for (let attempt = 0; attempt < 100; attempt++) {
+    let dispX = 0, dispY = 0, dispZ = 0;
+    let violationCount = 0;
+
+    for (let i = 0; i < n; i++) {
+      const dx = positions[i * 3] - cx;
+      const dy = positions[i * 3 + 1] - cy;
+      const dz = positions[i * 3 + 2] - cz;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d < fixedRadius) {
+        // Vertex is inside the sphere → sphere protrudes beyond inner face
+        const deficit = fixedRadius - d;
+        const invD = 1 / Math.max(d, 1e-12);
+        // Push center away from this vertex
+        dispX -= (dx * invD) * deficit;
+        dispY -= (dy * invD) * deficit;
+        dispZ -= (dz * invD) * deficit;
+        violationCount++;
+      }
+    }
+
+    if (violationCount === 0) break;
+
+    cx += dispX / violationCount;
+    cy += dispY / violationCount;
+    cz += dispZ / violationCount;
+  }
+
   // Compute RMS error
   let sumSq = 0;
   for (let i = 0; i < n; i++) {

@@ -508,19 +508,8 @@ export class App {
       this.meshViewer.displayGhostMesh(p.state.trimResult.rimMesh);
     }
 
-    // Heat map
-    if (results.analysisMode === 'sphere-bestfit' && results.wearClassification) {
-      // In BestFit mode, heatmap is absolute distance to center (mm)
-      const colors = this.heatMap.generateColors(
-        results.wearClassification.distances,
-        this.params.colorRangeMin,
-        this.params.colorRangeMax,
-        this.params.colorMapName
-      );
-      this.meshViewer.applyVertexColors(colors);
-      this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
-    } else if (p.state.vertexDeviations) {
-      // Pure geodesic mode: deviation heatmap
+    // Heat map (both modes store μm deviations in vertexDeviations)
+    if (p.state.vertexDeviations) {
       const colors = this.heatMap.generateColors(
         p.state.vertexDeviations,
         this.params.colorRangeMin,
