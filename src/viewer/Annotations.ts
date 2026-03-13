@@ -109,7 +109,7 @@ export class AnnotationManager {
 
     const isBump = cluster.type === 'bump';
     const icon = isBump ? '▲' : '▼';
-    const typeLabel = isBump ? 'Wear' : 'Dip';
+    const typeLabel = 'Wear';
     const devStr = isBump
       ? `+${cluster.maxDeviation.toFixed(1)}`
       : `${cluster.minDeviation.toFixed(1)}`;

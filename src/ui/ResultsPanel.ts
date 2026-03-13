@@ -94,7 +94,6 @@ export class ResultsPanel {
         undefined, results.totalAnomalyPoints > 0 ? 'warning' : 'success');
       this.addMetric(section, 'Wear Clusters', results.bumpClusters.length.toString(),
         undefined, results.bumpClusters.length > 0 ? 'danger' : 'success');
-      this.addMetric(section, 'Dip Clusters', results.dipClusters.length.toString());
     }
     this.addMetric(section, 'Processing Time',
       `${(results.processingTimeMs / 1000).toFixed(1)}`, 's');
@@ -154,8 +153,6 @@ export class ResultsPanel {
 
     this.addMetric(section, 'Max Wear', `+${maxBump.toFixed(2)}`, 'μm',
       maxBump > 10 ? 'danger' : maxBump > 5 ? 'warning' : 'success');
-    this.addMetric(section, 'Max Dip', `${maxDip.toFixed(2)}`, 'μm',
-      Math.abs(maxDip) > 10 ? 'danger' : Math.abs(maxDip) > 5 ? 'warning' : 'success');
 
     if (results.primaryWearZone) {
       const pwz = results.primaryWearZone;
@@ -172,18 +169,11 @@ export class ResultsPanel {
     this.addMetric(section, 'Wear Volume',
       results.totalBumpVolume.toFixed(4), 'mm³',
       results.totalBumpVolume > 0.1 ? 'danger' : 'success');
-    this.addMetric(section, 'Dip Volume',
-      results.totalDipVolume.toFixed(4), 'mm³',
-      results.totalDipVolume > 0.1 ? 'warning' : 'success');
-    this.addMetric(section, 'Total Defect Volume',
-      (results.totalBumpVolume + results.totalDipVolume).toFixed(4), 'mm³');
 
     // Mass estimates
     const density = 0.935; // g/cm³ = mg/mm³
     this.addMetric(section, 'Wear Mass',
       (results.totalBumpVolume * density).toFixed(4), 'mg', 'danger');
-    this.addMetric(section, 'Dip Mass',
-      (results.totalDipVolume * density).toFixed(4), 'mg');
 
     this.container.appendChild(section);
   }

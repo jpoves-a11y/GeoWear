@@ -184,10 +184,6 @@ export class ControlPanel {
       .name('Color Map')
       .onChange(() => this.callbacks.onParamsChange(this.params));
 
-    folder.add(this.params, 'colorRangeMin', -200, 0, 1)
-      .name('Color Min (μm)')
-      .onChange(() => this.callbacks.onParamsChange(this.params));
-
     folder.add(this.params, 'colorRangeMax', 0, 200, 1)
       .name('Color Max (μm)')
       .onChange(() => this.callbacks.onParamsChange(this.params));

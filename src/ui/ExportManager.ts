@@ -53,12 +53,8 @@ export class ExportManager {
       lines.push(`Semi-axis C (mm),N/A`);
     }
     lines.push(`Wear Volume (mm³),${results.totalBumpVolume.toFixed(6)}`);
-    lines.push(`Dip Volume (mm³),${results.totalDipVolume.toFixed(6)}`);
-    lines.push(`Total Defect Volume (mm³),${(results.totalBumpVolume + results.totalDipVolume).toFixed(6)}`);
     lines.push(`Wear Mass (mg),${(results.totalBumpVolume * 0.935).toFixed(6)}`);
-    lines.push(`Dip Mass (mg),${(results.totalDipVolume * 0.935).toFixed(6)}`);
     lines.push(`Wear Clusters,${results.bumpClusters.length}`);
-    lines.push(`Dip Clusters,${results.dipClusters.length}`);
     lines.push(`Total Anomaly Points,${results.totalAnomalyPoints}`);
     lines.push('');
 
@@ -255,10 +251,7 @@ export class ExportManager {
     pdf.setTextColor(60, 60, 60);
     const volumeData = [
       ['Wear Volume', `${results.totalBumpVolume.toFixed(4)} mm³`],
-      ['Dip Volume', `${results.totalDipVolume.toFixed(4)} mm³`],
-      ['Total Defect Volume', `${(results.totalBumpVolume + results.totalDipVolume).toFixed(4)} mm³`],
       ['Wear Mass', `${(results.totalBumpVolume * 0.935).toFixed(4)} mg`],
-      ['Dip Mass', `${(results.totalDipVolume * 0.935).toFixed(4)} mg`],
     ];
 
     for (const [label, value] of volumeData) {
@@ -298,7 +291,7 @@ export class ExportManager {
     pdf.setTextColor(60, 60, 60);
     const allClusters = [...results.bumpClusters, ...results.dipClusters];
     for (const cluster of allClusters.slice(0, 10)) {
-      const typeStr = cluster.type === 'bump' ? 'WEAR' : 'DIP';
+      const typeStr = 'WEAR';
       pdf.text(
         `${typeStr} #${cluster.id + 1}: ${cluster.points.length} pts, ` +
         `avg ${cluster.avgDeviation.toFixed(1)} μm, ` +

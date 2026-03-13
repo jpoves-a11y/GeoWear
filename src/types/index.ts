@@ -272,7 +272,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   smoothingIterations: 3,
   thresholdMicrons: 1.0,
   colorMapName: 'rainbow',
-  colorRangeMin: -50,
+  colorRangeMin: 0,
   colorRangeMax: 50,
   showWireframe: false,
   geodesicDisplayMode: 'all',

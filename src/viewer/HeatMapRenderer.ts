@@ -143,7 +143,7 @@ export class HeatMapRenderer {
     const midLabel = document.getElementById('legend-mid');
     const minLabel = document.getElementById('legend-min');
 
-    if (maxLabel) maxLabel.textContent = `+${maxValue.toFixed(1)}`;
+    if (maxLabel) maxLabel.textContent = `${maxValue.toFixed(1)}`;
     if (midLabel) midLabel.textContent = `${((minValue + maxValue) / 2).toFixed(1)}`;
     if (minLabel) minLabel.textContent = `${minValue.toFixed(1)}`;
 
