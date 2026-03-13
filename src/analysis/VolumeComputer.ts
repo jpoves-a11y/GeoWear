@@ -293,12 +293,14 @@ export function computeMeshEnclosedVolume(
     rcy /= rimVerts.size;
     rcz /= rimVerts.size;
 
-    // Each boundary edge forms a triangle with the centroid
+    // Each boundary edge forms a triangle with the centroid.
+    // Swap a,b so that the cap face has the reverse edge (b→a),
+    // making cap normals consistent with the mesh face normals.
     for (const [a, b] of boundaryEdges) {
       meshVolume += signedTetVolOrigin(
         rcx, rcy, rcz,
-        positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2],
-        positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2]
+        positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2],
+        positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2]
       );
     }
   }

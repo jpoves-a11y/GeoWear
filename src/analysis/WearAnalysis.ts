@@ -563,12 +563,17 @@ export class WearAnalysisPipeline {
       commercialRadius = manualRadius;
       autoDetected = false;
     } else {
-      // Round DOWN to nearest commercial radius
-      const sorted = [...COMMERCIAL_RADII].sort((a, b) => b - a); // descending
-      commercialRadius = sorted[sorted.length - 1]; // smallest as default
-      for (const r of sorted) {
-        if (geodesicRadius >= r) {
-          commercialRadius = r;
+      // Round DOWN to nearest commercial radius, but snap UP if within 0.2mm of the next one
+      const sorted = [...COMMERCIAL_RADII].sort((a, b) => a - b); // ascending
+      commercialRadius = sorted[0]; // smallest as default
+      for (let i = 0; i < sorted.length; i++) {
+        if (geodesicRadius >= sorted[i]) {
+          commercialRadius = sorted[i];
+        } else if (sorted[i] - geodesicRadius <= 0.2) {
+          // Within 0.2mm of the next commercial radius → snap up
+          commercialRadius = sorted[i];
+          break;
+        } else {
           break;
         }
       }
