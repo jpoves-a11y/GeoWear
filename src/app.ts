@@ -185,6 +185,52 @@ export class App {
       this.status.setStatus('Parsing STL geometry...');
       const { geometry, meshData: rawMesh } = await this.meshViewer.loadSTL(buffer, file.name);
 
+      // --- Auto-detect unit scale (must be first, before anything else) ---
+      // Acetabular cups have bounding-box diagonals ~ 30-50 mm.
+      // If the diagonal is 1000× too large the file is in μm; if 1000× too small it is in m.
+      {
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        const pos = rawMesh.positions;
+        for (let i = 0; i < rawMesh.vertexCount; i++) {
+          const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+          if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        }
+        const diag = Math.sqrt(
+          (maxX - minX) ** 2 + (maxY - minY) ** 2 + (maxZ - minZ) ** 2
+        );
+
+        let scaleFactor = 1;
+        if (diag > 5000) {
+          scaleFactor = 0.001;
+          console.log(`[Auto-Scale] Diagonal=${diag.toFixed(1)} — detected μm units, scaling ×0.001`);
+        } else if (diag < 0.1) {
+          scaleFactor = 1000;
+          console.log(`[Auto-Scale] Diagonal=${diag.toFixed(6)} — detected m units, scaling ×1000`);
+        }
+
+        if (scaleFactor !== 1) {
+          // Scale raw mesh positions
+          for (let i = 0; i < pos.length; i++) {
+            pos[i] *= scaleFactor;
+          }
+          // Scale display geometry
+          const geoPos = geometry.attributes.position.array as Float32Array;
+          for (let i = 0; i < geoPos.length; i++) {
+            (geoPos as Float32Array)[i] *= scaleFactor;
+          }
+          geometry.attributes.position.needsUpdate = true;
+          geometry.computeBoundingBox();
+          geometry.computeBoundingSphere();
+          if (geometry.attributes.normal) {
+            geometry.computeVertexNormals();
+          }
+          this.status.setStatus(`Auto-scaled from ${scaleFactor === 0.001 ? 'μm' : 'm'} to mm`);
+        }
+      }
+
       // Validate parsed geometry
       if (rawMesh.vertexCount === 0) {
         throw new Error('STL file contains no vertices');
@@ -222,50 +268,6 @@ export class App {
 
       if (meshData.vertexCount === 0) {
         throw new Error('Vertex welding produced no vertices — check the STL file');
-      }
-
-      // --- Auto-detect unit scale ---
-      // Acetabular cups have bounding-box diagonals ~ 30-50 mm.
-      // If the diagonal is 1000× too large the file is in μm; if 1000× too small it is in m.
-      {
-        let minX = Infinity, minY = Infinity, minZ = Infinity;
-        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-        const pos = meshData.positions;
-        for (let i = 0; i < meshData.vertexCount; i++) {
-          const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
-          if (x < minX) minX = x; if (x > maxX) maxX = x;
-          if (y < minY) minY = y; if (y > maxY) maxY = y;
-          if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-        }
-        const diag = Math.sqrt(
-          (maxX - minX) ** 2 + (maxY - minY) ** 2 + (maxZ - minZ) ** 2
-        );
-
-        let scaleFactor = 1;
-        if (diag > 5000) {
-          // Likely micrometers → convert to mm (÷ 1000)
-          scaleFactor = 0.001;
-          console.log(`[Auto-Scale] Diagonal=${diag.toFixed(1)} — detected μm units, scaling ×0.001`);
-        } else if (diag < 0.1) {
-          // Likely meters → convert to mm (× 1000)
-          scaleFactor = 1000;
-          console.log(`[Auto-Scale] Diagonal=${diag.toFixed(6)} — detected m units, scaling ×1000`);
-        }
-
-        if (scaleFactor !== 1) {
-          for (let i = 0; i < pos.length; i++) {
-            pos[i] *= scaleFactor;
-          }
-          // Also scale the raw geometry for display
-          const geoPos = geometry.attributes.position.array as Float32Array;
-          for (let i = 0; i < geoPos.length; i++) {
-            (geoPos as Float32Array)[i] *= scaleFactor;
-          }
-          geometry.attributes.position.needsUpdate = true;
-          geometry.computeBoundingBox();
-          geometry.computeBoundingSphere();
-          this.status.setStatus(`Auto-scaled from ${scaleFactor === 0.001 ? 'μm' : 'm'} to mm`);
-        }
       }
 
       console.log(`Welded: ${rawMesh.vertexCount} → ${meshData.vertexCount} vertices, ${meshData.faceCount} faces`);
