@@ -109,6 +109,7 @@ export class App {
       onToggleWornSphere: (v: boolean) => this.meshViewer.setWornSphereVisible(v),
       onToggleUnwornSphere: (v: boolean) => this.meshViewer.setUnwornSphereVisible(v),
       onToggleRimPlane: (v: boolean) => this.meshViewer.setRimPlaneVisible(v),
+      onToggleWearPlane: (v: boolean) => this.meshViewer.setWearPlaneVisible(v),
       // --- Export ---
       onExportPNG: () => this.exportPNG(),
       onExportCSV: () => this.exportCSV(),
@@ -520,25 +521,40 @@ export class App {
       this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
     }
 
-    // Reference sphere
+    // Reference sphere (hidden by default)
     if (p.state.sphereFit) {
-      this.meshViewer.displayReferenceSphere(p.state.sphereFit.center, p.state.sphereFit.radius);
+      this.meshViewer.displayReferenceSphere(p.state.sphereFit.center, p.state.sphereFit.radius, false);
     }
 
     // --- BestFit mode visualization ---
     if (results.analysisMode === 'sphere-bestfit') {
       if (results.commercialSphere) {
-        this.meshViewer.displayCommercialSphere(results.commercialSphere.center, results.commercialSphere.commercialRadius);
+        // Commercial sphere hidden by default
+        this.meshViewer.displayCommercialSphere(results.commercialSphere.center, results.commercialSphere.commercialRadius, false);
       }
       if (results.zoneSpheres) {
         this.meshViewer.displayWornSphere(results.zoneSpheres.wornSphere.center, results.zoneSpheres.wornSphere.radius);
         this.meshViewer.displayUnwornSphere(results.zoneSpheres.unwornSphere.center, results.zoneSpheres.unwornSphere.radius);
       }
       if (results.rimPlane && results.commercialSphere) {
+        // Rim plane hidden by default
         this.meshViewer.displayRimPlane(
           results.rimPlane.point,
           results.rimPlane.normal,
-          results.commercialSphere.commercialRadius
+          results.commercialSphere.commercialRadius,
+          false
+        );
+      }
+      // Wear section plane (hidden by default)
+      if (results.wearPlane && results.commercialSphere) {
+        // Center the plane midway between pole and rim
+        const midPoint = results.wearPlane.planePoint.clone()
+          .add(results.rimPlane!.point).multiplyScalar(0.5);
+        this.meshViewer.displayWearPlane(
+          midPoint,
+          results.wearPlane.planeNormal,
+          results.commercialSphere.commercialRadius,
+          false
         );
       }
     }
@@ -613,13 +629,25 @@ export class App {
       p.stepFitZoneSpheres();
       p.stepComputeRimPlane();
       p.stepComputeWearVolumeBestFit();
+      p.stepComputeWearPlane();
       this.meshViewer.displayWornSphere(p.state.zoneSpheres!.wornSphere.center, p.state.zoneSpheres!.wornSphere.radius);
       this.meshViewer.displayUnwornSphere(p.state.zoneSpheres!.unwornSphere.center, p.state.zoneSpheres!.unwornSphere.radius);
       if (p.state.rimPlane && p.state.commercialSphere) {
         this.meshViewer.displayRimPlane(
           p.state.rimPlane.point,
           p.state.rimPlane.normal,
-          p.state.commercialSphere.commercialRadius
+          p.state.commercialSphere.commercialRadius,
+          false
+        );
+      }
+      if (p.state.wearPlane && p.state.commercialSphere && p.state.rimPlane) {
+        const midPoint = p.state.wearPlane.planePoint.clone()
+          .add(p.state.rimPlane.point).multiplyScalar(0.5);
+        this.meshViewer.displayWearPlane(
+          midPoint,
+          p.state.wearPlane.planeNormal,
+          p.state.commercialSphere.commercialRadius,
+          false
         );
       }
       this.status.setStatus(`Wear volume: ${p.state.wearVolume!.wearVolume.toFixed(4)} mm³`);

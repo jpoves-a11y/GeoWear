@@ -8,7 +8,7 @@ import type {
   MeshData, SeparationResult, TrimResult, SphereFitResult,
   EllipsoidFitResult, Geodesic, AnalysisResults, AnomalyCluster,
   AnalysisParams, CommercialSphereInfo, WearClassification,
-  ZoneSphereResult, RimPlaneResult, WearVolumeResult
+  ZoneSphereResult, RimPlaneResult, WearVolumeResult, WearPlaneResult
 } from '../types';
 import { COMMERCIAL_RADII } from '../types';
 import { separateFaces, trimRim } from './MeshProcessor';
@@ -96,6 +96,7 @@ export interface PipelineState {
   zoneSpheres: ZoneSphereResult | null;
   rimPlane: RimPlaneResult | null;
   wearVolume: WearVolumeResult | null;
+  wearPlane: WearPlaneResult | null;
 }
 
 export class WearAnalysisPipeline {
@@ -120,6 +121,7 @@ export class WearAnalysisPipeline {
     zoneSpheres: null,
     rimPlane: null,
     wearVolume: null,
+    wearPlane: null,
   };
 
   private onProgress?: (stage: string, progress: number, message: string) => void;
@@ -176,8 +178,11 @@ export class WearAnalysisPipeline {
       this.progress('rim-plane', 0.92, 'Computing rim plane...');
       this.stepComputeRimPlane();
 
-      this.progress('wear-volume', 0.95, 'Computing wear volume...');
+      this.progress('wear-volume', 0.93, 'Computing wear volume...');
       this.stepComputeWearVolumeBestFit();
+
+      this.progress('wear-plane', 0.97, 'Computing wear plane...');
+      this.stepComputeWearPlane();
     } else {
       // --- Pure Geodesic pipeline ---
       this.progress('fitting', 0.85, 'Fitting ellipsoid...');
@@ -834,5 +839,81 @@ export class WearAnalysisPipeline {
 
     console.log(`[Wear Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, sphereCap=${sphereCapVolume.toFixed(4)}mm³, wear=${wearVolume.toFixed(4)}mm³`);
     return this.state.wearVolume;
+  }
+
+  /**
+   * Find the point of maximum wear and compute a wear plane through it and the pole,
+   * perpendicular to the rim plane.
+   *
+   * Wear depth per vertex = how far the vertex is outside the unworn sphere
+   *   depth_i = dist(vertex_i, unwornCenter) - R   (positive = worn)
+   * The vertex with the maximum depth is the max-wear point.
+   */
+  stepComputeWearPlane(): WearPlaneResult {
+    if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.zoneSpheres) throw new Error('Run zone sphere fitting first');
+    if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
+    if (!this.state.polePosition) throw new Error('No pole position available');
+
+    const mesh = this.state.workingMesh;
+    const unwornCenter = this.state.zoneSpheres.unwornSphere.center;
+    const R = this.state.zoneSpheres.unwornSphere.radius;
+    const rimNormal = this.state.rimPlane.normal;
+    const rimPoint = this.state.rimPlane.point;
+    const pole = this.state.polePosition;
+
+    // Find vertex with maximum wear depth (furthest outside unworn sphere),
+    // only considering vertices on the interior side of the rim plane (toward the pole)
+    let maxDepth = -Infinity;
+    let maxIdx = 0;
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      const px = mesh.positions[i * 3];
+      const py = mesh.positions[i * 3 + 1];
+      const pz = mesh.positions[i * 3 + 2];
+
+      // Signed distance to rim plane (positive = interior / pole side)
+      const rimDist = (px - rimPoint.x) * rimNormal.x +
+                      (py - rimPoint.y) * rimNormal.y +
+                      (pz - rimPoint.z) * rimNormal.z;
+      if (rimDist < 0) continue; // skip vertices outside the rim
+
+      const dx = px - unwornCenter.x;
+      const dy = py - unwornCenter.y;
+      const dz = pz - unwornCenter.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const depth = dist - R; // positive = outside unworn sphere = worn
+
+      if (depth > maxDepth) {
+        maxDepth = depth;
+        maxIdx = i;
+      }
+    }
+
+    const maxWearPoint = new THREE.Vector3(
+      mesh.positions[maxIdx * 3],
+      mesh.positions[maxIdx * 3 + 1],
+      mesh.positions[maxIdx * 3 + 2]
+    );
+
+    // Wear plane: passes through pole and maxWearPoint, perpendicular to rim plane
+    // Direction in the plane: pole → maxWearPoint
+    const dir = maxWearPoint.clone().sub(pole).normalize();
+    // Plane normal = dir × rimNormal (perpendicular to both)
+    const planeNormal = new THREE.Vector3().crossVectors(dir, rimNormal).normalize();
+
+    this.state.wearPlane = {
+      maxWearPoint,
+      maxWearDepth: maxDepth * 1000, // convert to μm
+      planePoint: pole.clone(),
+      planeNormal,
+    };
+
+    // Also store in results if they exist
+    if (this.state.results) {
+      this.state.results.wearPlane = this.state.wearPlane;
+    }
+
+    console.log(`[Wear Plane] maxWear=${(maxDepth * 1000).toFixed(1)}μm at (${maxWearPoint.x.toFixed(2)}, ${maxWearPoint.y.toFixed(2)}, ${maxWearPoint.z.toFixed(2)})`);
+    return this.state.wearPlane;
   }
 }

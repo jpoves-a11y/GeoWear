@@ -149,6 +149,14 @@ export interface WearVolumeResult {
   wearVolume: number;           // mm³ — difference = wear
 }
 
+/** Wear plane through pole and max-wear point, perpendicular to rim plane */
+export interface WearPlaneResult {
+  maxWearPoint: THREE.Vector3;    // vertex with maximum wear depth
+  maxWearDepth: number;           // μm — deviation at that vertex
+  planePoint: THREE.Vector3;      // point on the wear plane (pole)
+  planeNormal: THREE.Vector3;     // normal of the wear plane
+}
+
 /** Complete analysis results */
 export interface AnalysisResults {
   // Analysis mode
@@ -185,6 +193,7 @@ export interface AnalysisResults {
   zoneSpheres?: ZoneSphereResult;
   rimPlane?: RimPlaneResult;
   wearVolumeResult?: WearVolumeResult;
+  wearPlane?: WearPlaneResult;
   
   // Processing info
   processingTimeMs: number;
@@ -277,7 +286,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showWireframe: false,
   geodesicDisplayMode: 'all',
   showHeatmap: true,
-  showAnnotations: true,
+  showAnnotations: false,
   showReferenceShape: false,
   contextOpaque: false,
   density: 0.935,

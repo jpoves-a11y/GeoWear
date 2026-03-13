@@ -30,6 +30,7 @@ export interface ControlCallbacks {
   onToggleWornSphere: (v: boolean) => void;
   onToggleUnwornSphere: (v: boolean) => void;
   onToggleRimPlane: (v: boolean) => void;
+  onToggleWearPlane: (v: boolean) => void;
   // Export
   onExportPNG: () => void;
   onExportCSV: () => void;
@@ -219,7 +220,7 @@ export class ControlPanel {
       .onChange((v: boolean) => this.callbacks.onToggleContext(v));
 
     // BestFit-specific toggles
-    const bestfitVis = { commercialSphere: true, wornSphere: true, unwornSphere: true, rimPlane: true };
+    const bestfitVis = { commercialSphere: false, wornSphere: true, unwornSphere: true, rimPlane: false, wearPlane: false };
 
     const csc = folder.add(bestfitVis, 'commercialSphere')
       .name('Commercial Sphere')
@@ -240,6 +241,11 @@ export class ControlPanel {
       .name('Rim Plane')
       .onChange((v: boolean) => this.callbacks.onToggleRimPlane(v));
     this.bestfitVisControllers.push(rpc);
+
+    const wpc = folder.add(bestfitVis, 'wearPlane')
+      .name('Wear Section Plane')
+      .onChange((v: boolean) => this.callbacks.onToggleWearPlane(v));
+    this.bestfitVisControllers.push(wpc);
 
     const resultsBtn = { 'Show Results Panel': () => this.callbacks.onShowResults() };
     folder.add(resultsBtn, 'Show Results Panel');

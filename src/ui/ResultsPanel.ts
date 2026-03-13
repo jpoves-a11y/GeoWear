@@ -53,6 +53,9 @@ export class ResultsPanel {
       if (results.wearVolumeResult) {
         this.addWearVolumeSection(results);
       }
+      if (results.wearPlane) {
+        this.addWearPlaneSection(results);
+      }
     } else {
       // --- Pure Geodesic mode sections ---
       if (results.ellipsoidFit) {
@@ -198,7 +201,10 @@ export class ResultsPanel {
 
     this.addMetric(section, 'Geodesic Radius', cs.geodesicRadius.toFixed(4), 'mm');
     this.addMetric(section, 'Commercial Radius', cs.commercialRadius.toFixed(1), 'mm');
-    this.addMetric(section, 'Detection', cs.autoDetected ? 'Auto (round down)' : 'Manual');
+    this.addMetric(section, 'Detection',
+      cs.autoDetected
+        ? (cs.commercialRadius > cs.geodesicRadius ? 'Auto (snap up)' : 'Auto (round down)')
+        : 'Manual');
     this.addMetric(section, 'Center X', cs.center.x.toFixed(4), 'mm');
     this.addMetric(section, 'Center Y', cs.center.y.toFixed(4), 'mm');
     this.addMetric(section, 'Center Z', cs.center.z.toFixed(4), 'mm');
@@ -241,6 +247,19 @@ export class ResultsPanel {
       wv.wearVolume > 0.1 ? 'danger' : 'success');
     this.addMetric(section, 'Wear Mass', (wv.wearVolume * density).toFixed(4), 'mg',
       wv.wearVolume > 0.1 ? 'danger' : 'success');
+
+    this.container.appendChild(section);
+  }
+
+  private addWearPlaneSection(results: AnalysisResults): void {
+    const section = this.createSection('Maximum Wear Point');
+    const wp = results.wearPlane!;
+
+    this.addMetric(section, 'Max Wear Depth', wp.maxWearDepth.toFixed(1), 'μm',
+      wp.maxWearDepth > 10 ? 'danger' : wp.maxWearDepth > 5 ? 'warning' : 'success');
+    this.addMetric(section, 'Point X', wp.maxWearPoint.x.toFixed(4), 'mm');
+    this.addMetric(section, 'Point Y', wp.maxWearPoint.y.toFixed(4), 'mm');
+    this.addMetric(section, 'Point Z', wp.maxWearPoint.z.toFixed(4), 'mm');
 
     this.container.appendChild(section);
   }

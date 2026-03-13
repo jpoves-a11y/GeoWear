@@ -20,6 +20,7 @@ export class MeshViewer {
   private wornSphereObject: THREE.Mesh | null = null;
   private unwornSphereObject: THREE.Mesh | null = null;
   private rimPlaneObject: THREE.Mesh | null = null;
+  private wearPlaneObject: THREE.Mesh | null = null;
 
   // Materials
   private innerMaterial: THREE.MeshStandardMaterial;
@@ -391,6 +392,44 @@ export class MeshViewer {
     if (this.rimPlaneObject) this.rimPlaneObject.visible = visible;
   }
 
+  /**
+   * Display the wear-section plane (passes through pole and max-wear point).
+   * Uses a PlaneGeometry oriented by the given normal.
+   */
+  public displayWearPlane(
+    center: THREE.Vector3,
+    normal: THREE.Vector3,
+    size: number,
+    visible: boolean = false
+  ): void {
+    this.removeNamedObject('wear-plane');
+    if (this.wearPlaneObject) {
+      this.originalGroup.remove(this.wearPlaneObject);
+      this.wearPlaneObject.geometry.dispose();
+    }
+    const geo = new THREE.PlaneGeometry(size * 2.6, size * 2.6);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xff8800,
+      transparent: true,
+      opacity: 0.2,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.wearPlaneObject = new THREE.Mesh(geo, mat);
+    this.wearPlaneObject.position.copy(center);
+    const up = new THREE.Vector3(0, 0, 1);
+    const quat = new THREE.Quaternion().setFromUnitVectors(up, normal.clone().normalize());
+    this.wearPlaneObject.quaternion.copy(quat);
+    this.wearPlaneObject.name = 'wear-plane';
+    this.wearPlaneObject.visible = visible;
+    this.wearPlaneObject.renderOrder = 7;
+    this.originalGroup.add(this.wearPlaneObject);
+  }
+
+  public setWearPlaneVisible(visible: boolean): void {
+    if (this.wearPlaneObject) this.wearPlaneObject.visible = visible;
+  }
+
   /** Remove a named object from the group */
   private removeNamedObject(name: string): void {
     const obj = this.originalGroup.getObjectByName(name);
@@ -406,13 +445,14 @@ export class MeshViewer {
 
   /** Clear zone spheres, commercial sphere, and rim plane */
   public clearZoneSpheres(): void {
-    for (const name of ['commercial-sphere', 'worn-sphere', 'unworn-sphere', 'rim-plane']) {
+    for (const name of ['commercial-sphere', 'worn-sphere', 'unworn-sphere', 'rim-plane', 'wear-plane']) {
       this.removeNamedObject(name);
     }
     this.commercialSphereObject = null;
     this.wornSphereObject = null;
     this.unwornSphereObject = null;
     this.rimPlaneObject = null;
+    this.wearPlaneObject = null;
   }
 
   /**
@@ -538,6 +578,7 @@ export class MeshViewer {
     this.wornSphereObject = null;
     this.unwornSphereObject = null;
     this.rimPlaneObject = null;
+    this.wearPlaneObject = null;
   }
 
   public dispose(): void {
