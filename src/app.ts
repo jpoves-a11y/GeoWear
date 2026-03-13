@@ -94,12 +94,22 @@ export class App {
       onStepFitSphere: () => this.stepFitSphere(),
       onStepGeodesics: () => this.stepGeodesics(),
       onStepAnalyze: () => this.stepAnalyze(),
+      // --- Sphere BestFit mode steps ---
+      onStepCommercialRadius: () => this.stepCommercialRadius(),
+      onStepClassifyWear: () => this.stepClassifyWear(),
+      onStepWearVolume: () => this.stepWearVolume(),
+      // --- Visualization toggles ---
       onToggleWireframe: (v: boolean) => this.meshViewer.setWireframe(v),
       onGeodesicDisplayMode: (mode: string) => this.geodesicRenderer.setDisplayMode(mode),
       onToggleHeatmap: (v: boolean) => this.toggleHeatMap(v),
       onToggleAnnotations: (v: boolean) => this.annotations.setVisible(v),
       onToggleRefSphere: (v: boolean) => this.toggleRefSphere(v),
       onToggleContext: (opaque: boolean) => this.meshViewer.setContextOpaque(opaque),
+      onToggleCommercialSphere: (v: boolean) => this.meshViewer.setCommercialSphereVisible(v),
+      onToggleWornSphere: (v: boolean) => this.meshViewer.setWornSphereVisible(v),
+      onToggleUnwornSphere: (v: boolean) => this.meshViewer.setUnwornSphereVisible(v),
+      onToggleRimPlane: (v: boolean) => this.meshViewer.setRimPlaneVisible(v),
+      // --- Export ---
       onExportPNG: () => this.exportPNG(),
       onExportCSV: () => this.exportCSV(),
       onExportSTL: () => this.exportSTL(),
@@ -483,6 +493,7 @@ export class App {
     if (!this.pipeline || !this.pipeline.state.results) return;
     const p = this.pipeline;
     const offset = this.meshViewer.getGroupOffset();
+    const results = p.state.results!;
 
     // Show inner mesh (trimmed, opaque)
     if (p.state.workingMesh) {
@@ -498,7 +509,18 @@ export class App {
     }
 
     // Heat map
-    if (p.state.vertexDeviations) {
+    if (results.analysisMode === 'sphere-bestfit' && results.wearClassification) {
+      // In BestFit mode, heatmap is absolute distance to center (mm)
+      const colors = this.heatMap.generateColors(
+        results.wearClassification.distances,
+        this.params.colorRangeMin,
+        this.params.colorRangeMax,
+        this.params.colorMapName
+      );
+      this.meshViewer.applyVertexColors(colors);
+      this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
+    } else if (p.state.vertexDeviations) {
+      // Pure geodesic mode: deviation heatmap
       const colors = this.heatMap.generateColors(
         p.state.vertexDeviations,
         this.params.colorRangeMin,
@@ -514,11 +536,28 @@ export class App {
       this.meshViewer.displayReferenceSphere(p.state.sphereFit.center, p.state.sphereFit.radius);
     }
 
+    // --- BestFit mode visualization ---
+    if (results.analysisMode === 'sphere-bestfit') {
+      if (results.commercialSphere) {
+        this.meshViewer.displayCommercialSphere(results.commercialSphere.center, results.commercialSphere.commercialRadius);
+      }
+      if (results.zoneSpheres) {
+        this.meshViewer.displayWornSphere(results.zoneSpheres.wornSphere.center, results.zoneSpheres.wornSphere.radius);
+        this.meshViewer.displayUnwornSphere(results.zoneSpheres.unwornSphere.center, results.zoneSpheres.unwornSphere.radius);
+      }
+      if (results.rimPlane && results.commercialSphere) {
+        this.meshViewer.displayRimPlane(
+          results.rimPlane.point,
+          results.rimPlane.normal,
+          results.commercialSphere.commercialRadius
+        );
+      }
+    }
+
     // Geodesics
     if (p.state.geodesics.length > 0) {
       this.geodesicRenderer.renderGeodesics(p.state.geodesics, offset, true, p.state.curvatureThreshold || 0);
       this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
-      
       // Enable section profile mode
       this.enableSectionModeButton();
     }
@@ -529,7 +568,6 @@ export class App {
     }
 
     // Clusters & annotations
-    const results = p.state.results!;
     const allClusters = [
       ...results.bumpClusters,
       ...results.dipClusters,
@@ -547,6 +585,60 @@ export class App {
         wv.deepestPoint, p.state.polePosition, offset,
         wv.maxDepth, wv.angle
       );
+    }
+  }
+  // --- Sphere BestFit step methods ---
+  private async stepCommercialRadius(): Promise<void> {
+    const p = this.ensurePipeline();
+    try {
+      this.status.setStatus('Determining commercial radius...');
+      p.stepDetermineCommercialRadius(this.params.commercialRadius);
+      this.meshViewer.displayCommercialSphere(p.state.commercialSphere!.center, p.state.commercialSphere!.commercialRadius);
+      this.status.setStatus(`Commercial radius: ${p.state.commercialSphere!.commercialRadius.toFixed(2)} mm`);
+      this.controls.markStepCompleted('commercial');
+      this.currentResults = p.state.results;
+      this.resultsPanel.show(p.state.results!);
+    } catch (e) {
+      this.status.setStatus(`Error: ${(e as Error).message}`);
+    }
+  }
+
+  private async stepClassifyWear(): Promise<void> {
+    const p = this.ensurePipeline();
+    try {
+      this.status.setStatus('Classifying worn/unworn zones...');
+      p.stepClassifyWear();
+      this.status.setStatus(`Worn vertices: ${p.state.wearClassification!.wornCount}`);
+      this.controls.markStepCompleted('classifywear');
+      this.currentResults = p.state.results;
+      this.resultsPanel.show(p.state.results!);
+    } catch (e) {
+      this.status.setStatus(`Error: ${(e as Error).message}`);
+    }
+  }
+
+  private async stepWearVolume(): Promise<void> {
+    const p = this.ensurePipeline();
+    try {
+      this.status.setStatus('Computing wear volume...');
+      p.stepFitZoneSpheres();
+      p.stepComputeRimPlane();
+      p.stepComputeWearVolumeBestFit();
+      this.meshViewer.displayWornSphere(p.state.zoneSpheres!.wornSphere.center, p.state.zoneSpheres!.wornSphere.radius);
+      this.meshViewer.displayUnwornSphere(p.state.zoneSpheres!.unwornSphere.center, p.state.zoneSpheres!.unwornSphere.radius);
+      if (p.state.rimPlane && p.state.commercialSphere) {
+        this.meshViewer.displayRimPlane(
+          p.state.rimPlane.point,
+          p.state.rimPlane.normal,
+          p.state.commercialSphere.commercialRadius
+        );
+      }
+      this.status.setStatus(`Wear volume: ${p.state.wearVolume!.wearVolume.toFixed(4)} mm³`);
+      this.controls.markStepCompleted('wearvolume');
+      this.currentResults = p.state.results;
+      this.resultsPanel.show(p.state.results!);
+    } catch (e) {
+      this.status.setStatus(`Error: ${(e as Error).message}`);
     }
   }
 

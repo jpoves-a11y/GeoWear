@@ -3,7 +3,7 @@
 // Analysis results display and interactive table
 // ============================================================
 
-import type { AnalysisResults, AnomalyCluster, Geodesic } from '../types';
+import type { AnalysisResults, Geodesic } from '../types';
 
 export class ResultsPanel {
   private container: HTMLElement;
@@ -39,18 +39,30 @@ export class ResultsPanel {
     // Sphere fit section
     this.addSphereFitSection(results);
 
-    // Shape classification section
-    this.addShapeSection(results);
-
-    // Wear analysis section
-    this.addWearSection(results);
-
-    // Volume section
-    this.addVolumeSection(results);
-
-    // Wear vector section
-    if (results.wearVector) {
-      this.addWearVectorSection(results);
+    if (results.analysisMode === 'sphere-bestfit') {
+      // --- Sphere BestFit mode sections ---
+      if (results.commercialSphere) {
+        this.addCommercialSphereSection(results);
+      }
+      if (results.wearClassification) {
+        this.addWearClassificationSection(results);
+      }
+      if (results.zoneSpheres) {
+        this.addZoneSpheresSection(results);
+      }
+      if (results.wearVolumeResult) {
+        this.addWearVolumeSection(results);
+      }
+    } else {
+      // --- Pure Geodesic mode sections ---
+      if (results.ellipsoidFit) {
+        this.addShapeSection(results);
+      }
+      this.addWearSection(results);
+      this.addVolumeSection(results);
+      if (results.wearVector) {
+        this.addWearVectorSection(results);
+      }
     }
 
     // Geodesic table section
@@ -68,15 +80,22 @@ export class ResultsPanel {
   private addSummarySection(results: AnalysisResults): void {
     const section = this.createSection('Summary');
 
+    this.addMetric(section, 'Mode', results.analysisMode === 'sphere-bestfit' ? 'Sphere BestFit' : 'Pure Geodesic');
     this.addMetric(section, 'Vertices', results.vertexCount.toLocaleString());
-    this.addMetric(section, 'Faces', results.sphereFit.residuals.length > 0
-      ? `${(results.vertexCount).toLocaleString()}` : '—');
+    this.addMetric(section, 'Faces', results.faceCount.toLocaleString());
     this.addMetric(section, 'Geodesics', results.geodesicCount.toString());
-    this.addMetric(section, 'Anomaly Points', results.totalAnomalyPoints.toLocaleString(), 
-      results.totalAnomalyPoints > 0 ? 'warning' : 'success');
-    this.addMetric(section, 'Wear Clusters', results.bumpClusters.length.toString(),
-      results.bumpClusters.length > 0 ? 'danger' : 'success');
-    this.addMetric(section, 'Dip Clusters', results.dipClusters.length.toString());
+    if (results.analysisMode === 'sphere-bestfit' && results.wearClassification) {
+      this.addMetric(section, 'Worn Vertices', results.wearClassification.wornCount.toLocaleString(),
+        undefined, results.wearClassification.wornCount > 0 ? 'danger' : 'success');
+      this.addMetric(section, 'Worn %', `${results.wearClassification.wornPercent.toFixed(1)}`, '%',
+        results.wearClassification.wornPercent > 5 ? 'danger' : 'success');
+    } else {
+      this.addMetric(section, 'Anomaly Points', results.totalAnomalyPoints.toLocaleString(),
+        undefined, results.totalAnomalyPoints > 0 ? 'warning' : 'success');
+      this.addMetric(section, 'Wear Clusters', results.bumpClusters.length.toString(),
+        undefined, results.bumpClusters.length > 0 ? 'danger' : 'success');
+      this.addMetric(section, 'Dip Clusters', results.dipClusters.length.toString());
+    }
     this.addMetric(section, 'Processing Time',
       `${(results.processingTimeMs / 1000).toFixed(1)}`, 's');
 
@@ -100,16 +119,24 @@ export class ResultsPanel {
   private addShapeSection(results: AnalysisResults): void {
     const section = this.createSection('Shape Classification');
     const ef = results.ellipsoidFit;
-
-    this.addMetric(section, 'Sphericity', `${ef.sphericityPercent.toFixed(2)}`, '%',
-      ef.sphericityPercent >= 98 ? 'success' : ef.sphericityPercent >= 90 ? 'warning' : 'danger');
-    this.addMetric(section, 'Classification', ef.shapeClass.replace(/-/g, ' '));
-    this.addMetric(section, 'Semi-axis A', ef.semiAxes[0].toFixed(4), 'mm');
-    this.addMetric(section, 'Semi-axis B', ef.semiAxes[1].toFixed(4), 'mm');
-    this.addMetric(section, 'Semi-axis C', ef.semiAxes[2].toFixed(4), 'mm');
-    this.addMetric(section, 'Axis ratio (B/A)', (ef.semiAxes[1] / ef.semiAxes[0]).toFixed(4));
-    this.addMetric(section, 'Axis ratio (C/A)', (ef.semiAxes[2] / ef.semiAxes[0]).toFixed(4));
-
+    if (!ef) {
+      this.addMetric(section, 'Sphericity', 'N/A');
+      this.addMetric(section, 'Classification', 'N/A');
+      this.addMetric(section, 'Semi-axis A', 'N/A');
+      this.addMetric(section, 'Semi-axis B', 'N/A');
+      this.addMetric(section, 'Semi-axis C', 'N/A');
+      this.addMetric(section, 'Axis ratio (B/A)', 'N/A');
+      this.addMetric(section, 'Axis ratio (C/A)', 'N/A');
+    } else {
+      this.addMetric(section, 'Sphericity', `${ef.sphericityPercent.toFixed(2)}`, '%',
+        ef.sphericityPercent >= 98 ? 'success' : ef.sphericityPercent >= 90 ? 'warning' : 'danger');
+      this.addMetric(section, 'Classification', ef.shapeClass.replace(/-/g, ' '));
+      this.addMetric(section, 'Semi-axis A', ef.semiAxes[0].toFixed(4), 'mm');
+      this.addMetric(section, 'Semi-axis B', ef.semiAxes[1].toFixed(4), 'mm');
+      this.addMetric(section, 'Semi-axis C', ef.semiAxes[2].toFixed(4), 'mm');
+      this.addMetric(section, 'Axis ratio (B/A)', (ef.semiAxes[1] / ef.semiAxes[0]).toFixed(4));
+      this.addMetric(section, 'Axis ratio (C/A)', (ef.semiAxes[2] / ef.semiAxes[0]).toFixed(4));
+    }
     this.container.appendChild(section);
   }
 
@@ -171,6 +198,59 @@ export class ResultsPanel {
     this.addMetric(section, 'Deepest Pt X', wv.deepestPoint.x.toFixed(3), 'mm');
     this.addMetric(section, 'Deepest Pt Y', wv.deepestPoint.y.toFixed(3), 'mm');
     this.addMetric(section, 'Deepest Pt Z', wv.deepestPoint.z.toFixed(3), 'mm');
+
+    this.container.appendChild(section);
+  }
+
+  private addCommercialSphereSection(results: AnalysisResults): void {
+    const section = this.createSection('Commercial Sphere');
+    const cs = results.commercialSphere!;
+
+    this.addMetric(section, 'Geodesic Radius', cs.geodesicRadius.toFixed(4), 'mm');
+    this.addMetric(section, 'Commercial Radius', cs.commercialRadius.toFixed(1), 'mm');
+    this.addMetric(section, 'Detection', cs.autoDetected ? 'Auto (round down)' : 'Manual');
+    this.addMetric(section, 'Center X', cs.center.x.toFixed(4), 'mm');
+    this.addMetric(section, 'Center Y', cs.center.y.toFixed(4), 'mm');
+    this.addMetric(section, 'Center Z', cs.center.z.toFixed(4), 'mm');
+
+    this.container.appendChild(section);
+  }
+
+  private addWearClassificationSection(results: AnalysisResults): void {
+    const section = this.createSection('Wear Classification');
+    const wc = results.wearClassification!;
+
+    this.addMetric(section, 'Threshold', wc.threshold.toFixed(3), 'mm');
+    this.addMetric(section, 'Worn Vertices', wc.wornCount.toLocaleString(), undefined,
+      wc.wornCount > 0 ? 'danger' : 'success');
+    this.addMetric(section, 'Unworn Vertices', wc.unwornCount.toLocaleString(), undefined, 'success');
+    this.addMetric(section, 'Worn %', wc.wornPercent.toFixed(2), '%',
+      wc.wornPercent > 10 ? 'danger' : wc.wornPercent > 2 ? 'warning' : 'success');
+
+    this.container.appendChild(section);
+  }
+
+  private addZoneSpheresSection(results: AnalysisResults): void {
+    const section = this.createSection('Zone Spheres');
+    const zs = results.zoneSpheres!;
+
+    this.addMetric(section, 'Worn Sphere RMS', (zs.wornSphere.rmsError * 1000).toFixed(2), 'μm', 'danger');
+    this.addMetric(section, 'Unworn Sphere RMS', (zs.unwornSphere.rmsError * 1000).toFixed(2), 'μm', 'success');
+
+    this.container.appendChild(section);
+  }
+
+  private addWearVolumeSection(results: AnalysisResults): void {
+    const section = this.createSection('Wear Volume');
+    const wv = results.wearVolumeResult!;
+    const density = 0.935; // UHMWPE density g/cm³ = mg/mm³
+
+    this.addMetric(section, 'Mesh Enclosed Vol', wv.meshEnclosedVolume.toFixed(4), 'mm³');
+    this.addMetric(section, 'Sphere Cap Vol', wv.sphereCapVolume.toFixed(4), 'mm³');
+    this.addMetric(section, 'Wear Volume', wv.wearVolume.toFixed(4), 'mm³',
+      wv.wearVolume > 0.1 ? 'danger' : 'success');
+    this.addMetric(section, 'Wear Mass', (wv.wearVolume * density).toFixed(4), 'mg',
+      wv.wearVolume > 0.1 ? 'danger' : 'success');
 
     this.container.appendChild(section);
   }

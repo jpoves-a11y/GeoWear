@@ -7,17 +7,19 @@ import * as THREE from 'three';
 import type {
   MeshData, SeparationResult, TrimResult, SphereFitResult,
   EllipsoidFitResult, Geodesic, AnalysisResults, AnomalyCluster,
-  AnalysisParams
+  AnalysisParams, CommercialSphereInfo, WearClassification,
+  ZoneSphereResult, RimPlaneResult, WearVolumeResult
 } from '../types';
+import { COMMERCIAL_RADII } from '../types';
 import { separateFaces, trimRim } from './MeshProcessor';
 import { smoothMesh } from './MeshSmoother';
-import { fitSphereRobust } from './SphereFitter';
+import { fitSphereRobust, fitSphereFixedRadius } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
 import { MeshGraph } from '../math/MeshGraph';
 import { computeGeodesics } from './GeodesicSolver';
 import { analyzeDeviations, computeVertexDeviations } from './DeviationAnalyzer';
 import { clusterAnomalies, findPrimaryWearZone } from './AnomalyRegistry';
-import { computeDefectVolumes, computeWearVector } from './VolumeComputer';
+import { computeDefectVolumes, computeWearVector, computeMeshEnclosedVolume, computeSphereCap } from './VolumeComputer';
 
 /**
  * Compute the eigenvector corresponding to the smallest eigenvalue
@@ -88,6 +90,12 @@ export interface PipelineState {
   curvatureThreshold: number;
   vertexDeviations: Float32Array | null;
   results: AnalysisResults | null;
+  // Sphere BestFit mode state
+  commercialSphere: CommercialSphereInfo | null;
+  wearClassification: WearClassification | null;
+  zoneSpheres: ZoneSphereResult | null;
+  rimPlane: RimPlaneResult | null;
+  wearVolume: WearVolumeResult | null;
 }
 
 export class WearAnalysisPipeline {
@@ -107,6 +115,11 @@ export class WearAnalysisPipeline {
     curvatureThreshold: 0,
     vertexDeviations: null,
     results: null,
+    commercialSphere: null,
+    wearClassification: null,
+    zoneSpheres: null,
+    rimPlane: null,
+    wearVolume: null,
   };
 
   private onProgress?: (stage: string, progress: number, message: string) => void;
@@ -123,6 +136,7 @@ export class WearAnalysisPipeline {
 
   /**
    * Run the complete analysis pipeline.
+   * Branches after sphere fit based on analysisMode.
    */
   async runFullAnalysis(meshData: MeshData, params: AnalysisParams): Promise<AnalysisResults> {
     const startTime = performance.now();
@@ -148,17 +162,33 @@ export class WearAnalysisPipeline {
     this.progress('fitting', 0.8, 'Fitting reference sphere (regular geodesics only)...');
     this.stepFitSphere();
 
-    // Step 5: Fit ellipsoid
-    this.progress('fitting', 0.85, 'Fitting ellipsoid...');
-    this.stepFitEllipsoid();
+    if (params.analysisMode === 'sphere-bestfit') {
+      // --- Sphere BestFit pipeline ---
+      this.progress('commercial', 0.83, 'Determining commercial radius...');
+      this.stepDetermineCommercialRadius(params.commercialRadius);
 
-    // Step 6: Analyze deviations
-    this.progress('analyzing', 0.85, 'Analyzing deviations...');
-    this.stepAnalyzeDeviations(params.thresholdMicrons);
+      this.progress('classifying', 0.86, 'Classifying wear zones...');
+      this.stepClassifyWear();
 
-    // Step 7: Compute volumes
-    this.progress('volumes', 0.92, 'Computing defect volumes...');
-    this.stepComputeVolumes(params.thresholdMicrons, params.density);
+      this.progress('zone-spheres', 0.89, 'Fitting zone spheres...');
+      this.stepFitZoneSpheres();
+
+      this.progress('rim-plane', 0.92, 'Computing rim plane...');
+      this.stepComputeRimPlane();
+
+      this.progress('wear-volume', 0.95, 'Computing wear volume...');
+      this.stepComputeWearVolumeBestFit();
+    } else {
+      // --- Pure Geodesic pipeline ---
+      this.progress('fitting', 0.85, 'Fitting ellipsoid...');
+      this.stepFitEllipsoid();
+
+      this.progress('analyzing', 0.85, 'Analyzing deviations...');
+      this.stepAnalyzeDeviations(params.thresholdMicrons);
+
+      this.progress('volumes', 0.92, 'Computing defect volumes...');
+      this.stepComputeVolumes(params.thresholdMicrons, params.density);
+    }
 
     const endTime = performance.now();
     this.state.results!.processingTimeMs = endTime - startTime;
@@ -463,8 +493,9 @@ export class WearAnalysisPipeline {
 
     // Initialize results (volumes computed in next step)
     this.state.results = {
+      analysisMode: 'pure-geodesic',
       sphereFit: this.state.sphereFit,
-      ellipsoidFit: this.state.ellipsoidFit!,
+      ellipsoidFit: this.state.ellipsoidFit ?? null,
       geodesics: this.state.geodesics,
       geodesicCount: this.state.geodesics.length,
       totalAnomalyPoints: devResult.anomalyPoints.length,
@@ -512,5 +543,287 @@ export class WearAnalysisPipeline {
         cupAxisVec
       );
     }
+  }
+
+  // ======== Sphere BestFit pipeline steps ========
+
+  /**
+   * Determine the commercial sphere radius.
+   * Uses the geodesic sphere fit center; snaps radius DOWN to nearest
+   * commercial value in [14, 16, 18, 20] mm, or uses the manual value.
+   */
+  stepDetermineCommercialRadius(manualRadius: number = 0): CommercialSphereInfo {
+    if (!this.state.sphereFit) throw new Error('Run sphere fit first');
+
+    const geodesicRadius = this.state.sphereFit.radius;
+    let commercialRadius: number;
+    let autoDetected: boolean;
+
+    if (manualRadius > 0 && COMMERCIAL_RADII.includes(manualRadius)) {
+      commercialRadius = manualRadius;
+      autoDetected = false;
+    } else {
+      // Round DOWN to nearest commercial radius
+      const sorted = [...COMMERCIAL_RADII].sort((a, b) => b - a); // descending
+      commercialRadius = sorted[sorted.length - 1]; // smallest as default
+      for (const r of sorted) {
+        if (geodesicRadius >= r) {
+          commercialRadius = r;
+          break;
+        }
+      }
+      autoDetected = true;
+    }
+
+    this.state.commercialSphere = {
+      geodesicRadius,
+      commercialRadius,
+      center: this.state.sphereFit.center.clone(),
+      autoDetected,
+    };
+
+    console.log(`[Commercial Sphere] geodesic R=${geodesicRadius.toFixed(3)}mm → commercial R=${commercialRadius}mm (${autoDetected ? 'auto' : 'manual'})`);
+    return this.state.commercialSphere;
+  }
+
+  /**
+   * Classify each vertex as worn or unworn.
+   * A vertex is worn if its distance to the commercial sphere center
+   * exceeds 102% of the commercial radius.
+   */
+  stepClassifyWear(): WearClassification {
+    if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
+
+    const mesh = this.state.workingMesh;
+    const center = this.state.commercialSphere.center;
+    const R = this.state.commercialSphere.commercialRadius;
+    const threshold = R * 1.02;
+
+    const n = mesh.vertexCount;
+    const isWorn = new Uint8Array(n);
+    const distances = new Float32Array(n);
+    let wornCount = 0;
+
+    for (let i = 0; i < n; i++) {
+      const dx = mesh.positions[i * 3] - center.x;
+      const dy = mesh.positions[i * 3 + 1] - center.y;
+      const dz = mesh.positions[i * 3 + 2] - center.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      distances[i] = dist;
+      if (dist > threshold) {
+        isWorn[i] = 1;
+        wornCount++;
+      }
+    }
+
+    const unwornCount = n - wornCount;
+
+    this.state.wearClassification = {
+      isWorn,
+      distances,
+      wornCount,
+      unwornCount,
+      wornPercent: (wornCount / n) * 100,
+      threshold,
+    };
+
+    // Also store distances as vertexDeviations for heatmap (absolute mm)
+    this.state.vertexDeviations = distances;
+
+    console.log(`[Wear Classification] worn=${wornCount} (${this.state.wearClassification.wornPercent.toFixed(1)}%), unworn=${unwornCount}, threshold=${threshold.toFixed(3)}mm`);
+    return this.state.wearClassification;
+  }
+
+  /**
+   * Fit spheres with the commercial radius to worn and unworn vertex subsets.
+   * Uses iterative center-only optimization (radius is fixed).
+   */
+  stepFitZoneSpheres(): ZoneSphereResult {
+    if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.wearClassification) throw new Error('Run wear classification first');
+    if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
+
+    const mesh = this.state.workingMesh;
+    const { isWorn } = this.state.wearClassification;
+    const R = this.state.commercialSphere.commercialRadius;
+
+    // Separate vertex positions
+    const wornPositions: number[] = [];
+    const unwornPositions: number[] = [];
+
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      const px = mesh.positions[i * 3];
+      const py = mesh.positions[i * 3 + 1];
+      const pz = mesh.positions[i * 3 + 2];
+      if (isWorn[i]) {
+        wornPositions.push(px, py, pz);
+      } else {
+        unwornPositions.push(px, py, pz);
+      }
+    }
+
+    const wornArr = new Float32Array(wornPositions);
+    const unwornArr = new Float32Array(unwornPositions);
+
+    const wornFit = wornPositions.length >= 9
+      ? fitSphereFixedRadius(wornArr, wornPositions.length / 3, R)
+      : { center: this.state.commercialSphere.center.clone(), radius: R, rmsError: 0 };
+
+    const unwornFit = unwornPositions.length >= 9
+      ? fitSphereFixedRadius(unwornArr, unwornPositions.length / 3, R)
+      : { center: this.state.commercialSphere.center.clone(), radius: R, rmsError: 0 };
+
+    this.state.zoneSpheres = {
+      wornSphere: { center: wornFit.center, radius: R, rmsError: wornFit.rmsError },
+      unwornSphere: { center: unwornFit.center, radius: R, rmsError: unwornFit.rmsError },
+    };
+
+    console.log(`[Zone Spheres] worn RMS=${wornFit.rmsError.toFixed(4)}mm, unworn RMS=${unwornFit.rmsError.toFixed(4)}mm`);
+    return this.state.zoneSpheres;
+  }
+
+  /**
+   * Compute the rim plane from the boundary edges of the working mesh.
+   * The plane is fitted to the last vertices of the rim (the "mouth" of the cup).
+   */
+  stepComputeRimPlane(): RimPlaneResult {
+    if (!this.state.workingMesh) throw new Error('No working mesh available');
+
+    const mesh = this.state.workingMesh;
+    const fc = mesh.indices.length / 3;
+
+    // Find boundary edges
+    const edgeFaceMap = new Map<string, number>();
+    for (let f = 0; f < fc; f++) {
+      for (let e = 0; e < 3; e++) {
+        const a = mesh.indices[f * 3 + e];
+        const b = mesh.indices[f * 3 + ((e + 1) % 3)];
+        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+        edgeFaceMap.set(key, (edgeFaceMap.get(key) || 0) + 1);
+      }
+    }
+
+    const rimVerticesSet = new Set<number>();
+    for (const [key, count] of edgeFaceMap) {
+      if (count === 1) {
+        const parts = key.split('_');
+        rimVerticesSet.add(Number(parts[0]));
+        rimVerticesSet.add(Number(parts[1]));
+      }
+    }
+
+    const rimVertices = Array.from(rimVerticesSet);
+
+    // Compute rim centroid
+    let cx = 0, cy = 0, cz = 0;
+    for (const v of rimVertices) {
+      cx += mesh.positions[v * 3];
+      cy += mesh.positions[v * 3 + 1];
+      cz += mesh.positions[v * 3 + 2];
+    }
+    cx /= rimVertices.length;
+    cy /= rimVertices.length;
+    cz /= rimVertices.length;
+
+    // PCA for plane normal
+    let covxx = 0, covxy = 0, covxz = 0, covyy = 0, covyz = 0, covzz = 0;
+    for (const v of rimVertices) {
+      const dx = mesh.positions[v * 3] - cx;
+      const dy = mesh.positions[v * 3 + 1] - cy;
+      const dz = mesh.positions[v * 3 + 2] - cz;
+      covxx += dx * dx; covxy += dx * dy; covxz += dx * dz;
+      covyy += dy * dy; covyz += dy * dz; covzz += dz * dz;
+    }
+    const normal = smallestEigenvector3x3(covxx, covxy, covxz, covyy, covyz, covzz);
+
+    // Orient normal toward the interior (same side as pole)
+    if (this.state.polePosition) {
+      const toPole = new THREE.Vector3(
+        this.state.polePosition.x - cx,
+        this.state.polePosition.y - cy,
+        this.state.polePosition.z - cz
+      );
+      const normalVec = new THREE.Vector3(normal[0], normal[1], normal[2]);
+      if (toPole.dot(normalVec) < 0) {
+        normal[0] = -normal[0];
+        normal[1] = -normal[1];
+        normal[2] = -normal[2];
+      }
+    }
+
+    this.state.rimPlane = {
+      point: new THREE.Vector3(cx, cy, cz),
+      normal: new THREE.Vector3(normal[0], normal[1], normal[2]),
+      rimVertices,
+    };
+
+    console.log(`[Rim Plane] center=(${cx.toFixed(3)}, ${cy.toFixed(3)}, ${cz.toFixed(3)}), normal=(${normal[0].toFixed(4)}, ${normal[1].toFixed(4)}, ${normal[2].toFixed(4)}), ${rimVertices.length} rim vertices`);
+    return this.state.rimPlane;
+  }
+
+  /**
+   * Compute wear volume for the Sphere BestFit pipeline.
+   * Wear = (mesh enclosed volume cut by rim plane) - (unworn sphere cap volume cut by same plane)
+   */
+  stepComputeWearVolumeBestFit(): WearVolumeResult {
+    if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
+    if (!this.state.zoneSpheres) throw new Error('Run zone sphere fitting first');
+    if (!this.state.sphereFit) throw new Error('Run sphere fit first');
+
+    const { point: planePoint, normal: planeNormal } = this.state.rimPlane;
+    const { unwornSphere } = this.state.zoneSpheres;
+
+    // Volume enclosed between mesh and rim plane
+    const meshEnclosedVolume = computeMeshEnclosedVolume(
+      this.state.workingMesh,
+      planePoint,
+      planeNormal
+    );
+
+    // Volume of the unworn sphere cap on the interior side of the rim plane
+    const sphereCapVolume = computeSphereCap(
+      unwornSphere.center,
+      unwornSphere.radius,
+      planePoint,
+      planeNormal
+    );
+
+    const wearVolume = Math.max(0, meshEnclosedVolume - sphereCapVolume);
+
+    this.state.wearVolume = {
+      meshEnclosedVolume,
+      sphereCapVolume,
+      wearVolume,
+    };
+
+    // Initialize results for bestfit mode
+    this.state.results = {
+      analysisMode: 'sphere-bestfit',
+      sphereFit: this.state.sphereFit,
+      ellipsoidFit: null,
+      geodesics: this.state.geodesics,
+      geodesicCount: this.state.geodesics.length,
+      totalAnomalyPoints: this.state.wearClassification?.wornCount ?? 0,
+      bumpClusters: [],
+      dipClusters: [],
+      primaryWearZone: null,
+      totalBumpVolume: 0,
+      totalDipVolume: 0,
+      totalWearVolume: wearVolume,
+      wearVector: null,
+      commercialSphere: this.state.commercialSphere ?? undefined,
+      wearClassification: this.state.wearClassification ?? undefined,
+      zoneSpheres: this.state.zoneSpheres ?? undefined,
+      rimPlane: this.state.rimPlane ?? undefined,
+      wearVolumeResult: this.state.wearVolume,
+      processingTimeMs: 0,
+      vertexCount: this.state.workingMesh.vertexCount,
+      faceCount: this.state.workingMesh.faceCount,
+    };
+
+    console.log(`[Wear Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, sphereCap=${sphereCapVolume.toFixed(4)}mm³, wear=${wearVolume.toFixed(4)}mm³`);
+    return this.state.wearVolume;
   }
 }

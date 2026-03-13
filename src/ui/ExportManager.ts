@@ -39,11 +39,19 @@ export class ExportManager {
     lines.push(`Sphere Center Y (mm),${results.sphereFit.center.y.toFixed(6)}`);
     lines.push(`Sphere Center Z (mm),${results.sphereFit.center.z.toFixed(6)}`);
     lines.push(`RMS Error (μm),${(results.sphereFit.rmsError * 1000).toFixed(4)}`);
-    lines.push(`Sphericity (%),${results.ellipsoidFit.sphericityPercent.toFixed(4)}`);
-    lines.push(`Shape Class,${results.ellipsoidFit.shapeClass}`);
-    lines.push(`Semi-axis A (mm),${results.ellipsoidFit.semiAxes[0].toFixed(6)}`);
-    lines.push(`Semi-axis B (mm),${results.ellipsoidFit.semiAxes[1].toFixed(6)}`);
-    lines.push(`Semi-axis C (mm),${results.ellipsoidFit.semiAxes[2].toFixed(6)}`);
+    if (results.ellipsoidFit) {
+      lines.push(`Sphericity (%),${results.ellipsoidFit.sphericityPercent.toFixed(4)}`);
+      lines.push(`Shape Class,${results.ellipsoidFit.shapeClass}`);
+      lines.push(`Semi-axis A (mm),${results.ellipsoidFit.semiAxes[0].toFixed(6)}`);
+      lines.push(`Semi-axis B (mm),${results.ellipsoidFit.semiAxes[1].toFixed(6)}`);
+      lines.push(`Semi-axis C (mm),${results.ellipsoidFit.semiAxes[2].toFixed(6)}`);
+    } else {
+      lines.push(`Sphericity (%),N/A`);
+      lines.push(`Shape Class,N/A`);
+      lines.push(`Semi-axis A (mm),N/A`);
+      lines.push(`Semi-axis B (mm),N/A`);
+      lines.push(`Semi-axis C (mm),N/A`);
+    }
     lines.push(`Wear Volume (mm³),${results.totalBumpVolume.toFixed(6)}`);
     lines.push(`Dip Volume (mm³),${results.totalDipVolume.toFixed(6)}`);
     lines.push(`Total Defect Volume (mm³),${(results.totalBumpVolume + results.totalDipVolume).toFixed(6)}`);
@@ -223,8 +231,12 @@ export class ExportManager {
       ['Sphere Radius', `${results.sphereFit.radius.toFixed(4)} mm`],
       ['RMS Error', `${(results.sphereFit.rmsError * 1000).toFixed(2)} μm`],
       ['Max Error', `${(results.sphereFit.maxError * 1000).toFixed(2)} μm`],
-      ['Sphericity', `${results.ellipsoidFit.sphericityPercent.toFixed(2)}%`],
-      ['Shape', results.ellipsoidFit.shapeClass],
+      results.ellipsoidFit
+        ? ['Sphericity', `${results.ellipsoidFit.sphericityPercent.toFixed(2)}%`]
+        : ['Sphericity', 'N/A'],
+      results.ellipsoidFit
+        ? ['Shape', results.ellipsoidFit.shapeClass]
+        : ['Shape', 'N/A'],
     ];
 
     for (const [label, value] of summaryData) {

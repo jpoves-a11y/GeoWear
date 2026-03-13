@@ -193,3 +193,149 @@ export function computeWearVector(
     maxDepth: bestCandidate.dev,
   };
 }
+
+/**
+ * Signed tetrahedron volume with one vertex at the origin.
+ * V = (1/6) * a · (b × c)
+ */
+function signedTetVolOrigin(
+  ax: number, ay: number, az: number,
+  bx: number, by: number, bz: number,
+  cx: number, cy: number, cz: number
+): number {
+  return (
+    ax * (by * cz - bz * cy) +
+    ay * (bz * cx - bx * cz) +
+    az * (bx * cy - by * cx)
+  ) / 6.0;
+}
+
+/**
+ * Compute the enclosed volume between the mesh surface and a capping plane.
+ *
+ * Uses the divergence theorem: the signed volume of the closed surface
+ * (mesh triangles + flat cap polygon at the rim plane) equals the sum of
+ * signed tetrahedra formed by each triangle and the origin.
+ *
+ * For the mesh triangles below/above the plane, we sum their signed
+ * tetrahedra directly. The rim plane cap is approximated as a fan from
+ * the rim centroid to consecutive boundary edges.
+ */
+export function computeMeshEnclosedVolume(
+  meshData: MeshData,
+  planePoint: THREE.Vector3,
+  planeNormal: THREE.Vector3
+): number {
+  const { positions, indices, faceCount } = meshData;
+  const pn = planeNormal.clone().normalize();
+  const pp = planePoint;
+
+  // Classify vertices: signed distance to rim plane
+  // Positive = same side as interior (below plane)
+  const vertCount = positions.length / 3;
+  const vertDist = new Float32Array(vertCount);
+  for (let i = 0; i < vertCount; i++) {
+    vertDist[i] = (positions[i * 3] - pp.x) * pn.x +
+                  (positions[i * 3 + 1] - pp.y) * pn.y +
+                  (positions[i * 3 + 2] - pp.z) * pn.z;
+  }
+
+  let meshVolume = 0;
+
+  // Sum signed tetrahedra for all mesh faces
+  for (let f = 0; f < faceCount; f++) {
+    const i0 = indices[f * 3];
+    const i1 = indices[f * 3 + 1];
+    const i2 = indices[f * 3 + 2];
+
+    meshVolume += signedTetVolOrigin(
+      positions[i0 * 3], positions[i0 * 3 + 1], positions[i0 * 3 + 2],
+      positions[i1 * 3], positions[i1 * 3 + 1], positions[i1 * 3 + 2],
+      positions[i2 * 3], positions[i2 * 3 + 1], positions[i2 * 3 + 2]
+    );
+  }
+
+  // Find boundary edges (edges that belong to only one triangle)
+  const edgeCount = new Map<string, number[]>();
+  for (let f = 0; f < faceCount; f++) {
+    for (let e = 0; e < 3; e++) {
+      const a = indices[f * 3 + e];
+      const b = indices[f * 3 + ((e + 1) % 3)];
+      const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+      if (!edgeCount.has(key)) edgeCount.set(key, []);
+      edgeCount.get(key)!.push(a, b);
+    }
+  }
+
+  // Collect ordered boundary vertices
+  const boundaryEdges: Array<[number, number]> = [];
+  for (const [key, verts] of edgeCount) {
+    if (verts.length === 2) { // only one triangle uses this edge
+      boundaryEdges.push([verts[0], verts[1]]);
+    }
+  }
+
+  // Cap the opening with a fan from the boundary centroid
+  if (boundaryEdges.length > 0) {
+    // Compute boundary centroid (project onto plane)
+    const rimVerts = new Set<number>();
+    for (const [a, b] of boundaryEdges) {
+      rimVerts.add(a);
+      rimVerts.add(b);
+    }
+    let rcx = 0, rcy = 0, rcz = 0;
+    for (const v of rimVerts) {
+      rcx += positions[v * 3];
+      rcy += positions[v * 3 + 1];
+      rcz += positions[v * 3 + 2];
+    }
+    rcx /= rimVerts.size;
+    rcy /= rimVerts.size;
+    rcz /= rimVerts.size;
+
+    // Each boundary edge forms a triangle with the centroid
+    for (const [a, b] of boundaryEdges) {
+      meshVolume += signedTetVolOrigin(
+        rcx, rcy, rcz,
+        positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2],
+        positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2]
+      );
+    }
+  }
+
+  return Math.abs(meshVolume);
+}
+
+/**
+ * Compute the volume of a spherical cap cut by a plane.
+ *
+ * Given a sphere (center, radius) and a plane (point, normal),
+ * compute the volume of the cap on the side of the plane pointed
+ * to by the normal.
+ *
+ * Cap volume: V = (π/3) h² (3R - h)
+ * where h = cap height = R - d (d = signed distance from center to plane)
+ */
+export function computeSphereCap(
+  center: THREE.Vector3,
+  radius: number,
+  planePoint: THREE.Vector3,
+  planeNormal: THREE.Vector3
+): number {
+  const pn = planeNormal.clone().normalize();
+  // Signed distance from sphere center to plane (positive = same side as normal)
+  const d = (center.x - planePoint.x) * pn.x +
+            (center.y - planePoint.y) * pn.y +
+            (center.z - planePoint.z) * pn.z;
+
+  // Cap on the opposite side of the normal (interior side)
+  // h = R - |d| if center is on the interior side, else h = R + d
+  // More precisely: the cap on the "negative normal" side has height h = R + d
+  // (when d is negative, center is on the interior side, h = R + |d|)
+  const h = radius + d; // height of cap on the -normal side (interior)
+
+  if (h <= 0) return 0;                         // sphere entirely on the normal side
+  if (h >= 2 * radius) return (4 / 3) * Math.PI * radius * radius * radius; // entire sphere
+
+  return (Math.PI / 3) * h * h * (3 * radius - h);
+}

@@ -4,6 +4,9 @@
 
 import * as THREE from 'three';
 
+/** Known commercial femoral head radii (mm) */
+export const COMMERCIAL_RADII: number[] = [14, 16, 18, 20];
+
 /** Raw vertex data transferred between main thread and workers */
 export interface MeshData {
   positions: Float32Array; // xyz interleaved
@@ -108,28 +111,65 @@ export interface AnomalyCluster {
   maxDeviationPoint: THREE.Vector3;
 }
 
+/** Commercial sphere info after radius snapping */
+export interface CommercialSphereInfo {
+  geodesicRadius: number;       // original sphere fit radius (mm)
+  commercialRadius: number;     // snapped commercial radius (mm)
+  center: THREE.Vector3;        // same center as geodesic sphere
+  autoDetected: boolean;        // true if auto, false if manual
+}
+
+/** Per-vertex wear classification */
+export interface WearClassification {
+  isWorn: Uint8Array;           // per-vertex: 0=unworn, 1=worn
+  distances: Float32Array;      // per-vertex absolute distance to center (mm)
+  wornCount: number;
+  unwornCount: number;
+  wornPercent: number;
+  threshold: number;            // 1.02 * commercialRadius
+}
+
+/** Sphere fit with fixed radius for worn/unworn zones */
+export interface ZoneSphereResult {
+  wornSphere: { center: THREE.Vector3; radius: number; rmsError: number };
+  unwornSphere: { center: THREE.Vector3; radius: number; rmsError: number };
+}
+
+/** Rim plane for volume computation */
+export interface RimPlaneResult {
+  point: THREE.Vector3;         // point on the plane (rim centroid)
+  normal: THREE.Vector3;        // plane normal (pointing inward)
+  rimVertices: number[];        // indices of rim boundary vertices
+}
+
+/** Wear volume result */
+export interface WearVolumeResult {
+  meshEnclosedVolume: number;   // mm³ — volume between rim plane and inner mesh
+  sphereCapVolume: number;      // mm³ — volume of unworn sphere cut by rim plane
+  wearVolume: number;           // mm³ — difference = wear
+}
+
 /** Complete analysis results */
 export interface AnalysisResults {
+  // Analysis mode
+  analysisMode: 'pure-geodesic' | 'sphere-bestfit';
+
   // Geometry
   sphereFit: SphereFitResult;
-  ellipsoidFit: EllipsoidFitResult;
+  ellipsoidFit: EllipsoidFitResult | null;
   
   // Geodesics
   geodesics: Geodesic[];
   geodesicCount: number;
   
-  // Anomalies
+  // --- Pure Geodesic mode fields ---
   totalAnomalyPoints: number;
   bumpClusters: AnomalyCluster[];
   dipClusters: AnomalyCluster[];
   primaryWearZone: AnomalyCluster | null;
-  
-  // Volumes
   totalBumpVolume: number;  // mm³
   totalDipVolume: number;   // mm³
   totalWearVolume: number;  // mm³ (absolute)
-  
-  // Wear vector
   wearVector: {
     deepestPoint: THREE.Vector3;
     polePoint: THREE.Vector3;
@@ -138,6 +178,13 @@ export interface AnalysisResults {
     distance: number;        // mm
     maxDepth: number;        // μm
   } | null;
+
+  // --- Sphere BestFit mode fields ---
+  commercialSphere?: CommercialSphereInfo;
+  wearClassification?: WearClassification;
+  zoneSpheres?: ZoneSphereResult;
+  rimPlane?: RimPlaneResult;
+  wearVolumeResult?: WearVolumeResult;
   
   // Processing info
   processingTimeMs: number;
@@ -215,6 +262,8 @@ export interface AnalysisParams {
   showReferenceShape: boolean;
   contextOpaque: boolean;       // false = translucent (default), true = opaque
   density: number;             // UHMWPE density g/cm³, default 0.935
+  analysisMode: 'pure-geodesic' | 'sphere-bestfit'; // wear calculation model
+  commercialRadius: number;    // 0 = auto-detect, or 14|16|18|20 mm
 }
 
 export const DEFAULT_PARAMS: AnalysisParams = {
@@ -232,4 +281,6 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showReferenceShape: false,
   contextOpaque: false,
   density: 0.935,
+  analysisMode: 'sphere-bestfit',
+  commercialRadius: 0,
 };

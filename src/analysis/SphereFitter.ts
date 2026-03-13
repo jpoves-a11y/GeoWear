@@ -189,3 +189,67 @@ export function fitSphereRobust(
 
   return result;
 }
+
+/**
+ * Fit a sphere with a FIXED radius to a set of 3D points.
+ * Only the center is optimized (radius is constrained).
+ * Uses iterative projection: c_new = mean of (p_i - R * (p_i - c) / ||p_i - c||)
+ * which is equivalent to minimising sum of (||p_i - c|| - R)^2 w.r.t. c.
+ */
+export function fitSphereFixedRadius(
+  positions: Float32Array,
+  vertexCount: number,
+  fixedRadius: number,
+  iterations: number = 30
+): { center: THREE.Vector3; radius: number; rmsError: number } {
+  const n = vertexCount;
+  if (n === 0) {
+    return { center: new THREE.Vector3(), radius: fixedRadius, rmsError: 0 };
+  }
+
+  // Initial center = centroid of points
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < n; i++) {
+    cx += positions[i * 3];
+    cy += positions[i * 3 + 1];
+    cz += positions[i * 3 + 2];
+  }
+  cx /= n; cy /= n; cz /= n;
+
+  for (let iter = 0; iter < iterations; iter++) {
+    let nx = 0, ny = 0, nz = 0;
+    for (let i = 0; i < n; i++) {
+      const px = positions[i * 3];
+      const py = positions[i * 3 + 1];
+      const pz = positions[i * 3 + 2];
+      const dx = px - cx, dy = py - cy, dz = pz - cz;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (dist < 1e-12) continue;
+      // Projected center contribution: p_i - R * (p_i - c)/||p_i - c||
+      const s = fixedRadius / dist;
+      nx += px - dx * s;
+      ny += py - dy * s;
+      nz += pz - dz * s;
+    }
+    cx = nx / n;
+    cy = ny / n;
+    cz = nz / n;
+  }
+
+  // Compute RMS error
+  let sumSq = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = positions[i * 3] - cx;
+    const dy = positions[i * 3 + 1] - cy;
+    const dz = positions[i * 3 + 2] - cz;
+    const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const residual = r - fixedRadius;
+    sumSq += residual * residual;
+  }
+
+  return {
+    center: new THREE.Vector3(cx, cy, cz),
+    radius: fixedRadius,
+    rmsError: Math.sqrt(sumSq / n),
+  };
+}

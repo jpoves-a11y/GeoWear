@@ -16,6 +16,10 @@ export class MeshViewer {
   private ghostMeshObject: THREE.Mesh | null = null;
   private wireframeObject: THREE.LineSegments | null = null;
   private referenceSphereObject: THREE.Mesh | null = null;
+  private commercialSphereObject: THREE.Mesh | null = null;
+  private wornSphereObject: THREE.Mesh | null = null;
+  private unwornSphereObject: THREE.Mesh | null = null;
+  private rimPlaneObject: THREE.Mesh | null = null;
 
   // Materials
   private innerMaterial: THREE.MeshStandardMaterial;
@@ -273,6 +277,145 @@ export class MeshViewer {
   }
 
   /**
+   * Display the commercial sphere (orange wireframe).
+   */
+  public displayCommercialSphere(center: THREE.Vector3, radius: number, visible: boolean = true): void {
+    this.removeNamedObject('commercial-sphere');
+    if (this.commercialSphereObject) {
+      this.originalGroup.remove(this.commercialSphereObject);
+      this.commercialSphereObject.geometry.dispose();
+    }
+    const geo = new THREE.SphereGeometry(radius, 64, 32);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffaa00,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.1,
+    });
+    this.commercialSphereObject = new THREE.Mesh(geo, mat);
+    this.commercialSphereObject.position.copy(center);
+    this.commercialSphereObject.name = 'commercial-sphere';
+    this.commercialSphereObject.visible = visible;
+    this.originalGroup.add(this.commercialSphereObject);
+  }
+
+  /**
+   * Display the worn zone sphere (red, transparent solid).
+   */
+  public displayWornSphere(center: THREE.Vector3, radius: number, visible: boolean = true): void {
+    this.removeNamedObject('worn-sphere');
+    if (this.wornSphereObject) {
+      this.originalGroup.remove(this.wornSphereObject);
+      this.wornSphereObject.geometry.dispose();
+    }
+    const geo = new THREE.SphereGeometry(radius, 64, 32);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xff3333,
+      transparent: true,
+      opacity: 0.25,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.wornSphereObject = new THREE.Mesh(geo, mat);
+    this.wornSphereObject.position.copy(center);
+    this.wornSphereObject.name = 'worn-sphere';
+    this.wornSphereObject.visible = visible;
+    this.wornSphereObject.renderOrder = 5;
+    this.originalGroup.add(this.wornSphereObject);
+  }
+
+  /**
+   * Display the unworn zone sphere (green, transparent solid).
+   */
+  public displayUnwornSphere(center: THREE.Vector3, radius: number, visible: boolean = true): void {
+    this.removeNamedObject('unworn-sphere');
+    if (this.unwornSphereObject) {
+      this.originalGroup.remove(this.unwornSphereObject);
+      this.unwornSphereObject.geometry.dispose();
+    }
+    const geo = new THREE.SphereGeometry(radius, 64, 32);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x33ff33,
+      transparent: true,
+      opacity: 0.25,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.unwornSphereObject = new THREE.Mesh(geo, mat);
+    this.unwornSphereObject.position.copy(center);
+    this.unwornSphereObject.name = 'unworn-sphere';
+    this.unwornSphereObject.visible = visible;
+    this.unwornSphereObject.renderOrder = 5;
+    this.originalGroup.add(this.unwornSphereObject);
+  }
+
+  /**
+   * Display the rim plane as a semi-transparent disc.
+   */
+  public displayRimPlane(center: THREE.Vector3, normal: THREE.Vector3, radius: number, visible: boolean = true): void {
+    this.removeNamedObject('rim-plane');
+    if (this.rimPlaneObject) {
+      this.originalGroup.remove(this.rimPlaneObject);
+      this.rimPlaneObject.geometry.dispose();
+    }
+    const geo = new THREE.CircleGeometry(radius * 1.3, 64);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x4488ff,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.rimPlaneObject = new THREE.Mesh(geo, mat);
+    this.rimPlaneObject.position.copy(center);
+    // Orient disc so its normal aligns with the plane normal
+    const up = new THREE.Vector3(0, 0, 1);
+    const quat = new THREE.Quaternion().setFromUnitVectors(up, normal.clone().normalize());
+    this.rimPlaneObject.quaternion.copy(quat);
+    this.rimPlaneObject.name = 'rim-plane';
+    this.rimPlaneObject.visible = visible;
+    this.rimPlaneObject.renderOrder = 6;
+    this.originalGroup.add(this.rimPlaneObject);
+  }
+
+  public setCommercialSphereVisible(visible: boolean): void {
+    if (this.commercialSphereObject) this.commercialSphereObject.visible = visible;
+  }
+  public setWornSphereVisible(visible: boolean): void {
+    if (this.wornSphereObject) this.wornSphereObject.visible = visible;
+  }
+  public setUnwornSphereVisible(visible: boolean): void {
+    if (this.unwornSphereObject) this.unwornSphereObject.visible = visible;
+  }
+  public setRimPlaneVisible(visible: boolean): void {
+    if (this.rimPlaneObject) this.rimPlaneObject.visible = visible;
+  }
+
+  /** Remove a named object from the group */
+  private removeNamedObject(name: string): void {
+    const obj = this.originalGroup.getObjectByName(name);
+    if (obj) {
+      this.originalGroup.remove(obj);
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry.dispose();
+        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+        else obj.material.dispose();
+      }
+    }
+  }
+
+  /** Clear zone spheres, commercial sphere, and rim plane */
+  public clearZoneSpheres(): void {
+    for (const name of ['commercial-sphere', 'worn-sphere', 'unworn-sphere', 'rim-plane']) {
+      this.removeNamedObject(name);
+    }
+    this.commercialSphereObject = null;
+    this.wornSphereObject = null;
+    this.unwornSphereObject = null;
+    this.rimPlaneObject = null;
+  }
+
+  /**
    * Reorder meshes in the group to ensure correct depth rendering.
    * Order: outer (back) -> ghost (middle) -> inner (front)
    */
@@ -391,6 +534,10 @@ export class MeshViewer {
     this.ghostMeshObject = null;
     this.wireframeObject = null;
     this.referenceSphereObject = null;
+    this.commercialSphereObject = null;
+    this.wornSphereObject = null;
+    this.unwornSphereObject = null;
+    this.rimPlaneObject = null;
   }
 
   public dispose(): void {
