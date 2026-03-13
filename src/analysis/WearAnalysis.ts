@@ -845,24 +845,24 @@ export class WearAnalysisPipeline {
    * Find the point of maximum wear and compute a wear plane through it and the pole,
    * perpendicular to the rim plane.
    *
-   * Wear depth per vertex = how far the vertex is outside the unworn sphere
-   *   depth_i = dist(vertex_i, unwornCenter) - R   (positive = worn)
-   * The vertex with the maximum depth is the max-wear point.
+   * Wear depth per vertex = how far the vertex is outside the commercial sphere
+   *   depth_i = dist(vertex_i, commercialCenter) - R   (positive = worn)
+   * This matches the heatmap coloring (vertexDeviations).
    */
   stepComputeWearPlane(): WearPlaneResult {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
-    if (!this.state.zoneSpheres) throw new Error('Run zone sphere fitting first');
+    if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
     if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
     if (!this.state.polePosition) throw new Error('No pole position available');
 
     const mesh = this.state.workingMesh;
-    const unwornCenter = this.state.zoneSpheres.unwornSphere.center;
-    const R = this.state.zoneSpheres.unwornSphere.radius;
+    const center = this.state.commercialSphere.center;
+    const R = this.state.commercialSphere.commercialRadius;
     const rimNormal = this.state.rimPlane.normal;
     const rimPoint = this.state.rimPlane.point;
     const pole = this.state.polePosition;
 
-    // Find vertex with maximum wear depth (furthest outside unworn sphere),
+    // Find vertex with maximum wear depth (furthest outside commercial sphere),
     // only considering vertices on the interior side of the rim plane (toward the pole)
     let maxDepth = -Infinity;
     let maxIdx = 0;
@@ -877,11 +877,11 @@ export class WearAnalysisPipeline {
                       (pz - rimPoint.z) * rimNormal.z;
       if (rimDist < 0) continue; // skip vertices outside the rim
 
-      const dx = px - unwornCenter.x;
-      const dy = py - unwornCenter.y;
-      const dz = pz - unwornCenter.z;
+      const dx = px - center.x;
+      const dy = py - center.y;
+      const dz = pz - center.z;
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      const depth = dist - R; // positive = outside unworn sphere = worn
+      const depth = dist - R; // positive = outside commercial sphere = worn
 
       if (depth > maxDepth) {
         maxDepth = depth;
