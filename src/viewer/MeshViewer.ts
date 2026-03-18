@@ -567,19 +567,13 @@ export class MeshViewer {
   }
 
   public setOriginalVisible(visible: boolean): void {
-    const orig = this.originalGroup.getObjectByName('original-mesh');
-    if (orig && orig instanceof THREE.Mesh) {
-      const mat = orig.material as THREE.MeshStandardMaterial;
-      mat.transparent = false;
-      mat.opacity = 1.0;
-      mat.depthWrite = true;
-      mat.needsUpdate = true;
-      orig.visible = visible;
-    }
-    // Hide all analysis meshes regardless — either showing full STL or hiding everything
-    if (this.innerMeshObject) this.innerMeshObject.visible = false;
-    if (this.outerMeshObject) this.outerMeshObject.visible = false;
-    if (this.ghostMeshObject) this.ghostMeshObject.visible = false;
+    // Show/hide ALL STL surface meshes (original + analysis inner/outer/ghost)
+    const stlNames = new Set(['original-mesh', 'inner-mesh', 'outer-mesh', 'ghost-mesh', 'wireframe']);
+    this.originalGroup.children.forEach(child => {
+      if (stlNames.has(child.name)) {
+        child.visible = visible;
+      }
+    });
   }
 
   /** Restore analysis meshes visibility (called when Full STL toggle is turned off) */
