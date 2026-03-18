@@ -118,7 +118,10 @@ export class App {
       onToggleWearPlane: (v: boolean) => this.meshViewer.setWearPlaneVisible(v),
       onToggleMeshVolume: (v: boolean) => this.meshViewer.setMeshVolumeVisible(v),
       onToggleSphereCapVolume: (v: boolean) => this.meshViewer.setSphereCapVisible(v),
-      onToggleOriginalMesh: (v: boolean) => this.meshViewer.setOriginalVisible(v),
+      onToggleOriginalMesh: (v: boolean) => {
+        this.meshViewer.setOriginalVisible(v);
+        if (!v) this.meshViewer.restoreAnalysisMeshes();
+      },
       // --- Export ---
       onExportPNG: () => this.exportPNG(),
       onExportCSV: () => this.exportCSV(),
