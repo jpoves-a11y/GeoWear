@@ -624,7 +624,6 @@ export class App {
           results.commercialSphere.commercialRadius,
           results.rimPlane.point,
           results.rimPlane.normal,
-          results.rimPlane.rimVertices,
           false
         );
       }
@@ -732,7 +731,6 @@ export class App {
           p.state.commercialSphere.commercialRadius,
           p.state.rimPlane.point,
           p.state.rimPlane.normal,
-          p.state.rimPlane.rimVertices,
           false
         );
       }

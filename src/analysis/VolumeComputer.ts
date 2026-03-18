@@ -195,43 +195,31 @@ export function computeWearVector(
 }
 
 /**
- * Signed tetrahedron volume with one vertex at the origin.
- * V = (1/6) * a · (b × c)
- */
-function signedTetVolOrigin(
-  ax: number, ay: number, az: number,
-  bx: number, by: number, bz: number,
-  cx: number, cy: number, cz: number
-): number {
-  return (
-    ax * (by * cz - bz * cy) +
-    ay * (bz * cx - bx * cz) +
-    az * (bx * cy - by * cx)
-  ) / 6.0;
-}
-
-/**
- * Compute the enclosed volume between the mesh surface and a capping plane.
+ * Compute the volume enclosed between the mesh surface and a capping plane.
  *
- * Uses the divergence theorem (Gauss's theorem): the volume enclosed by a
- * closed surface equals the sum of signed tetrahedra from any reference point.
+ * Uses the projection formula: for each triangle on the pole side of the plane,
+ * compute the volume of the truncated prism from the triangle to its projection
+ * on the plane:
  *
- * Key insight: using planePoint (on the rim plane) as the reference eliminates
- * the need for explicit cap construction. The virtual cap fan (triangles on
- * the plane closing the mesh boundary) has every triangle containing planePoint
- * as a vertex, making their tetrahedra degenerate (zero volume). So only the
- * mesh surface triangles contribute.
+ *   V_face = (h0 + h1 + h2) / 3 * signedProjectedArea
  *
- * This also greatly improves numerical stability: planePoint is near the mesh
- * (~14mm radius), versus the world origin which may be hundreds of mm away.
+ * where h_i = signed height of vertex i above the plane and
+ * signedProjectedArea = (1/2) * dot(cross(e1, e2), planeNormal).
+ *
+ * This directly computes the volume between a (potentially open) mesh surface
+ * and a flat plane, without requiring the mesh to be closed.
  */
 export function computeMeshEnclosedVolume(
   meshData: MeshData,
   planePoint: THREE.Vector3,
-  _planeNormal: THREE.Vector3
+  planeNormal: THREE.Vector3
 ): number {
   const { positions, indices, faceCount } = meshData;
   const px = planePoint.x, py = planePoint.y, pz = planePoint.z;
+
+  // Normalize plane normal
+  const nl = Math.sqrt(planeNormal.x * planeNormal.x + planeNormal.y * planeNormal.y + planeNormal.z * planeNormal.z);
+  const nx = planeNormal.x / nl, ny = planeNormal.y / nl, nz = planeNormal.z / nl;
 
   let volume = 0;
   for (let f = 0; f < faceCount; f++) {
@@ -239,11 +227,34 @@ export function computeMeshEnclosedVolume(
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
 
-    volume += signedTetVolOrigin(
-      positions[i0 * 3] - px, positions[i0 * 3 + 1] - py, positions[i0 * 3 + 2] - pz,
-      positions[i1 * 3] - px, positions[i1 * 3 + 1] - py, positions[i1 * 3 + 2] - pz,
-      positions[i2 * 3] - px, positions[i2 * 3 + 1] - py, positions[i2 * 3 + 2] - pz
-    );
+    // Signed height of each vertex above the plane
+    const h0 = (positions[i0 * 3] - px) * nx + (positions[i0 * 3 + 1] - py) * ny + (positions[i0 * 3 + 2] - pz) * nz;
+    const h1 = (positions[i1 * 3] - px) * nx + (positions[i1 * 3 + 1] - py) * ny + (positions[i1 * 3 + 2] - pz) * nz;
+    const h2 = (positions[i2 * 3] - px) * nx + (positions[i2 * 3 + 1] - py) * ny + (positions[i2 * 3 + 2] - pz) * nz;
+
+    // Skip faces not on the pole side
+    if (h0 < 0 && h1 < 0 && h2 < 0) continue;
+    // Skip faces straddling the plane (minor boundary strip)
+    if (h0 < 0 || h1 < 0 || h2 < 0) continue;
+
+    // Edge vectors
+    const e1x = positions[i1 * 3] - positions[i0 * 3];
+    const e1y = positions[i1 * 3 + 1] - positions[i0 * 3 + 1];
+    const e1z = positions[i1 * 3 + 2] - positions[i0 * 3 + 2];
+    const e2x = positions[i2 * 3] - positions[i0 * 3];
+    const e2y = positions[i2 * 3 + 1] - positions[i0 * 3 + 1];
+    const e2z = positions[i2 * 3 + 2] - positions[i0 * 3 + 2];
+
+    // cross(e1, e2)
+    const crx = e1y * e2z - e1z * e2y;
+    const cry = e1z * e2x - e1x * e2z;
+    const crz = e1x * e2y - e1y * e2x;
+
+    // Signed projected area = (1/2) * cross · n̂
+    const signedProjArea = 0.5 * (crx * nx + cry * ny + crz * nz);
+
+    // Volume of truncated prism from triangle to its projection on the plane
+    volume += (h0 + h1 + h2) / 3.0 * signedProjArea;
   }
 
   return Math.abs(volume);

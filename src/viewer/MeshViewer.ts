@@ -442,7 +442,6 @@ export class MeshViewer {
     sphereRadius: number,
     planePoint: THREE.Vector3,
     planeNormal: THREE.Vector3,
-    rimVertices?: number[],
     visible: boolean = false
   ): void {
     this.removeNamedObject('volume-preview');
@@ -505,8 +504,9 @@ export class MeshViewer {
     meshObj.name = 'vol-mesh-surface';
     group.add(meshObj);
 
-    // Cap polygon from actual mesh boundary edges projected onto the rim plane
-    const capGeo = this.buildBoundaryCapGeometry(meshData, planePoint, pn, rimVertices);
+    // Cap polygon from boundary edges of the FILTERED faces projected onto the rim plane.
+    // This ensures the cap exactly matches the visible blue mesh surface.
+    const capGeo = this.buildBoundaryCapGeometry(meshData.positions, filteredIndices, planePoint, pn);
     if (capGeo) {
       const capMat = new THREE.MeshStandardMaterial({
         color: 0x2266dd,
@@ -608,37 +608,34 @@ export class MeshViewer {
    * and projected onto the rim plane. Creates a triangle fan from planePoint.
    */
   private buildBoundaryCapGeometry(
-    meshData: MeshData,
+    positions: Float32Array,
+    indices: number[] | Uint32Array,
     planePoint: THREE.Vector3,
-    planeNormal: THREE.Vector3,
-    rimVertices?: number[]
+    planeNormal: THREE.Vector3
   ): THREE.BufferGeometry | null {
-    const { positions, indices } = meshData;
+    const faceCount = indices.length / 3;
 
-    const boundaryVerts = new Set<number>();
-    if (rimVertices && rimVertices.length >= 3) {
-      for (const v of rimVertices) boundaryVerts.add(v);
-    } else {
-      const faceCount = indices.length / 3;
-      const edgeUsage = new Map<string, { a: number; b: number; count: number }>();
-      for (let f = 0; f < faceCount; f++) {
-        for (let e = 0; e < 3; e++) {
-          const a = indices[f * 3 + e];
-          const b = indices[f * 3 + ((e + 1) % 3)];
-          const key = Math.min(a, b) + '_' + Math.max(a, b);
-          const existing = edgeUsage.get(key);
-          if (existing) {
-            existing.count++;
-          } else {
-            edgeUsage.set(key, { a, b, count: 1 });
-          }
+    // Find boundary edges (edges used by exactly one face in the filtered set)
+    const edgeUsage = new Map<string, { a: number; b: number; count: number }>();
+    for (let f = 0; f < faceCount; f++) {
+      for (let e = 0; e < 3; e++) {
+        const a = indices[f * 3 + e];
+        const b = indices[f * 3 + ((e + 1) % 3)];
+        const key = Math.min(a, b) + '_' + Math.max(a, b);
+        const existing = edgeUsage.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          edgeUsage.set(key, { a, b, count: 1 });
         }
       }
-      for (const [, edge] of edgeUsage) {
-        if (edge.count === 1) {
-          boundaryVerts.add(edge.a);
-          boundaryVerts.add(edge.b);
-        }
+    }
+
+    const boundaryVerts = new Set<number>();
+    for (const [, edge] of edgeUsage) {
+      if (edge.count === 1) {
+        boundaryVerts.add(edge.a);
+        boundaryVerts.add(edge.b);
       }
     }
     if (boundaryVerts.size < 3) return null;
