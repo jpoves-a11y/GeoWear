@@ -450,6 +450,7 @@ export class App {
       await new Promise<void>(r => setTimeout(r, 0));
 
       p.stepAnalyzeDeviations(this.params.thresholdMicrons);
+      this.autoScaleColorRange();
       this.setProgress(25);
 
       // 2. Heat map (~40%)
@@ -557,6 +558,7 @@ export class App {
 
     // Heat map (both modes store μm deviations in vertexDeviations)
     if (p.state.vertexDeviations) {
+      this.autoScaleColorRange();
       const colors = this.heatMap.generateColors(
         p.state.vertexDeviations,
         this.params.colorRangeMin,
@@ -659,6 +661,7 @@ export class App {
     try {
       this.status.setStatus('Classifying worn/unworn zones...');
       p.stepClassifyWear();
+      this.autoScaleColorRange();
       this.status.setStatus(`Worn vertices: ${p.state.wearClassification!.wornCount}`);
       this.controls.markStepCompleted('classifywear');
       this.currentResults = p.state.results;
@@ -735,6 +738,23 @@ export class App {
 
   private toggleRefSphere(visible: boolean): void {
     this.meshViewer.setReferenceSphereVisible(visible);
+  }
+
+  /**
+   * Auto-scale colorRangeMax to the actual deviation range.
+   */
+  private autoScaleColorRange(): void {
+    if (!this.pipeline?.state.vertexDeviations) return;
+    const devs = this.pipeline.state.vertexDeviations;
+    let maxDev = 0;
+    for (let i = 0; i < devs.length; i++) {
+      if (devs[i] > maxDev) maxDev = devs[i];
+    }
+    // Round up to nearest 10 μm for a clean slider value
+    const rounded = Math.ceil(maxDev / 10) * 10;
+    const newMax = Math.max(rounded, 10);
+    this.params.colorRangeMax = newMax;
+    this.controls.updateColorRangeMax(newMax, newMax);
   }
 
   // ---- Parameter updates ----

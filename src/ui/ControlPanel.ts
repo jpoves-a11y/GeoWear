@@ -54,6 +54,7 @@ export class ControlPanel {
   private bestfitVisControllers: any[] = [];
   // Commercial radius proxy for dropdown
   private commercialRadiusProxy = { value: 'Auto' };
+  private colorRangeMaxController: any = null;
   // Analysis mode display name mapping
   private readonly modeLabelMap: Record<string, string> = {
     'Pure Geodesic': 'pure-geodesic',
@@ -185,7 +186,7 @@ export class ControlPanel {
       .name('Color Map')
       .onChange(() => this.callbacks.onParamsChange(this.params));
 
-    folder.add(this.params, 'colorRangeMax', 0, 200, 1)
+    this.colorRangeMaxController = folder.add(this.params, 'colorRangeMax', 0, 200, 1)
       .name('Color Max (μm)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
 
@@ -302,6 +303,17 @@ export class ControlPanel {
     }
     for (const ctrl of this.bestfitVisControllers) {
       isBestFit ? ctrl.show() : ctrl.hide();
+    }
+  }
+
+  /**
+   * Update the color range max value and slider bounds to fit the actual data.
+   */
+  public updateColorRangeMax(value: number, sliderMax: number): void {
+    this.params.colorRangeMax = value;
+    if (this.colorRangeMaxController) {
+      this.colorRangeMaxController.max(sliderMax);
+      this.colorRangeMaxController.updateDisplay();
     }
   }
 
