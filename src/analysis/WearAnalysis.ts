@@ -781,11 +781,16 @@ export class WearAnalysisPipeline {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.separation) throw new Error('Run separation first');
     if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
-    if (!this.state.zoneSpheres) throw new Error('Run zone sphere fitting first');
+    if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
     if (!this.state.sphereFit) throw new Error('Run sphere fit first');
 
     const { point: planePoint, normal: planeNormal } = this.state.rimPlane;
-    const { unwornSphere } = this.state.zoneSpheres;
+    // Use the commercial sphere for the cap: its center comes from the general
+    // sphere fit (all vertices) so it's geometrically consistent with the rim plane.
+    // The unworn sphere center is fitted only to trimmed-mesh non-worn vertices,
+    // which pushes it too deep inside the cup relative to the full rim opening.
+    const capCenter = this.state.commercialSphere.center;
+    const capRadius = this.state.commercialSphere.commercialRadius;
 
     // Volume enclosed between the full inner face and the real rim plane
     const meshEnclosedVolume = computeMeshEnclosedVolume(
@@ -794,10 +799,10 @@ export class WearAnalysisPipeline {
       planeNormal
     );
 
-    // Volume of the unworn sphere cap on the interior side of the rim plane
+    // Volume of the commercial sphere cap on the interior side of the rim plane
     const sphereCapVolume = computeSphereCap(
-      unwornSphere.center,
-      unwornSphere.radius,
+      capCenter,
+      capRadius,
       planePoint,
       planeNormal
     );
@@ -838,10 +843,10 @@ export class WearAnalysisPipeline {
     console.log(`[Wear Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, sphereCap=${sphereCapVolume.toFixed(4)}mm³, wear=${wearVolume.toFixed(4)}mm³`);
     // Debug: log sphere-to-plane signed distance for verification
     const pn = planeNormal.clone().normalize();
-    const dCenter = (unwornSphere.center.x - planePoint.x) * pn.x +
-                    (unwornSphere.center.y - planePoint.y) * pn.y +
-                    (unwornSphere.center.z - planePoint.z) * pn.z;
-    console.log(`[Wear Volume Debug] unwornR=${unwornSphere.radius.toFixed(4)}, d(center→plane)=${dCenter.toFixed(4)}, h=${(unwornSphere.radius + dCenter).toFixed(4)}`);
+    const dCenter = (capCenter.x - planePoint.x) * pn.x +
+                    (capCenter.y - planePoint.y) * pn.y +
+                    (capCenter.z - planePoint.z) * pn.z;
+    console.log(`[Wear Volume Debug] capR=${capRadius.toFixed(4)}, d(center→plane)=${dCenter.toFixed(4)}, h=${(capRadius + dCenter).toFixed(4)}`);
     return this.state.wearVolume;
   }
 
