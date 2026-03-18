@@ -494,6 +494,7 @@ export class MeshViewer {
     });
     const meshObj = new THREE.Mesh(meshGeo, meshMat);
     meshObj.renderOrder = 8;
+    meshObj.name = 'vol-mesh-surface';
     group.add(meshObj);
 
     // Cap polygon from actual mesh boundary edges projected onto the rim plane
@@ -508,22 +509,24 @@ export class MeshViewer {
       });
       const capObj = new THREE.Mesh(capGeo, capMat);
       capObj.renderOrder = 8;
+      capObj.name = 'vol-mesh-cap';
       group.add(capObj);
     }
 
     // --- 2. Sphere cap volume (green, filled) ---
     const sphereCapGeo = this.buildSphereCapGeometry(sphereCenter, sphereRadius, planePoint, pn);
     if (sphereCapGeo) {
-      const capMat = new THREE.MeshStandardMaterial({
+      const capMat2 = new THREE.MeshStandardMaterial({
         color: 0x22bb44,
         transparent: true,
         opacity: 0.3,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
-      const capObj = new THREE.Mesh(sphereCapGeo, capMat);
-      capObj.renderOrder = 9;
-      group.add(capObj);
+      const capObj2 = new THREE.Mesh(sphereCapGeo, capMat2);
+      capObj2.renderOrder = 9;
+      capObj2.name = 'vol-sphere-cap';
+      group.add(capObj2);
     }
 
     this.volumePreviewGroup = group;
@@ -532,6 +535,32 @@ export class MeshViewer {
 
   public setVolumePreviewVisible(visible: boolean): void {
     if (this.volumePreviewGroup) this.volumePreviewGroup.visible = visible;
+  }
+
+  public setMeshVolumeVisible(visible: boolean): void {
+    if (!this.volumePreviewGroup) return;
+    this.volumePreviewGroup.visible = true;
+    const surf = this.volumePreviewGroup.getObjectByName('vol-mesh-surface');
+    const cap = this.volumePreviewGroup.getObjectByName('vol-mesh-cap');
+    if (surf) surf.visible = visible;
+    if (cap) cap.visible = visible;
+  }
+
+  public setSphereCapVisible(visible: boolean): void {
+    if (!this.volumePreviewGroup) return;
+    this.volumePreviewGroup.visible = true;
+    const cap = this.volumePreviewGroup.getObjectByName('vol-sphere-cap');
+    if (cap) cap.visible = visible;
+  }
+
+  public showOriginal(): void {
+    const orig = this.originalGroup.getObjectByName('original-mesh');
+    if (orig) orig.visible = true;
+  }
+
+  public setOriginalVisible(visible: boolean): void {
+    const orig = this.originalGroup.getObjectByName('original-mesh');
+    if (orig) orig.visible = visible;
   }
 
   /**

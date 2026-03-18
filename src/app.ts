@@ -110,7 +110,9 @@ export class App {
       onToggleUnwornSphere: (v: boolean) => this.meshViewer.setUnwornSphereVisible(v),
       onToggleRimPlane: (v: boolean) => this.meshViewer.setRimPlaneVisible(v),
       onToggleWearPlane: (v: boolean) => this.meshViewer.setWearPlaneVisible(v),
-      onToggleVolumePreview: (v: boolean) => this.meshViewer.setVolumePreviewVisible(v),
+      onToggleMeshVolume: (v: boolean) => this.meshViewer.setMeshVolumeVisible(v),
+      onToggleSphereCapVolume: (v: boolean) => this.meshViewer.setSphereCapVisible(v),
+      onToggleOriginalMesh: (v: boolean) => this.meshViewer.setOriginalVisible(v),
       // --- Export ---
       onExportPNG: () => this.exportPNG(),
       onExportCSV: () => this.exportCSV(),

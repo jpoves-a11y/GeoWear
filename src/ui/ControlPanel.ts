@@ -31,7 +31,9 @@ export interface ControlCallbacks {
   onToggleUnwornSphere: (v: boolean) => void;
   onToggleRimPlane: (v: boolean) => void;
   onToggleWearPlane: (v: boolean) => void;
-  onToggleVolumePreview: (v: boolean) => void;
+  onToggleMeshVolume: (v: boolean) => void;
+  onToggleSphereCapVolume: (v: boolean) => void;
+  onToggleOriginalMesh: (v: boolean) => void;
   // Export
   onExportPNG: () => void;
   onExportCSV: () => void;
@@ -222,7 +224,7 @@ export class ControlPanel {
       .onChange((v: boolean) => this.callbacks.onToggleContext(v));
 
     // BestFit-specific toggles
-    const bestfitVis = { commercialSphere: false, wornSphere: true, unwornSphere: true, rimPlane: false, wearPlane: false, volumePreview: false };
+    const bestfitVis = { commercialSphere: false, wornSphere: true, unwornSphere: true, rimPlane: false, wearPlane: false, meshVolume: false, sphereCapVolume: false, originalMesh: false };
 
     const csc = folder.add(bestfitVis, 'commercialSphere')
       .name('Commercial Sphere')
@@ -249,10 +251,20 @@ export class ControlPanel {
       .onChange((v: boolean) => this.callbacks.onToggleWearPlane(v));
     this.bestfitVisControllers.push(wpc);
 
-    const vpc = folder.add(bestfitVis, 'volumePreview')
-      .name('Volume Preview')
-      .onChange((v: boolean) => this.callbacks.onToggleVolumePreview(v));
-    this.bestfitVisControllers.push(vpc);
+    const mvc = folder.add(bestfitVis, 'meshVolume')
+      .name('Mesh Volume (Blue)')
+      .onChange((v: boolean) => this.callbacks.onToggleMeshVolume(v));
+    this.bestfitVisControllers.push(mvc);
+
+    const scc = folder.add(bestfitVis, 'sphereCapVolume')
+      .name('Sphere Cap (Green)')
+      .onChange((v: boolean) => this.callbacks.onToggleSphereCapVolume(v));
+    this.bestfitVisControllers.push(scc);
+
+    const omc = folder.add(bestfitVis, 'originalMesh')
+      .name('Full STL Sample')
+      .onChange((v: boolean) => this.callbacks.onToggleOriginalMesh(v));
+    this.bestfitVisControllers.push(omc);
 
     const resultsBtn = { 'Show Results Panel': () => this.callbacks.onShowResults() };
     folder.add(resultsBtn, 'Show Results Panel');
