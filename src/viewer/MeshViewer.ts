@@ -433,7 +433,7 @@ export class MeshViewer {
 
   /**
    * Display volume preview: mesh enclosed volume (blue) + sphere cap (green).
-   * Both are semi-transparent closed solids so the user can visually verify
+   * Both are semi-transparent filled solids so the user can visually verify
    * the volumes used in the wear calculation.
    */
   public displayVolumePreview(
@@ -462,15 +462,14 @@ export class MeshViewer {
 
     const pn = planeNormal.clone().normalize();
 
-    // --- 1. Mesh enclosed volume (blue) ---
-    // Only show faces on the pole side of the rim plane
+    // --- 1. Mesh enclosed volume (blue, filled) ---
+    // Inner face surface on the pole side of the rim plane
     const faceCount = meshData.indices.length / 3;
     const filteredIndices: number[] = [];
     for (let f = 0; f < faceCount; f++) {
       const i0 = meshData.indices[f * 3];
       const i1 = meshData.indices[f * 3 + 1];
       const i2 = meshData.indices[f * 3 + 2];
-      // Face centroid signed distance to rim plane
       const cx = (meshData.positions[i0 * 3] + meshData.positions[i1 * 3] + meshData.positions[i2 * 3]) / 3;
       const cy = (meshData.positions[i0 * 3 + 1] + meshData.positions[i1 * 3 + 1] + meshData.positions[i2 * 3 + 1]) / 3;
       const cz = (meshData.positions[i0 * 3 + 2] + meshData.positions[i1 * 3 + 2] + meshData.positions[i2 * 3 + 2]) / 3;
@@ -489,7 +488,7 @@ export class MeshViewer {
     const meshMat = new THREE.MeshStandardMaterial({
       color: 0x2266dd,
       transparent: true,
-      opacity: 0.18,
+      opacity: 0.35,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
@@ -497,31 +496,28 @@ export class MeshViewer {
     meshObj.renderOrder = 8;
     group.add(meshObj);
 
-    // Flat disc cap on the rim plane to visually close the mesh volume
-    const d = sphereCenter.clone().sub(planePoint).dot(pn);
-    const discRadius = Math.sqrt(Math.max(0, sphereRadius * sphereRadius - d * d));
-    const discGeo = new THREE.CircleGeometry(discRadius, 64);
-    const discMat = new THREE.MeshStandardMaterial({
-      color: 0x2266dd,
-      transparent: true,
-      opacity: 0.25,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
-    const discObj = new THREE.Mesh(discGeo, discMat);
-    discObj.position.copy(planePoint);
-    const up = new THREE.Vector3(0, 0, 1);
-    discObj.quaternion.setFromUnitVectors(up, pn);
-    discObj.renderOrder = 8;
-    group.add(discObj);
+    // Cap polygon from actual mesh boundary edges projected onto the rim plane
+    const capGeo = this.buildBoundaryCapGeometry(meshData, planePoint, pn);
+    if (capGeo) {
+      const capMat = new THREE.MeshStandardMaterial({
+        color: 0x2266dd,
+        transparent: true,
+        opacity: 0.45,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const capObj = new THREE.Mesh(capGeo, capMat);
+      capObj.renderOrder = 8;
+      group.add(capObj);
+    }
 
-    // --- 2. Sphere cap volume (green) ---
+    // --- 2. Sphere cap volume (green, filled) ---
     const sphereCapGeo = this.buildSphereCapGeometry(sphereCenter, sphereRadius, planePoint, pn);
     if (sphereCapGeo) {
       const capMat = new THREE.MeshStandardMaterial({
         color: 0x22bb44,
         transparent: true,
-        opacity: 0.18,
+        opacity: 0.3,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
@@ -536,6 +532,82 @@ export class MeshViewer {
 
   public setVolumePreviewVisible(visible: boolean): void {
     if (this.volumePreviewGroup) this.volumePreviewGroup.visible = visible;
+  }
+
+  /**
+   * Build a cap polygon from the mesh boundary edges, ordered into a loop
+   * and projected onto the rim plane. Creates a triangle fan from planePoint.
+   */
+  private buildBoundaryCapGeometry(
+    meshData: MeshData,
+    planePoint: THREE.Vector3,
+    planeNormal: THREE.Vector3
+  ): THREE.BufferGeometry | null {
+    const { positions, indices } = meshData;
+    const faceCount = indices.length / 3;
+
+    // Find boundary edges (edges used by exactly one face)
+    const edgeUsage = new Map<string, { a: number; b: number; count: number }>();
+    for (let f = 0; f < faceCount; f++) {
+      for (let e = 0; e < 3; e++) {
+        const a = indices[f * 3 + e];
+        const b = indices[f * 3 + ((e + 1) % 3)];
+        const key = Math.min(a, b) + '_' + Math.max(a, b);
+        const existing = edgeUsage.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          edgeUsage.set(key, { a, b, count: 1 });
+        }
+      }
+    }
+
+    // Build directed adjacency: vertex → next vertex in the boundary loop
+    const next = new Map<number, number>();
+    for (const [, edge] of edgeUsage) {
+      if (edge.count === 1) {
+        next.set(edge.a, edge.b);
+      }
+    }
+    if (next.size < 3) return null;
+
+    // Walk the boundary loop in order
+    const startVert = next.keys().next().value!;
+    const loop: number[] = [startVert];
+    let current = next.get(startVert)!;
+    while (current !== startVert && loop.length <= next.size) {
+      loop.push(current);
+      const nv = next.get(current);
+      if (nv === undefined) break;
+      current = nv;
+    }
+    if (loop.length < 3) return null;
+
+    // Project loop vertices onto rim plane and build fan
+    const verts: number[] = [];
+    // Vertex 0 = fan center (planePoint, already on the plane)
+    verts.push(planePoint.x, planePoint.y, planePoint.z);
+
+    for (const v of loop) {
+      const vx = positions[v * 3], vy = positions[v * 3 + 1], vz = positions[v * 3 + 2];
+      const dist = (vx - planePoint.x) * planeNormal.x +
+                   (vy - planePoint.y) * planeNormal.y +
+                   (vz - planePoint.z) * planeNormal.z;
+      verts.push(vx - dist * planeNormal.x, vy - dist * planeNormal.y, vz - dist * planeNormal.z);
+    }
+
+    // Fan triangles: center(0) → loop[i+1] → loop[i+2]
+    const idxs: number[] = [];
+    for (let i = 0; i < loop.length; i++) {
+      const ni = (i + 1) % loop.length;
+      idxs.push(0, i + 1, ni + 1);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.setIndex(idxs);
+    geo.computeVertexNormals();
+    return geo;
   }
 
   /**
