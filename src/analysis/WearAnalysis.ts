@@ -698,8 +698,10 @@ export class WearAnalysisPipeline {
    */
   stepComputeRimPlane(): RimPlaneResult {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.separation) throw new Error('Run separation first');
 
-    const mesh = this.state.workingMesh;
+    // Use the real cup opening boundary from separation.inner (not the trimmed mesh)
+    const mesh = this.state.separation.inner;
     const fc = mesh.indices.length / 3;
 
     // Find boundary edges
