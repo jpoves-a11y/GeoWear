@@ -129,7 +129,7 @@ export class AnnotationManager {
     div.style.pointerEvents = 'auto';
     div.style.cursor = 'pointer';
     div.addEventListener('click', () => {
-      this.sceneManager.controls.target.copy(
+      (this.sceneManager.controls as any).target.copy(
         cluster.centroid.clone().add(groupOffset)
       );
       this.sceneManager.controls.update();

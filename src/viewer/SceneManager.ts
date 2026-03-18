@@ -6,14 +6,19 @@
 import * as THREE from 'three';
 import { Timer } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+import { ArcballControls } from 'three/addons/controls/ArcballControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+
+export type CameraMode = 'orbit' | 'trackball' | 'arcball';
 
 export class SceneManager {
   public scene: THREE.Scene;
   public camera: THREE.PerspectiveCamera;
   public renderer: THREE.WebGLRenderer;
   public cssRenderer: CSS2DRenderer;
-  public controls: OrbitControls;
+  public controls: OrbitControls | TrackballControls | ArcballControls;
+  private currentCameraMode: CameraMode = 'orbit';
 
   private canvas: HTMLCanvasElement;
   private container: HTMLElement;
@@ -150,6 +155,57 @@ export class SceneManager {
     if (idx !== -1) this.frameCallbacks.splice(idx, 1);
   }
 
+  /** Switch camera control mode, preserving camera position and target */
+  public setControlMode(mode: CameraMode): void {
+    if (mode === this.currentCameraMode) return;
+
+    // Save current state
+    const pos = this.camera.position.clone();
+    const target = 'target' in this.controls
+      ? (this.controls as OrbitControls).target.clone()
+      : new THREE.Vector3(0, 0, 0);
+
+    // Read distance limits before disposing
+    const minDist = 'minDistance' in this.controls ? (this.controls as any).minDistance : 5;
+    const maxDist = 'maxDistance' in this.controls ? (this.controls as any).maxDistance : 200;
+
+    this.controls.dispose();
+
+    if (mode === 'trackball') {
+      const tc = new TrackballControls(this.camera, this.renderer.domElement);
+      tc.rotateSpeed = 3.0;
+      tc.zoomSpeed = 1.2;
+      tc.panSpeed = 0.6;
+      tc.dynamicDampingFactor = 0.15;
+      tc.minDistance = minDist;
+      tc.maxDistance = maxDist;
+      tc.target.copy(target);
+      this.controls = tc;
+    } else if (mode === 'arcball') {
+      const ac = new ArcballControls(this.camera, this.renderer.domElement, this.scene);
+      ac.setGizmosVisible(false);
+      ac.minDistance = minDist;
+      ac.maxDistance = maxDist;
+      (ac as any).target.copy(target);
+      this.controls = ac;
+    } else {
+      const oc = new OrbitControls(this.camera, this.renderer.domElement);
+      oc.enableDamping = true;
+      oc.dampingFactor = 0.08;
+      oc.rotateSpeed = 0.8;
+      oc.zoomSpeed = 1.2;
+      oc.panSpeed = 0.6;
+      oc.minDistance = minDist;
+      oc.maxDistance = maxDist;
+      oc.target.copy(target);
+      this.controls = oc;
+    }
+
+    this.camera.position.copy(pos);
+    this.controls.update();
+    this.currentCameraMode = mode;
+  }
+
   /** Focus camera on a given target box */
   public focusOn(box: THREE.Box3): void {
     const center = box.getCenter(new THREE.Vector3());
@@ -164,9 +220,9 @@ export class SceneManager {
     this.camera.far = distance * 20;
     this.camera.updateProjectionMatrix();
 
-    this.controls.minDistance = distance * 0.1;
-    this.controls.maxDistance = distance * 10;
-    this.controls.target.copy(center);
+    (this.controls as any).minDistance = distance * 0.1;
+    (this.controls as any).maxDistance = distance * 10;
+    (this.controls as any).target.copy(center);
     this.camera.position.copy(
       center.clone().add(new THREE.Vector3(0, distance * 0.5, distance))
     );
