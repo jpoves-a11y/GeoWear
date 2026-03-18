@@ -213,93 +213,40 @@ function signedTetVolOrigin(
 /**
  * Compute the enclosed volume between the mesh surface and a capping plane.
  *
- * Uses the divergence theorem: the signed volume of the closed surface
- * (mesh triangles + flat cap polygon at the rim plane) equals the sum of
- * signed tetrahedra formed by each triangle and the origin.
+ * Uses the divergence theorem (Gauss's theorem): the volume enclosed by a
+ * closed surface equals the sum of signed tetrahedra from any reference point.
  *
- * For the mesh triangles below/above the plane, we sum their signed
- * tetrahedra directly. The rim plane cap is approximated as a fan from
- * the rim centroid to consecutive boundary edges.
+ * Key insight: using planePoint (on the rim plane) as the reference eliminates
+ * the need for explicit cap construction. The virtual cap fan (triangles on
+ * the plane closing the mesh boundary) has every triangle containing planePoint
+ * as a vertex, making their tetrahedra degenerate (zero volume). So only the
+ * mesh surface triangles contribute.
+ *
+ * This also greatly improves numerical stability: planePoint is near the mesh
+ * (~14mm radius), versus the world origin which may be hundreds of mm away.
  */
 export function computeMeshEnclosedVolume(
   meshData: MeshData,
   planePoint: THREE.Vector3,
-  planeNormal: THREE.Vector3
+  _planeNormal: THREE.Vector3
 ): number {
   const { positions, indices, faceCount } = meshData;
-  const pn = planeNormal.clone().normalize();
+  const px = planePoint.x, py = planePoint.y, pz = planePoint.z;
 
-  let meshVolume = 0;
-
-  // Sum signed tetrahedra for all mesh faces
+  let volume = 0;
   for (let f = 0; f < faceCount; f++) {
     const i0 = indices[f * 3];
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
 
-    meshVolume += signedTetVolOrigin(
-      positions[i0 * 3], positions[i0 * 3 + 1], positions[i0 * 3 + 2],
-      positions[i1 * 3], positions[i1 * 3 + 1], positions[i1 * 3 + 2],
-      positions[i2 * 3], positions[i2 * 3 + 1], positions[i2 * 3 + 2]
+    volume += signedTetVolOrigin(
+      positions[i0 * 3] - px, positions[i0 * 3 + 1] - py, positions[i0 * 3 + 2] - pz,
+      positions[i1 * 3] - px, positions[i1 * 3 + 1] - py, positions[i1 * 3 + 2] - pz,
+      positions[i2 * 3] - px, positions[i2 * 3 + 1] - py, positions[i2 * 3 + 2] - pz
     );
   }
 
-  // Find boundary edges (edges that belong to only one triangle)
-  const edgeCount = new Map<string, number[]>();
-  for (let f = 0; f < faceCount; f++) {
-    for (let e = 0; e < 3; e++) {
-      const a = indices[f * 3 + e];
-      const b = indices[f * 3 + ((e + 1) % 3)];
-      const key = a < b ? `${a}_${b}` : `${b}_${a}`;
-      if (!edgeCount.has(key)) edgeCount.set(key, []);
-      edgeCount.get(key)!.push(a, b);
-    }
-  }
-
-  // Collect ordered boundary vertices
-  const boundaryEdges: Array<[number, number]> = [];
-  for (const [key, verts] of edgeCount) {
-    if (verts.length === 2) { // only one triangle uses this edge
-      boundaryEdges.push([verts[0], verts[1]]);
-    }
-  }
-
-  // Cap the opening with a fan projected onto the rim plane.
-  // This ensures the mesh volume is bounded by the exact same plane
-  // as the sphere cap volume.
-  if (boundaryEdges.length > 0) {
-    const rimVerts = new Set<number>();
-    for (const [a, b] of boundaryEdges) {
-      rimVerts.add(a);
-      rimVerts.add(b);
-    }
-
-    // Use the rim plane point as the fan center (already on the plane)
-    const rcx = planePoint.x, rcy = planePoint.y, rcz = planePoint.z;
-
-    // Project each boundary vertex onto the rim plane
-    const projected = new Float64Array(positions.length); // only rim verts used
-    for (const v of rimVerts) {
-      const px = positions[v * 3], py = positions[v * 3 + 1], pz = positions[v * 3 + 2];
-      const dist = (px - planePoint.x) * pn.x + (py - planePoint.y) * pn.y + (pz - planePoint.z) * pn.z;
-      projected[v * 3]     = px - dist * pn.x;
-      projected[v * 3 + 1] = py - dist * pn.y;
-      projected[v * 3 + 2] = pz - dist * pn.z;
-    }
-
-    // Each boundary edge forms a triangle with the fan center.
-    // Swap a,b so that the cap face has the reverse edge (b→a),
-    // making cap normals consistent with the mesh face normals.
-    for (const [a, b] of boundaryEdges) {
-      meshVolume += signedTetVolOrigin(
-        rcx, rcy, rcz,
-        projected[b * 3], projected[b * 3 + 1], projected[b * 3 + 2],
-        projected[a * 3], projected[a * 3 + 1], projected[a * 3 + 2]
-      );
-    }
-  }
-
-  return Math.abs(meshVolume);
+  return Math.abs(volume);
 }
 
 /**

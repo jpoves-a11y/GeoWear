@@ -463,8 +463,29 @@ export class MeshViewer {
     const pn = planeNormal.clone().normalize();
 
     // --- 1. Mesh enclosed volume (blue) ---
-    // Copy of inner mesh surface
-    const meshGeo = this.meshDataToGeometry(meshData);
+    // Only show faces on the pole side of the rim plane
+    const faceCount = meshData.indices.length / 3;
+    const filteredIndices: number[] = [];
+    for (let f = 0; f < faceCount; f++) {
+      const i0 = meshData.indices[f * 3];
+      const i1 = meshData.indices[f * 3 + 1];
+      const i2 = meshData.indices[f * 3 + 2];
+      // Face centroid signed distance to rim plane
+      const cx = (meshData.positions[i0 * 3] + meshData.positions[i1 * 3] + meshData.positions[i2 * 3]) / 3;
+      const cy = (meshData.positions[i0 * 3 + 1] + meshData.positions[i1 * 3 + 1] + meshData.positions[i2 * 3 + 1]) / 3;
+      const cz = (meshData.positions[i0 * 3 + 2] + meshData.positions[i1 * 3 + 2] + meshData.positions[i2 * 3 + 2]) / 3;
+      const dist = (cx - planePoint.x) * pn.x + (cy - planePoint.y) * pn.y + (cz - planePoint.z) * pn.z;
+      if (dist > -0.01) filteredIndices.push(i0, i1, i2);
+    }
+
+    const meshGeo = new THREE.BufferGeometry();
+    meshGeo.setAttribute('position', new THREE.Float32BufferAttribute(meshData.positions, 3));
+    if (meshData.normals.length > 0) {
+      meshGeo.setAttribute('normal', new THREE.Float32BufferAttribute(meshData.normals, 3));
+    }
+    meshGeo.setIndex(filteredIndices);
+    meshGeo.computeBoundingSphere();
+
     const meshMat = new THREE.MeshStandardMaterial({
       color: 0x2266dd,
       transparent: true,
@@ -476,20 +497,23 @@ export class MeshViewer {
     meshObj.renderOrder = 8;
     group.add(meshObj);
 
-    // Build cap disc from boundary edges projected onto rim plane
-    const meshCapGeo = this.buildMeshCapGeometry(meshData, planePoint, pn);
-    if (meshCapGeo) {
-      const capMat = new THREE.MeshStandardMaterial({
-        color: 0x2266dd,
-        transparent: true,
-        opacity: 0.25,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      });
-      const capObj = new THREE.Mesh(meshCapGeo, capMat);
-      capObj.renderOrder = 8;
-      group.add(capObj);
-    }
+    // Flat disc cap on the rim plane to visually close the mesh volume
+    const d = sphereCenter.clone().sub(planePoint).dot(pn);
+    const discRadius = Math.sqrt(Math.max(0, sphereRadius * sphereRadius - d * d));
+    const discGeo = new THREE.CircleGeometry(discRadius, 64);
+    const discMat = new THREE.MeshStandardMaterial({
+      color: 0x2266dd,
+      transparent: true,
+      opacity: 0.25,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const discObj = new THREE.Mesh(discGeo, discMat);
+    discObj.position.copy(planePoint);
+    const up = new THREE.Vector3(0, 0, 1);
+    discObj.quaternion.setFromUnitVectors(up, pn);
+    discObj.renderOrder = 8;
+    group.add(discObj);
 
     // --- 2. Sphere cap volume (green) ---
     const sphereCapGeo = this.buildSphereCapGeometry(sphereCenter, sphereRadius, planePoint, pn);
@@ -515,82 +539,6 @@ export class MeshViewer {
   }
 
   /**
-   * Build a flat cap polygon from boundary edges of a mesh, projected onto a plane.
-   * Fan from planePoint (center) to each boundary edge.
-   */
-  private buildMeshCapGeometry(
-    meshData: MeshData,
-    planePoint: THREE.Vector3,
-    planeNormal: THREE.Vector3
-  ): THREE.BufferGeometry | null {
-    const { positions, indices } = meshData;
-    const faceCount = indices.length / 3;
-
-    // Find boundary edges
-    const edgeCount = new Map<string, number[]>();
-    for (let f = 0; f < faceCount; f++) {
-      for (let e = 0; e < 3; e++) {
-        const a = indices[f * 3 + e];
-        const b = indices[f * 3 + ((e + 1) % 3)];
-        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
-        if (!edgeCount.has(key)) edgeCount.set(key, []);
-        edgeCount.get(key)!.push(a, b);
-      }
-    }
-
-    const boundaryEdges: Array<[number, number]> = [];
-    for (const [, verts] of edgeCount) {
-      if (verts.length === 2) boundaryEdges.push([verts[0], verts[1]]);
-    }
-    if (boundaryEdges.length === 0) return null;
-
-    // Collect unique rim vertices and project onto plane
-    const rimVerts = new Set<number>();
-    for (const [a, b] of boundaryEdges) { rimVerts.add(a); rimVerts.add(b); }
-
-    // Build per-vertex projection map
-    const projected = new Map<number, [number, number, number]>();
-    for (const v of rimVerts) {
-      const px = positions[v * 3], py = positions[v * 3 + 1], pz = positions[v * 3 + 2];
-      const dist = (px - planePoint.x) * planeNormal.x + (py - planePoint.y) * planeNormal.y + (pz - planePoint.z) * planeNormal.z;
-      projected.set(v, [px - dist * planeNormal.x, py - dist * planeNormal.y, pz - dist * planeNormal.z]);
-    }
-
-    // Build triangle fan: fan center = planePoint, each edge → triangle
-    const verts: number[] = [];
-    const idxs: number[] = [];
-
-    // Vertex 0 = fan center
-    verts.push(planePoint.x, planePoint.y, planePoint.z);
-    let nextIdx = 1;
-    const vertMap = new Map<number, number>(); // original index → verts index
-
-    for (const [a, b] of boundaryEdges) {
-      let ia = vertMap.get(a);
-      if (ia === undefined) {
-        const p = projected.get(a)!;
-        verts.push(p[0], p[1], p[2]);
-        ia = nextIdx++;
-        vertMap.set(a, ia);
-      }
-      let ib = vertMap.get(b);
-      if (ib === undefined) {
-        const p = projected.get(b)!;
-        verts.push(p[0], p[1], p[2]);
-        ib = nextIdx++;
-        vertMap.set(b, ib);
-      }
-      idxs.push(0, ib, ia); // reversed winding for consistent normals
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-    geo.setIndex(idxs);
-    geo.computeVertexNormals();
-    return geo;
-  }
-
-  /**
    * Build a spherical cap geometry on the pole (normal) side of a cutting plane.
    * Returns a closed solid: spherical surface + flat disc base.
    */
@@ -605,8 +553,10 @@ export class MeshViewer {
     const h = radius + d;
     if (h <= 0) return null;
 
-    // Angle from pole to cap edge
-    const cosTheta = Math.max(-1, Math.min(1, d / radius));
+    // Angle from pole to cap edge on the rim plane:
+    // Point at angle θ has signed distance to plane = d + R·cos(θ)
+    // At the plane: d + R·cos(θ) = 0  →  cos(θ) = -d/R
+    const cosTheta = Math.max(-1, Math.min(1, -d / radius));
     const thetaMax = Math.acos(cosTheta);
 
     // Orthonormal basis: N, U, V
