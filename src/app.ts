@@ -546,6 +546,12 @@ export class App {
     const offset = this.meshViewer.getGroupOffset();
     const results = p.state.results!;
 
+    // Recreate full STL sample (hidden by default) so its UI toggle works
+    // even after clearAll() during full analysis.
+    if (this.currentMeshData) {
+      this.meshViewer.displayOriginalMeshFromData(this.currentMeshData, false);
+    }
+
     // Show inner mesh (trimmed, opaque)
     if (p.state.workingMesh) {
       this.meshViewer.displayInnerMesh(p.state.workingMesh);

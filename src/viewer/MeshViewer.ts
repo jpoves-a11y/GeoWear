@@ -470,11 +470,18 @@ export class MeshViewer {
       const i0 = meshData.indices[f * 3];
       const i1 = meshData.indices[f * 3 + 1];
       const i2 = meshData.indices[f * 3 + 2];
-      const cx = (meshData.positions[i0 * 3] + meshData.positions[i1 * 3] + meshData.positions[i2 * 3]) / 3;
-      const cy = (meshData.positions[i0 * 3 + 1] + meshData.positions[i1 * 3 + 1] + meshData.positions[i2 * 3 + 1]) / 3;
-      const cz = (meshData.positions[i0 * 3 + 2] + meshData.positions[i1 * 3 + 2] + meshData.positions[i2 * 3 + 2]) / 3;
-      const dist = (cx - planePoint.x) * pn.x + (cy - planePoint.y) * pn.y + (cz - planePoint.z) * pn.z;
-      if (dist > -0.01) filteredIndices.push(i0, i1, i2);
+      const d0 = (meshData.positions[i0 * 3] - planePoint.x) * pn.x +
+                 (meshData.positions[i0 * 3 + 1] - planePoint.y) * pn.y +
+                 (meshData.positions[i0 * 3 + 2] - planePoint.z) * pn.z;
+      const d1 = (meshData.positions[i1 * 3] - planePoint.x) * pn.x +
+                 (meshData.positions[i1 * 3 + 1] - planePoint.y) * pn.y +
+                 (meshData.positions[i1 * 3 + 2] - planePoint.z) * pn.z;
+      const d2 = (meshData.positions[i2 * 3] - planePoint.x) * pn.x +
+                 (meshData.positions[i2 * 3 + 1] - planePoint.y) * pn.y +
+                 (meshData.positions[i2 * 3 + 2] - planePoint.z) * pn.z;
+
+      // Keep only triangles fully on the pole side to avoid faces crossing the rim plane.
+      if (Math.min(d0, d1, d2) >= -0.01) filteredIndices.push(i0, i1, i2);
     }
 
     const meshGeo = new THREE.BufferGeometry();
@@ -564,6 +571,31 @@ export class MeshViewer {
   }
 
   /**
+   * Recreate the full STL sample mesh from MeshData without clearing other overlays.
+   */
+  public displayOriginalMeshFromData(meshData: MeshData, visible: boolean = false): void {
+    const existing = this.originalGroup.getObjectByName('original-mesh');
+    if (existing) {
+      this.originalGroup.remove(existing);
+      if (existing instanceof THREE.Mesh) {
+        existing.geometry.dispose();
+        if (Array.isArray(existing.material)) existing.material.forEach(m => m.dispose());
+        else existing.material.dispose();
+      }
+    }
+
+    const geometry = this.meshDataToGeometry(meshData);
+    geometry.computeVertexNormals();
+
+    const mesh = new THREE.Mesh(geometry, this.innerMaterial.clone());
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.name = 'original-mesh';
+    mesh.visible = visible;
+    this.originalGroup.add(mesh);
+  }
+
+  /**
    * Build a cap polygon from the mesh boundary edges, ordered into a loop
    * and projected onto the rim plane. Creates a triangle fan from planePoint.
    */
@@ -591,44 +623,57 @@ export class MeshViewer {
       }
     }
 
-    // Build directed adjacency: vertex → next vertex in the boundary loop
-    const next = new Map<number, number>();
+    // Collect unique boundary vertices.
+    const boundaryVerts = new Set<number>();
     for (const [, edge] of edgeUsage) {
       if (edge.count === 1) {
-        next.set(edge.a, edge.b);
+        boundaryVerts.add(edge.a);
+        boundaryVerts.add(edge.b);
       }
     }
-    if (next.size < 3) return null;
+    if (boundaryVerts.size < 3) return null;
 
-    // Walk the boundary loop in order
-    const startVert = next.keys().next().value!;
-    const loop: number[] = [startVert];
-    let current = next.get(startVert)!;
-    while (current !== startVert && loop.length <= next.size) {
-      loop.push(current);
-      const nv = next.get(current);
-      if (nv === undefined) break;
-      current = nv;
-    }
-    if (loop.length < 3) return null;
+    // Build orthonormal basis on plane for angular sorting.
+    const N = planeNormal.clone().normalize();
+    const U = new THREE.Vector3();
+    if (Math.abs(N.x) < 0.9) U.crossVectors(N, new THREE.Vector3(1, 0, 0)).normalize();
+    else U.crossVectors(N, new THREE.Vector3(0, 1, 0)).normalize();
+    const V = new THREE.Vector3().crossVectors(N, U).normalize();
 
-    // Project loop vertices onto rim plane and build fan
-    const verts: number[] = [];
-    // Vertex 0 = fan center (planePoint, already on the plane)
-    verts.push(planePoint.x, planePoint.y, planePoint.z);
-
-    for (const v of loop) {
+    // Project boundary points onto plane and compute their centroid on the plane.
+    type P = { x: number; y: number; z: number; v: number; u2d: number; v2d: number; a: number };
+    const pts: P[] = [];
+    let cx = 0, cy = 0, cz = 0;
+    for (const v of boundaryVerts) {
       const vx = positions[v * 3], vy = positions[v * 3 + 1], vz = positions[v * 3 + 2];
-      const dist = (vx - planePoint.x) * planeNormal.x +
-                   (vy - planePoint.y) * planeNormal.y +
-                   (vz - planePoint.z) * planeNormal.z;
-      verts.push(vx - dist * planeNormal.x, vy - dist * planeNormal.y, vz - dist * planeNormal.z);
+      const dist = (vx - planePoint.x) * N.x + (vy - planePoint.y) * N.y + (vz - planePoint.z) * N.z;
+      const px = vx - dist * N.x;
+      const py = vy - dist * N.y;
+      const pz = vz - dist * N.z;
+      pts.push({ x: px, y: py, z: pz, v, u2d: 0, v2d: 0, a: 0 });
+      cx += px; cy += py; cz += pz;
+    }
+    cx /= pts.length; cy /= pts.length; cz /= pts.length;
+
+    for (const p of pts) {
+      const rx = p.x - cx, ry = p.y - cy, rz = p.z - cz;
+      p.u2d = rx * U.x + ry * U.y + rz * U.z;
+      p.v2d = rx * V.x + ry * V.y + rz * V.z;
+      p.a = Math.atan2(p.v2d, p.u2d);
+    }
+    pts.sort((a, b) => a.a - b.a);
+
+    // Build fan from plane center to sorted rim polygon.
+    const verts: number[] = [];
+    verts.push(planePoint.x, planePoint.y, planePoint.z);
+    for (const p of pts) {
+      verts.push(p.x, p.y, p.z);
     }
 
     // Fan triangles: center(0) → loop[i+1] → loop[i+2]
     const idxs: number[] = [];
-    for (let i = 0; i < loop.length; i++) {
-      const ni = (i + 1) % loop.length;
+    for (let i = 0; i < pts.length; i++) {
+      const ni = (i + 1) % pts.length;
       idxs.push(0, i + 1, ni + 1);
     }
 
@@ -874,6 +919,7 @@ export class MeshViewer {
     this.unwornSphereObject = null;
     this.rimPlaneObject = null;
     this.wearPlaneObject = null;
+    this.volumePreviewGroup = null;
   }
 
   public dispose(): void {
