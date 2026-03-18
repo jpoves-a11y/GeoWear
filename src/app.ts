@@ -110,6 +110,7 @@ export class App {
       onToggleUnwornSphere: (v: boolean) => this.meshViewer.setUnwornSphereVisible(v),
       onToggleRimPlane: (v: boolean) => this.meshViewer.setRimPlaneVisible(v),
       onToggleWearPlane: (v: boolean) => this.meshViewer.setWearPlaneVisible(v),
+      onToggleVolumePreview: (v: boolean) => this.meshViewer.setVolumePreviewVisible(v),
       // --- Export ---
       onExportPNG: () => this.exportPNG(),
       onExportCSV: () => this.exportCSV(),
@@ -607,6 +608,17 @@ export class App {
           false
         );
       }
+      // Volume preview (mesh volume vs sphere cap, hidden by default)
+      if (results.rimPlane && results.zoneSpheres && p.state.separation) {
+        this.meshViewer.displayVolumePreview(
+          p.state.separation.inner,
+          results.zoneSpheres.unwornSphere.center,
+          results.zoneSpheres.unwornSphere.radius,
+          results.rimPlane.point,
+          results.rimPlane.normal,
+          false
+        );
+      }
     }
 
     // Geodesics
@@ -700,6 +712,17 @@ export class App {
           midPoint,
           p.state.wearPlane.planeNormal,
           p.state.commercialSphere.commercialRadius,
+          false
+        );
+      }
+      // Volume preview (mesh volume vs sphere cap, hidden by default)
+      if (p.state.rimPlane && p.state.zoneSpheres && p.state.separation) {
+        this.meshViewer.displayVolumePreview(
+          p.state.separation.inner,
+          p.state.zoneSpheres.unwornSphere.center,
+          p.state.zoneSpheres.unwornSphere.radius,
+          p.state.rimPlane.point,
+          p.state.rimPlane.normal,
           false
         );
       }

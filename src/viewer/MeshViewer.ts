@@ -21,6 +21,7 @@ export class MeshViewer {
   private unwornSphereObject: THREE.Mesh | null = null;
   private rimPlaneObject: THREE.Mesh | null = null;
   private wearPlaneObject: THREE.Mesh | null = null;
+  private volumePreviewGroup: THREE.Group | null = null;
 
   // Materials
   private innerMaterial: THREE.MeshStandardMaterial;
@@ -430,6 +431,248 @@ export class MeshViewer {
     if (this.wearPlaneObject) this.wearPlaneObject.visible = visible;
   }
 
+  /**
+   * Display volume preview: mesh enclosed volume (blue) + sphere cap (green).
+   * Both are semi-transparent closed solids so the user can visually verify
+   * the volumes used in the wear calculation.
+   */
+  public displayVolumePreview(
+    meshData: MeshData,
+    sphereCenter: THREE.Vector3,
+    sphereRadius: number,
+    planePoint: THREE.Vector3,
+    planeNormal: THREE.Vector3,
+    visible: boolean = false
+  ): void {
+    this.removeNamedObject('volume-preview');
+    if (this.volumePreviewGroup) {
+      this.originalGroup.remove(this.volumePreviewGroup);
+      this.volumePreviewGroup.traverse(child => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+          else child.material.dispose();
+        }
+      });
+    }
+
+    const group = new THREE.Group();
+    group.name = 'volume-preview';
+    group.visible = visible;
+
+    const pn = planeNormal.clone().normalize();
+
+    // --- 1. Mesh enclosed volume (blue) ---
+    // Copy of inner mesh surface
+    const meshGeo = this.meshDataToGeometry(meshData);
+    const meshMat = new THREE.MeshStandardMaterial({
+      color: 0x2266dd,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const meshObj = new THREE.Mesh(meshGeo, meshMat);
+    meshObj.renderOrder = 8;
+    group.add(meshObj);
+
+    // Build cap disc from boundary edges projected onto rim plane
+    const meshCapGeo = this.buildMeshCapGeometry(meshData, planePoint, pn);
+    if (meshCapGeo) {
+      const capMat = new THREE.MeshStandardMaterial({
+        color: 0x2266dd,
+        transparent: true,
+        opacity: 0.25,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const capObj = new THREE.Mesh(meshCapGeo, capMat);
+      capObj.renderOrder = 8;
+      group.add(capObj);
+    }
+
+    // --- 2. Sphere cap volume (green) ---
+    const sphereCapGeo = this.buildSphereCapGeometry(sphereCenter, sphereRadius, planePoint, pn);
+    if (sphereCapGeo) {
+      const capMat = new THREE.MeshStandardMaterial({
+        color: 0x22bb44,
+        transparent: true,
+        opacity: 0.18,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const capObj = new THREE.Mesh(sphereCapGeo, capMat);
+      capObj.renderOrder = 9;
+      group.add(capObj);
+    }
+
+    this.volumePreviewGroup = group;
+    this.originalGroup.add(group);
+  }
+
+  public setVolumePreviewVisible(visible: boolean): void {
+    if (this.volumePreviewGroup) this.volumePreviewGroup.visible = visible;
+  }
+
+  /**
+   * Build a flat cap polygon from boundary edges of a mesh, projected onto a plane.
+   * Fan from planePoint (center) to each boundary edge.
+   */
+  private buildMeshCapGeometry(
+    meshData: MeshData,
+    planePoint: THREE.Vector3,
+    planeNormal: THREE.Vector3
+  ): THREE.BufferGeometry | null {
+    const { positions, indices } = meshData;
+    const faceCount = indices.length / 3;
+
+    // Find boundary edges
+    const edgeCount = new Map<string, number[]>();
+    for (let f = 0; f < faceCount; f++) {
+      for (let e = 0; e < 3; e++) {
+        const a = indices[f * 3 + e];
+        const b = indices[f * 3 + ((e + 1) % 3)];
+        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+        if (!edgeCount.has(key)) edgeCount.set(key, []);
+        edgeCount.get(key)!.push(a, b);
+      }
+    }
+
+    const boundaryEdges: Array<[number, number]> = [];
+    for (const [, verts] of edgeCount) {
+      if (verts.length === 2) boundaryEdges.push([verts[0], verts[1]]);
+    }
+    if (boundaryEdges.length === 0) return null;
+
+    // Collect unique rim vertices and project onto plane
+    const rimVerts = new Set<number>();
+    for (const [a, b] of boundaryEdges) { rimVerts.add(a); rimVerts.add(b); }
+
+    // Build per-vertex projection map
+    const projected = new Map<number, [number, number, number]>();
+    for (const v of rimVerts) {
+      const px = positions[v * 3], py = positions[v * 3 + 1], pz = positions[v * 3 + 2];
+      const dist = (px - planePoint.x) * planeNormal.x + (py - planePoint.y) * planeNormal.y + (pz - planePoint.z) * planeNormal.z;
+      projected.set(v, [px - dist * planeNormal.x, py - dist * planeNormal.y, pz - dist * planeNormal.z]);
+    }
+
+    // Build triangle fan: fan center = planePoint, each edge → triangle
+    const verts: number[] = [];
+    const idxs: number[] = [];
+
+    // Vertex 0 = fan center
+    verts.push(planePoint.x, planePoint.y, planePoint.z);
+    let nextIdx = 1;
+    const vertMap = new Map<number, number>(); // original index → verts index
+
+    for (const [a, b] of boundaryEdges) {
+      let ia = vertMap.get(a);
+      if (ia === undefined) {
+        const p = projected.get(a)!;
+        verts.push(p[0], p[1], p[2]);
+        ia = nextIdx++;
+        vertMap.set(a, ia);
+      }
+      let ib = vertMap.get(b);
+      if (ib === undefined) {
+        const p = projected.get(b)!;
+        verts.push(p[0], p[1], p[2]);
+        ib = nextIdx++;
+        vertMap.set(b, ib);
+      }
+      idxs.push(0, ib, ia); // reversed winding for consistent normals
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.setIndex(idxs);
+    geo.computeVertexNormals();
+    return geo;
+  }
+
+  /**
+   * Build a spherical cap geometry on the pole (normal) side of a cutting plane.
+   * Returns a closed solid: spherical surface + flat disc base.
+   */
+  private buildSphereCapGeometry(
+    center: THREE.Vector3,
+    radius: number,
+    planePoint: THREE.Vector3,
+    planeNormal: THREE.Vector3
+  ): THREE.BufferGeometry | null {
+    const N = planeNormal.clone().normalize();
+    const d = center.clone().sub(planePoint).dot(N);
+    const h = radius + d;
+    if (h <= 0) return null;
+
+    // Angle from pole to cap edge
+    const cosTheta = Math.max(-1, Math.min(1, d / radius));
+    const thetaMax = Math.acos(cosTheta);
+
+    // Orthonormal basis: N, U, V
+    const U = new THREE.Vector3();
+    if (Math.abs(N.x) < 0.9) U.crossVectors(N, new THREE.Vector3(1, 0, 0)).normalize();
+    else U.crossVectors(N, new THREE.Vector3(0, 1, 0)).normalize();
+    const V = new THREE.Vector3().crossVectors(N, U).normalize();
+
+    const rings = 32;
+    const segments = 64;
+    const positions: number[] = [];
+    const idxs: number[] = [];
+
+    // Ring 0 = pole, ring `rings` = cap edge
+    for (let r = 0; r <= rings; r++) {
+      const theta = (r / rings) * thetaMax;
+      const sinT = Math.sin(theta);
+      const cosT = Math.cos(theta);
+      for (let s = 0; s <= segments; s++) {
+        const phi = (s / segments) * Math.PI * 2;
+        positions.push(
+          center.x + radius * (cosT * N.x + sinT * (Math.cos(phi) * U.x + Math.sin(phi) * V.x)),
+          center.y + radius * (cosT * N.y + sinT * (Math.cos(phi) * U.y + Math.sin(phi) * V.y)),
+          center.z + radius * (cosT * N.z + sinT * (Math.cos(phi) * U.z + Math.sin(phi) * V.z))
+        );
+      }
+    }
+
+    // Sphere surface triangles
+    for (let r = 0; r < rings; r++) {
+      for (let s = 0; s < segments; s++) {
+        const a = r * (segments + 1) + s;
+        const b = a + segments + 1;
+        idxs.push(a, b, a + 1);
+        idxs.push(a + 1, b, b + 1);
+      }
+    }
+
+    // Flat disc base to close the cap
+    const discCenter = positions.length / 3;
+    const projCenter = center.clone().sub(N.clone().multiplyScalar(d));
+    positions.push(projCenter.x, projCenter.y, projCenter.z);
+
+    const capBaseRadius = radius * Math.sin(thetaMax);
+    const discStart = positions.length / 3;
+    for (let s = 0; s <= segments; s++) {
+      const phi = (s / segments) * Math.PI * 2;
+      positions.push(
+        projCenter.x + capBaseRadius * (Math.cos(phi) * U.x + Math.sin(phi) * V.x),
+        projCenter.y + capBaseRadius * (Math.cos(phi) * U.y + Math.sin(phi) * V.y),
+        projCenter.z + capBaseRadius * (Math.cos(phi) * U.z + Math.sin(phi) * V.z)
+      );
+    }
+
+    // Disc fan triangles (reversed winding)
+    for (let s = 0; s < segments; s++) {
+      idxs.push(discCenter, discStart + s + 1, discStart + s);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setIndex(idxs);
+    geo.computeVertexNormals();
+    return geo;
+  }
+
   /** Remove a named object from the group */
   private removeNamedObject(name: string): void {
     const obj = this.originalGroup.getObjectByName(name);
@@ -443,9 +686,9 @@ export class MeshViewer {
     }
   }
 
-  /** Clear zone spheres, commercial sphere, and rim plane */
+  /** Clear zone spheres, commercial sphere, rim plane, and volume preview */
   public clearZoneSpheres(): void {
-    for (const name of ['commercial-sphere', 'worn-sphere', 'unworn-sphere', 'rim-plane', 'wear-plane']) {
+    for (const name of ['commercial-sphere', 'worn-sphere', 'unworn-sphere', 'rim-plane', 'wear-plane', 'volume-preview']) {
       this.removeNamedObject(name);
     }
     this.commercialSphereObject = null;
@@ -453,6 +696,7 @@ export class MeshViewer {
     this.unwornSphereObject = null;
     this.rimPlaneObject = null;
     this.wearPlaneObject = null;
+    this.volumePreviewGroup = null;
   }
 
   /**
