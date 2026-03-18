@@ -88,16 +88,16 @@ html, body {
 
 .loading-icon-wrapper {
   position: relative;
-  width: 80px;
-  height: 80px;
+  width: 320px;
+  height: 320px;
   margin: 0 auto 20px;
 }
 
 .loading-ring {
   position: absolute;
   inset: 0;
-  width: 80px;
-  height: 80px;
+  width: 320px;
+  height: 320px;
   animation: spin 1.2s linear infinite;
 }
 
@@ -115,9 +115,9 @@ html, body {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
+  width: 160px;
+  height: 160px;
+  border-radius: 16px;
 }
 
 @keyframes spin {
