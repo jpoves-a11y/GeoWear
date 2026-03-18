@@ -595,9 +595,11 @@ export class App {
       }
       // Wear section plane (hidden by default)
       if (results.wearPlane && results.commercialSphere) {
-        // Center the plane midway between pole and rim
+        // Center the plane midway between pole and rim, projected onto the wear plane
         const midPoint = results.wearPlane.planePoint.clone()
           .add(results.rimPlane!.point).multiplyScalar(0.5);
+        const off = midPoint.clone().sub(results.wearPlane.planePoint);
+        midPoint.sub(results.wearPlane.planeNormal.clone().multiplyScalar(off.dot(results.wearPlane.planeNormal)));
         this.meshViewer.displayWearPlane(
           midPoint,
           results.wearPlane.planeNormal,
@@ -692,6 +694,8 @@ export class App {
       if (p.state.wearPlane && p.state.commercialSphere && p.state.rimPlane) {
         const midPoint = p.state.wearPlane.planePoint.clone()
           .add(p.state.rimPlane.point).multiplyScalar(0.5);
+        const off = midPoint.clone().sub(p.state.wearPlane.planePoint);
+        midPoint.sub(p.state.wearPlane.planeNormal.clone().multiplyScalar(off.dot(p.state.wearPlane.planeNormal)));
         this.meshViewer.displayWearPlane(
           midPoint,
           p.state.wearPlane.planeNormal,
