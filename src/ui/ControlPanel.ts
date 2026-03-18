@@ -34,7 +34,6 @@ export interface ControlCallbacks {
   onToggleMeshVolume: (v: boolean) => void;
   onToggleSphereCapVolume: (v: boolean) => void;
   onToggleOriginalMesh: (v: boolean) => void;
-  onCameraMode: (mode: string) => void;
   // Export
   onExportPNG: () => void;
   onExportCSV: () => void;
@@ -199,11 +198,6 @@ export class ControlPanel {
 
   private buildVisualizationSection(): void {
     const folder = this.gui.addFolder('👁 Visualization');
-
-    const camProxy = { mode: 'orbit' };
-    folder.add(camProxy, 'mode', ['orbit', 'trackball', 'arcball'])
-      .name('Camera Mode')
-      .onChange((v: string) => this.callbacks.onCameraMode(v));
 
     folder.add(this.params, 'showWireframe')
       .name('Wireframe')

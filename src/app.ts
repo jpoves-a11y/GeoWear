@@ -113,7 +113,6 @@ export class App {
       onToggleMeshVolume: (v: boolean) => this.meshViewer.setMeshVolumeVisible(v),
       onToggleSphereCapVolume: (v: boolean) => this.meshViewer.setSphereCapVisible(v),
       onToggleOriginalMesh: (v: boolean) => this.meshViewer.setOriginalVisible(v),
-      onCameraMode: (mode: string) => this.scene.setControlMode(mode as import('./viewer/SceneManager').CameraMode),
       // --- Export ---
       onExportPNG: () => this.exportPNG(),
       onExportCSV: () => this.exportCSV(),
