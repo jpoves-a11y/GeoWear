@@ -442,6 +442,7 @@ export class MeshViewer {
     sphereRadius: number,
     planePoint: THREE.Vector3,
     planeNormal: THREE.Vector3,
+    rimVertices?: number[],
     visible: boolean = false
   ): void {
     this.removeNamedObject('volume-preview');
@@ -505,7 +506,7 @@ export class MeshViewer {
     group.add(meshObj);
 
     // Cap polygon from actual mesh boundary edges projected onto the rim plane
-    const capGeo = this.buildBoundaryCapGeometry(meshData, planePoint, pn);
+    const capGeo = this.buildBoundaryCapGeometry(meshData, planePoint, pn, rimVertices);
     if (capGeo) {
       const capMat = new THREE.MeshStandardMaterial({
         color: 0x2266dd,
@@ -567,7 +568,14 @@ export class MeshViewer {
 
   public setOriginalVisible(visible: boolean): void {
     const orig = this.originalGroup.getObjectByName('original-mesh');
-    if (orig) orig.visible = visible;
+    if (orig && orig instanceof THREE.Mesh) {
+      const mat = orig.material as THREE.MeshStandardMaterial;
+      mat.transparent = false;
+      mat.opacity = 1.0;
+      mat.depthWrite = true;
+      mat.needsUpdate = true;
+      orig.visible = visible;
+    }
   }
 
   /**
@@ -602,33 +610,35 @@ export class MeshViewer {
   private buildBoundaryCapGeometry(
     meshData: MeshData,
     planePoint: THREE.Vector3,
-    planeNormal: THREE.Vector3
+    planeNormal: THREE.Vector3,
+    rimVertices?: number[]
   ): THREE.BufferGeometry | null {
     const { positions, indices } = meshData;
-    const faceCount = indices.length / 3;
 
-    // Find boundary edges (edges used by exactly one face)
-    const edgeUsage = new Map<string, { a: number; b: number; count: number }>();
-    for (let f = 0; f < faceCount; f++) {
-      for (let e = 0; e < 3; e++) {
-        const a = indices[f * 3 + e];
-        const b = indices[f * 3 + ((e + 1) % 3)];
-        const key = Math.min(a, b) + '_' + Math.max(a, b);
-        const existing = edgeUsage.get(key);
-        if (existing) {
-          existing.count++;
-        } else {
-          edgeUsage.set(key, { a, b, count: 1 });
+    const boundaryVerts = new Set<number>();
+    if (rimVertices && rimVertices.length >= 3) {
+      for (const v of rimVertices) boundaryVerts.add(v);
+    } else {
+      const faceCount = indices.length / 3;
+      const edgeUsage = new Map<string, { a: number; b: number; count: number }>();
+      for (let f = 0; f < faceCount; f++) {
+        for (let e = 0; e < 3; e++) {
+          const a = indices[f * 3 + e];
+          const b = indices[f * 3 + ((e + 1) % 3)];
+          const key = Math.min(a, b) + '_' + Math.max(a, b);
+          const existing = edgeUsage.get(key);
+          if (existing) {
+            existing.count++;
+          } else {
+            edgeUsage.set(key, { a, b, count: 1 });
+          }
         }
       }
-    }
-
-    // Collect unique boundary vertices.
-    const boundaryVerts = new Set<number>();
-    for (const [, edge] of edgeUsage) {
-      if (edge.count === 1) {
-        boundaryVerts.add(edge.a);
-        boundaryVerts.add(edge.b);
+      for (const [, edge] of edgeUsage) {
+        if (edge.count === 1) {
+          boundaryVerts.add(edge.a);
+          boundaryVerts.add(edge.b);
+        }
       }
     }
     if (boundaryVerts.size < 3) return null;
@@ -640,40 +650,47 @@ export class MeshViewer {
     else U.crossVectors(N, new THREE.Vector3(0, 1, 0)).normalize();
     const V = new THREE.Vector3().crossVectors(N, U).normalize();
 
-    // Project boundary points onto plane and compute their centroid on the plane.
-    type P = { x: number; y: number; z: number; v: number; u2d: number; v2d: number; a: number };
+    // Project boundary points onto plane and compute planar coords.
+    type P = { x: number; y: number; z: number; u2d: number; v2d: number; a: number };
     const pts: P[] = [];
-    let cx = 0, cy = 0, cz = 0;
     for (const v of boundaryVerts) {
       const vx = positions[v * 3], vy = positions[v * 3 + 1], vz = positions[v * 3 + 2];
       const dist = (vx - planePoint.x) * N.x + (vy - planePoint.y) * N.y + (vz - planePoint.z) * N.z;
       const px = vx - dist * N.x;
       const py = vy - dist * N.y;
       const pz = vz - dist * N.z;
-      pts.push({ x: px, y: py, z: pz, v, u2d: 0, v2d: 0, a: 0 });
-      cx += px; cy += py; cz += pz;
+      const rx = px - planePoint.x, ry = py - planePoint.y, rz = pz - planePoint.z;
+      const u2d = rx * U.x + ry * U.y + rz * U.z;
+      const v2d = rx * V.x + ry * V.y + rz * V.z;
+      pts.push({ x: px, y: py, z: pz, u2d, v2d, a: 0 });
     }
-    cx /= pts.length; cy /= pts.length; cz /= pts.length;
 
-    for (const p of pts) {
-      const rx = p.x - cx, ry = p.y - cy, rz = p.z - cz;
-      p.u2d = rx * U.x + ry * U.y + rz * U.z;
-      p.v2d = rx * V.x + ry * V.y + rz * V.z;
+    const hull = this.computeConvexHull2D(pts.map((p, i) => ({ i, x: p.u2d, y: p.v2d })));
+    if (hull.length < 3) return null;
+
+    const hullPts = hull.map(h => pts[h.i]);
+
+    for (const p of hullPts) {
+      const rx = p.x - planePoint.x, ry = p.y - planePoint.y, rz = p.z - planePoint.z;
+      const u = rx * U.x + ry * U.y + rz * U.z;
+      const v = rx * V.x + ry * V.y + rz * V.z;
+      p.u2d = u;
+      p.v2d = v;
       p.a = Math.atan2(p.v2d, p.u2d);
     }
-    pts.sort((a, b) => a.a - b.a);
+    hullPts.sort((a, b) => a.a - b.a);
 
     // Build fan from plane center to sorted rim polygon.
     const verts: number[] = [];
     verts.push(planePoint.x, planePoint.y, planePoint.z);
-    for (const p of pts) {
+    for (const p of hullPts) {
       verts.push(p.x, p.y, p.z);
     }
 
     // Fan triangles: center(0) → loop[i+1] → loop[i+2]
     const idxs: number[] = [];
-    for (let i = 0; i < pts.length; i++) {
-      const ni = (i + 1) % pts.length;
+    for (let i = 0; i < hullPts.length; i++) {
+      const ni = (i + 1) % hullPts.length;
       idxs.push(0, i + 1, ni + 1);
     }
 
@@ -682,6 +699,37 @@ export class MeshViewer {
     geo.setIndex(idxs);
     geo.computeVertexNormals();
     return geo;
+  }
+
+  private computeConvexHull2D(points: Array<{ i: number; x: number; y: number }>): Array<{ i: number; x: number; y: number }> {
+    if (points.length <= 3) return points.slice();
+
+    const pts = points.slice().sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+
+    const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) => {
+      return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    };
+
+    const lower: Array<{ i: number; x: number; y: number }> = [];
+    for (const p of pts) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+        lower.pop();
+      }
+      lower.push(p);
+    }
+
+    const upper: Array<{ i: number; x: number; y: number }> = [];
+    for (let k = pts.length - 1; k >= 0; k--) {
+      const p = pts[k];
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+        upper.pop();
+      }
+      upper.push(p);
+    }
+
+    lower.pop();
+    upper.pop();
+    return lower.concat(upper);
   }
 
   /**
