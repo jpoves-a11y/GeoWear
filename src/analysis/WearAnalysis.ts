@@ -298,16 +298,19 @@ export class WearAnalysisPipeline {
     this.progress('geodesics', 0.25, 'Building mesh adjacency graph...');
     this.state.graph = MeshGraph.build(mesh.positions, mesh.indices, mesh.vertexCount);
 
-    // --- Robust pole detection via geodesic distance from rim boundary ---
+    // --- Robust pole detection via distance from real rim plane ---
     this.progress('geodesics', 0.3, 'Detecting pole vertex...');
 
-    // 1. Find boundary edges → rim vertices
-    const fc = mesh.indices.length / 3;
+    // Use separation.inner (untrimmed inner face) to find the real cup rim boundary
+    const innerMesh = this.state.separation!.inner;
+
+    // 1. Find boundary edges → rim vertices (from the real inner face, not the trimmed mesh)
+    const innerFc = innerMesh.indices.length / 3;
     const edgeFaceMap = new Map<string, number>();
-    for (let f = 0; f < fc; f++) {
+    for (let f = 0; f < innerFc; f++) {
       for (let e = 0; e < 3; e++) {
-        const a = mesh.indices[f * 3 + e];
-        const b = mesh.indices[f * 3 + ((e + 1) % 3)];
+        const a = innerMesh.indices[f * 3 + e];
+        const b = innerMesh.indices[f * 3 + ((e + 1) % 3)];
         const key = a < b ? `${a}_${b}` : `${b}_${a}`;
         edgeFaceMap.set(key, (edgeFaceMap.get(key) || 0) + 1);
       }
@@ -321,12 +324,12 @@ export class WearAnalysisPipeline {
       }
     }
 
-    // 2. Compute rim centroid
+    // 2. Compute rim centroid (from the real inner face positions)
     let rimCx = 0, rimCy = 0, rimCz = 0;
     for (const v of rimVerts) {
-      rimCx += mesh.positions[v * 3];
-      rimCy += mesh.positions[v * 3 + 1];
-      rimCz += mesh.positions[v * 3 + 2];
+      rimCx += innerMesh.positions[v * 3];
+      rimCy += innerMesh.positions[v * 3 + 1];
+      rimCz += innerMesh.positions[v * 3 + 2];
     }
     if (rimVerts.size > 0) {
       rimCx /= rimVerts.size;
@@ -334,25 +337,17 @@ export class WearAnalysisPipeline {
       rimCz /= rimVerts.size;
     }
 
-    // 3. Fit a plane to rim vertices using PCA (normal = smallest eigenvector)
+    // 3. Fit a plane to real rim vertices using PCA (normal = smallest eigenvector)
     //    The rim plane passes through rimCentroid with normal = planeN.
     //    Covariance matrix of rim positions relative to centroid:
     let cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
     for (const v of rimVerts) {
-      const dx = mesh.positions[v * 3]     - rimCx;
-      const dy = mesh.positions[v * 3 + 1] - rimCy;
-      const dz = mesh.positions[v * 3 + 2] - rimCz;
+      const dx = innerMesh.positions[v * 3]     - rimCx;
+      const dy = innerMesh.positions[v * 3 + 1] - rimCy;
+      const dz = innerMesh.positions[v * 3 + 2] - rimCz;
       cxx += dx * dx; cxy += dx * dy; cxz += dx * dz;
       cyy += dy * dy; cyz += dy * dz; czz += dz * dz;
     }
-    // Find eigenvector of smallest eigenvalue via power iteration on inverse
-    // (equivalent to finding eigenvector of largest eigenvalue of adjugate)
-    // Use simplified approach: try all 3 axis candidates, pick the one with
-    // smallest Rayleigh quotient  v^T C v / v^T v
-    // Actually, use iterative method for the smallest eigenvector:
-    // Compute the normal via cross products of two principal spread directions
-    // Simpler robust method: SVD-like via Jacobi or direct analytic for 3×3
-    // We'll use the analytic approach for the 3×3 symmetric matrix.
     const planeN = smallestEigenvector3x3(cxx, cxy, cxz, cyy, cyz, czz);
 
     // 4. Pole = vertex with maximum perpendicular distance from rim plane
