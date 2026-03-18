@@ -12,12 +12,13 @@
   <!-- Loading overlay -->
   <div id="loading-overlay" class="loading-overlay hidden">
     <div class="loading-content">
-      <div class="spinner"></div>
-      <p id="loading-text">Loading...</p>
-      <div class="progress-bar-container">
-        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+      <div class="loading-icon-wrapper">
+        <svg class="loading-ring" viewBox="0 0 80 80">
+          <circle cx="40" cy="40" r="36" />
+        </svg>
+        <img src="/favicon.png" alt="" class="loading-favicon" />
       </div>
-      <p id="progress-text" class="progress-text">0%</p>
+      <p id="loading-text">Loading...</p>
     </div>
   </div>
 
@@ -74,6 +75,15 @@
       </div>
       <!-- Floating toolbar -->
       <div id="viewport-toolbar" class="viewport-toolbar">
+        <button id="btn-recenter" class="toolbar-btn" title="Recenter view">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <line x1="12" y1="2" x2="12" y2="6"/>
+            <line x1="12" y1="18" x2="12" y2="22"/>
+            <line x1="2" y1="12" x2="6" y2="12"/>
+            <line x1="18" y1="12" x2="22" y2="12"/>
+          </svg>
+        </button>
         <button id="btn-section-mode" class="toolbar-btn" title="Section Profile Mode (click on geodesics)" disabled>
           <svg viewBox="0 0 32 32" width="24" height="24" fill="none">
             <!-- Outer cup profile (transparent) -->

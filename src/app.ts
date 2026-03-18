@@ -86,6 +86,12 @@ export class App {
     this.sectionModeBtn = document.getElementById('btn-section-mode') as HTMLButtonElement;
     this.setupSectionModeButton();
 
+    // Setup recenter button
+    const recenterBtn = document.getElementById('btn-recenter');
+    if (recenterBtn) {
+      recenterBtn.addEventListener('click', () => this.scene.resetView());
+    }
+
     const callbacks: ControlCallbacks = {
       onLoadSTL: () => this.openFileDialog(),
       onRunAnalysis: () => this.runAnalysis(),
@@ -442,21 +448,18 @@ export class App {
     try {
       this.showLoading('Analyzing deviations...');
       this.status.setStatus('Analyzing deviations...');
-      this.setProgress(0);
 
       // Yield so the loading overlay / spinner can paint
       await new Promise<void>(r => setTimeout(r, 30));
 
-      // 1. Deviation analysis (~25%)
+      // 1. Deviation analysis
       this.updateLoadingText('Computing vertex deviations...');
-      this.setProgress(5);
       await new Promise<void>(r => setTimeout(r, 0));
 
       p.stepAnalyzeDeviations(this.params.thresholdMicrons);
       this.autoScaleColorRange();
-      this.setProgress(25);
 
-      // 2. Heat map (~40%)
+      // 2. Heat map
       this.updateLoadingText('Generating heat map...');
       await new Promise<void>(r => setTimeout(r, 0));
 
@@ -473,9 +476,8 @@ export class App {
         this.meshViewer.applyVertexColors(colors);
         this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
       }
-      this.setProgress(40);
 
-      // 3. Geodesic rendering (~55%) - async batched for UI responsiveness
+      // 3. Geodesic rendering - async batched for UI responsiveness
       this.updateLoadingText('Rendering geodesics...');
       await new Promise<void>(r => setTimeout(r, 0));
 
@@ -484,27 +486,22 @@ export class App {
           p.state.geodesics, 
           offset, 
           true, 
-          p.state.curvatureThreshold || 0,
-          (progress) => {
-            this.setProgress(40 + progress * 15); // 40% to 55%
-          }
+          p.state.curvatureThreshold || 0
         );
         this.geodesicRenderer.setDisplayMode(this.params.geodesicDisplayMode);
       }
       if (p.state.polePosition) {
         this.geodesicRenderer.renderPole(p.state.polePosition, offset);
       }
-      this.setProgress(55);
 
-      // 4. Volume computation (~75%)
+      // 4. Volume computation
       this.updateLoadingText('Computing defect volumes...');
       this.status.setStatus('Computing defect volumes...');
       await new Promise<void>(r => setTimeout(r, 0));
 
       p.stepComputeVolumes(this.params.thresholdMicrons, this.params.density);
-      this.setProgress(75);
 
-      // 5. Annotations & wear vector (~90%)
+      // 5. Annotations & wear vector
       this.updateLoadingText('Building annotations...');
       await new Promise<void>(r => setTimeout(r, 0));
 
@@ -528,7 +525,6 @@ export class App {
         this.resultsPanel.show(p.state.results);
       }
 
-      this.setProgress(100);
       this.status.setStatus(`Analysis complete: ${p.state.results?.totalAnomalyPoints || 0} anomaly points`);
       this.hideLoading();
       this.controls.markStepCompleted('analyze');
@@ -921,12 +917,5 @@ export class App {
   private updateLoadingText(text: string): void {
     const txt = document.getElementById('loading-text');
     if (txt) txt.textContent = text;
-  }
-
-  private setProgress(percent: number): void {
-    const bar = document.getElementById('progress-bar');
-    const pText = document.getElementById('progress-text');
-    if (bar) bar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
-    if (pText) pText.textContent = `${Math.round(percent)}%`;
   }
 }

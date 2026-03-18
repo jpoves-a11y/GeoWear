@@ -86,41 +86,49 @@ html, body {
   color: var(--text-primary);
 }
 
-.spinner {
-  width: 48px;
-  height: 48px;
-  margin: 0 auto 16px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-primary);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+.loading-icon-wrapper {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 20px;
+}
+
+.loading-ring {
+  position: absolute;
+  inset: 0;
+  width: 80px;
+  height: 80px;
+  animation: spin 1.2s linear infinite;
+}
+
+.loading-ring circle {
+  fill: none;
+  stroke: var(--accent-primary);
+  stroke-width: 3;
+  stroke-dasharray: 180 226;
+  stroke-dashoffset: 0;
+  stroke-linecap: round;
+}
+
+.loading-favicon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
 }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
 
-.progress-bar-container {
-  width: 240px;
-  height: 4px;
-  margin: 12px auto 0;
-  background: var(--bg-tertiary);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.progress-bar {
-  height: 100%;
-  background: var(--accent-gradient);
-  border-radius: 2px;
-  transition: width var(--transition-med);
-}
-
-.progress-text {
-  margin-top: 8px;
-  font-size: 12px;
+#loading-text {
+  margin: 0;
+  font-size: 14px;
   color: var(--text-secondary);
-  font-family: var(--font-mono);
+  font-weight: 500;
 }
 
 /* ---------- Header ---------- */

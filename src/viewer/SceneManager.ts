@@ -182,6 +182,19 @@ export class SceneManager {
     return this.canvas.toDataURL('image/png');
   }
 
+  /** Reset camera to frame all visible objects */
+  public resetView(): void {
+    const box = new THREE.Box3();
+    this.scene.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh && obj.visible) {
+        box.expandByObject(obj);
+      }
+    });
+    if (!box.isEmpty()) {
+      this.focusOn(box);
+    }
+  }
+
   private onResize(): void {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
