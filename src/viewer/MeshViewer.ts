@@ -576,6 +576,11 @@ export class MeshViewer {
       mat.needsUpdate = true;
       orig.visible = visible;
     }
+    // When showing the full STL, hide analysis meshes so only the raw STL is visible.
+    // When hiding it, restore analysis meshes.
+    if (this.innerMeshObject) this.innerMeshObject.visible = !visible;
+    if (this.outerMeshObject) this.outerMeshObject.visible = !visible;
+    if (this.ghostMeshObject) this.ghostMeshObject.visible = !visible;
   }
 
   /**
