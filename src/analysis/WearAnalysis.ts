@@ -779,6 +779,7 @@ export class WearAnalysisPipeline {
    */
   stepComputeWearVolumeBestFit(): WearVolumeResult {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.separation) throw new Error('Run separation first');
     if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
     if (!this.state.zoneSpheres) throw new Error('Run zone sphere fitting first');
     if (!this.state.sphereFit) throw new Error('Run sphere fit first');
@@ -786,9 +787,9 @@ export class WearAnalysisPipeline {
     const { point: planePoint, normal: planeNormal } = this.state.rimPlane;
     const { unwornSphere } = this.state.zoneSpheres;
 
-    // Volume enclosed between mesh and rim plane
+    // Volume enclosed between the full inner face and the real rim plane
     const meshEnclosedVolume = computeMeshEnclosedVolume(
-      this.state.workingMesh,
+      this.state.separation.inner,
       planePoint,
       planeNormal
     );

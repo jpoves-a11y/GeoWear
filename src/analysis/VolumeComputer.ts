@@ -228,17 +228,6 @@ export function computeMeshEnclosedVolume(
 ): number {
   const { positions, indices, faceCount } = meshData;
   const pn = planeNormal.clone().normalize();
-  const pp = planePoint;
-
-  // Classify vertices: signed distance to rim plane
-  // Positive = same side as interior (below plane)
-  const vertCount = positions.length / 3;
-  const vertDist = new Float32Array(vertCount);
-  for (let i = 0; i < vertCount; i++) {
-    vertDist[i] = (positions[i * 3] - pp.x) * pn.x +
-                  (positions[i * 3 + 1] - pp.y) * pn.y +
-                  (positions[i * 3 + 2] - pp.z) * pn.z;
-  }
 
   let meshVolume = 0;
 
@@ -330,11 +319,10 @@ export function computeSphereCap(
             (center.y - planePoint.y) * pn.y +
             (center.z - planePoint.z) * pn.z;
 
-  // Cap on the opposite side of the normal (interior side)
-  // h = R - |d| if center is on the interior side, else h = R + d
-  // More precisely: the cap on the "negative normal" side has height h = R + d
-  // (when d is negative, center is on the interior side, h = R + |d|)
-  const h = radius + d; // height of cap on the -normal side (interior)
+  // Cap on the same side as the normal (interior / pole side)
+  // h = R - d: when center is on the normal side (d>0), cap is smaller than hemisphere
+  //            when center is on the opposite side (d<0), cap is larger
+  const h = radius - d;
 
   if (h <= 0) return 0;                         // sphere entirely on the normal side
   if (h >= 2 * radius) return (4 / 3) * Math.PI * radius * radius * radius; // entire sphere
