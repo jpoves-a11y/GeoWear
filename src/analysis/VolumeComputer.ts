@@ -264,32 +264,37 @@ export function computeMeshEnclosedVolume(
     }
   }
 
-  // Cap the opening with a fan from the boundary centroid
+  // Cap the opening with a fan projected onto the rim plane.
+  // This ensures the mesh volume is bounded by the exact same plane
+  // as the sphere cap volume.
   if (boundaryEdges.length > 0) {
-    // Compute boundary centroid (project onto plane)
     const rimVerts = new Set<number>();
     for (const [a, b] of boundaryEdges) {
       rimVerts.add(a);
       rimVerts.add(b);
     }
-    let rcx = 0, rcy = 0, rcz = 0;
-    for (const v of rimVerts) {
-      rcx += positions[v * 3];
-      rcy += positions[v * 3 + 1];
-      rcz += positions[v * 3 + 2];
-    }
-    rcx /= rimVerts.size;
-    rcy /= rimVerts.size;
-    rcz /= rimVerts.size;
 
-    // Each boundary edge forms a triangle with the centroid.
+    // Use the rim plane point as the fan center (already on the plane)
+    const rcx = planePoint.x, rcy = planePoint.y, rcz = planePoint.z;
+
+    // Project each boundary vertex onto the rim plane
+    const projected = new Float64Array(positions.length); // only rim verts used
+    for (const v of rimVerts) {
+      const px = positions[v * 3], py = positions[v * 3 + 1], pz = positions[v * 3 + 2];
+      const dist = (px - planePoint.x) * pn.x + (py - planePoint.y) * pn.y + (pz - planePoint.z) * pn.z;
+      projected[v * 3]     = px - dist * pn.x;
+      projected[v * 3 + 1] = py - dist * pn.y;
+      projected[v * 3 + 2] = pz - dist * pn.z;
+    }
+
+    // Each boundary edge forms a triangle with the fan center.
     // Swap a,b so that the cap face has the reverse edge (b→a),
     // making cap normals consistent with the mesh face normals.
     for (const [a, b] of boundaryEdges) {
       meshVolume += signedTetVolOrigin(
         rcx, rcy, rcz,
-        positions[b * 3], positions[b * 3 + 1], positions[b * 3 + 2],
-        positions[a * 3], positions[a * 3 + 1], positions[a * 3 + 2]
+        projected[b * 3], projected[b * 3 + 1], projected[b * 3 + 2],
+        projected[a * 3], projected[a * 3 + 1], projected[a * 3 + 2]
       );
     }
   }
@@ -305,7 +310,7 @@ export function computeMeshEnclosedVolume(
  * to by the normal.
  *
  * Cap volume: V = (π/3) h² (3R - h)
- * where h = cap height = R - d (d = signed distance from center to plane)
+ * where h = R + d (d = signed distance from center to plane, positive toward normal)
  */
 export function computeSphereCap(
   center: THREE.Vector3,
@@ -319,12 +324,13 @@ export function computeSphereCap(
             (center.y - planePoint.y) * pn.y +
             (center.z - planePoint.z) * pn.z;
 
-  // Cap on the same side as the normal (interior / pole side)
-  // h = R - d: when center is on the normal side (d>0), cap is smaller than hemisphere
-  //            when center is on the opposite side (d<0), cap is larger
-  const h = radius - d;
+  // Cap on the same side as the normal (interior / pole side).
+  // The normal points toward the pole. d > 0 means center is on the pole side.
+  // The sphere extends from (d-R) to (d+R) along the normal.
+  // Interior cap height = distance from plane to farthest sphere point on pole side = R + d.
+  const h = radius + d;
 
-  if (h <= 0) return 0;                         // sphere entirely on the normal side
+  if (h <= 0) return 0;                         // sphere entirely on the exterior side
   if (h >= 2 * radius) return (4 / 3) * Math.PI * radius * radius * radius; // entire sphere
 
   return (Math.PI / 3) * h * h * (3 * radius - h);

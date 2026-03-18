@@ -836,6 +836,12 @@ export class WearAnalysisPipeline {
     };
 
     console.log(`[Wear Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, sphereCap=${sphereCapVolume.toFixed(4)}mm³, wear=${wearVolume.toFixed(4)}mm³`);
+    // Debug: log sphere-to-plane signed distance for verification
+    const pn = planeNormal.clone().normalize();
+    const dCenter = (unwornSphere.center.x - planePoint.x) * pn.x +
+                    (unwornSphere.center.y - planePoint.y) * pn.y +
+                    (unwornSphere.center.z - planePoint.z) * pn.z;
+    console.log(`[Wear Volume Debug] unwornR=${unwornSphere.radius.toFixed(4)}, d(center→plane)=${dCenter.toFixed(4)}, h=${(unwornSphere.radius + dCenter).toFixed(4)}`);
     return this.state.wearVolume;
   }
 
