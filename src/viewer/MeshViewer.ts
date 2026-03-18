@@ -576,13 +576,6 @@ export class MeshViewer {
     });
   }
 
-  /** Restore analysis meshes visibility (called when Full STL toggle is turned off) */
-  public restoreAnalysisMeshes(): void {
-    if (this.innerMeshObject) this.innerMeshObject.visible = true;
-    if (this.outerMeshObject) this.outerMeshObject.visible = true;
-    if (this.ghostMeshObject) this.ghostMeshObject.visible = true;
-  }
-
   /**
    * Recreate the full STL sample mesh from MeshData without clearing other overlays.
    */
