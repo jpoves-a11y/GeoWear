@@ -8,6 +8,11 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { SceneManager } from './SceneManager';
 import type { MeshData } from '../types';
 
+/** Face count threshold above which display geometry is decimated */
+const DECIMATE_THRESHOLD = 500_000;
+/** Target face count for decimated display geometry */
+const DISPLAY_FACE_TARGET = 300_000;
+
 export class MeshViewer {
   private sceneManager: SceneManager;
   private originalGroup: THREE.Group;
@@ -22,6 +27,11 @@ export class MeshViewer {
   private rimPlaneObject: THREE.Mesh | null = null;
   private wearPlaneObject: THREE.Mesh | null = null;
   private volumePreviewGroup: THREE.Group | null = null;
+
+  // Display decimation state
+  private _vertexMap: Uint32Array | null = null; // full vertex → decimated vertex
+  private _decimatedVertexCount = 0;
+  private _isDecimated = false;
 
   // Materials
   private innerMaterial: THREE.MeshStandardMaterial;
@@ -116,8 +126,6 @@ export class MeshViewer {
     this.clearAll();
 
     const mesh = new THREE.Mesh(geometry, this.innerMaterial.clone());
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
     mesh.name = 'original-mesh';
     this.originalGroup.add(mesh);
 
@@ -131,6 +139,7 @@ export class MeshViewer {
 
     const worldBox = new THREE.Box3().setFromObject(this.originalGroup);
     this.sceneManager.focusOn(worldBox);
+    this.sceneManager.requestRender();
 
     // Update mesh info
     const vertexCount = geometry.attributes.position.count;
@@ -153,18 +162,34 @@ export class MeshViewer {
       this.innerMeshObject.geometry.dispose();
     }
 
-    const geometry = this.meshDataToGeometry(meshData);
-    geometry.computeVertexNormals();
+    // Reset decimation state
+    this._vertexMap = null;
+    this._decimatedVertexCount = 0;
+    this._isDecimated = false;
+
+    let geometry: THREE.BufferGeometry;
+
+    if (meshData.faceCount > DECIMATE_THRESHOLD) {
+      // Decimate for display; keep full meshData for analysis
+      const dec = this.decimateForDisplay(meshData, DISPLAY_FACE_TARGET);
+      geometry = dec.geometry;
+      this._vertexMap = dec.vertexMap;
+      this._decimatedVertexCount = dec.decimatedVertexCount;
+      this._isDecimated = true;
+      console.log(`[LOD] Decimated display: ${meshData.faceCount} → ${dec.geometry.index!.count / 3} faces, ${meshData.vertexCount} → ${dec.decimatedVertexCount} verts`);
+    } else {
+      geometry = this.meshDataToGeometry(meshData);
+      geometry.computeVertexNormals();
+    }
 
     const mesh = new THREE.Mesh(geometry, this.innerMaterial.clone());
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
     mesh.name = 'inner-mesh';
     this.innerMeshObject = mesh;
     
-    // Add in correct order: first remove/re-add to ensure proper depth ordering
+    // Add in correct order
     this.originalGroup.add(mesh);
     this.reorderMeshes();
+    this.sceneManager.requestRender();
 
     return mesh;
   }
@@ -187,6 +212,7 @@ export class MeshViewer {
     this.outerMeshObject = mesh;
     this.originalGroup.add(mesh);
     this.reorderMeshes();
+    this.sceneManager.requestRender();
   }
 
   /**
@@ -207,6 +233,7 @@ export class MeshViewer {
     this.ghostMeshObject = mesh;
     this.originalGroup.add(mesh);
     this.reorderMeshes();
+    this.sceneManager.requestRender();
   }
 
   /**
@@ -865,11 +892,19 @@ export class MeshViewer {
     if (!this.innerMeshObject) return;
 
     const geometry = this.innerMeshObject.geometry;
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+    // If display is decimated, remap colors from full mesh to decimated mesh
+    let finalColors = colors;
+    if (this._isDecimated && this._vertexMap) {
+      finalColors = this.remapColors(colors);
+    }
+
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(finalColors, 3));
 
     const mat = this.innerMeshObject.material as THREE.MeshStandardMaterial;
     mat.vertexColors = true;
     mat.needsUpdate = true;
+    this.sceneManager.requestRender();
   }
 
   /**
@@ -884,6 +919,137 @@ export class MeshViewer {
     const mat = this.innerMeshObject.material as THREE.MeshStandardMaterial;
     mat.vertexColors = false;
     mat.needsUpdate = true;
+    this.sceneManager.requestRender();
+  }
+
+  // ---------- Display decimation helpers ----------
+
+  /**
+   * Decimate a mesh for display using vertex clustering.
+   * O(n) — groups vertices into a 3D grid and merges per cell.
+   */
+  private decimateForDisplay(
+    meshData: MeshData,
+    targetFaces: number
+  ): {
+    geometry: THREE.BufferGeometry;
+    vertexMap: Uint32Array;
+    decimatedVertexCount: number;
+  } {
+    const { positions, indices, vertexCount, faceCount } = meshData;
+
+    // Bounding box
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let i = 0; i < vertexCount; i++) {
+      const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+
+    // Grid resolution: aim for ~targetFaces/2 unique cells
+    const targetVerts = targetFaces / 2;
+    const gridRes = Math.max(10, Math.ceil(Math.cbrt(targetVerts)));
+
+    const sizeX = (maxX - minX) || 1e-6;
+    const sizeY = (maxY - minY) || 1e-6;
+    const sizeZ = (maxZ - minZ) || 1e-6;
+    const cellSizeX = sizeX / gridRes;
+    const cellSizeY = sizeY / gridRes;
+    const cellSizeZ = sizeZ / gridRes;
+
+    // Map each vertex to a grid cell
+    const vertexMap = new Uint32Array(vertexCount);
+    const cellMap = new Map<number, number>(); // cellKey → cellId
+    const cellSums: number[] = [];  // interleaved x,y,z sums
+    const cellCounts: number[] = [];
+    let nextCellId = 0;
+
+    const gridY = gridRes + 1;
+    const gridZ = (gridRes + 1) * (gridRes + 1);
+
+    for (let i = 0; i < vertexCount; i++) {
+      const x = positions[i * 3];
+      const y = positions[i * 3 + 1];
+      const z = positions[i * 3 + 2];
+
+      const cx = Math.min(gridRes - 1, Math.floor((x - minX) / cellSizeX));
+      const cy = Math.min(gridRes - 1, Math.floor((y - minY) / cellSizeY));
+      const cz = Math.min(gridRes - 1, Math.floor((z - minZ) / cellSizeZ));
+
+      const key = cx + cy * gridY + cz * gridZ;
+
+      let cellId = cellMap.get(key);
+      if (cellId === undefined) {
+        cellId = nextCellId++;
+        cellMap.set(key, cellId);
+        cellSums.push(0, 0, 0);
+        cellCounts.push(0);
+      }
+
+      cellSums[cellId * 3] += x;
+      cellSums[cellId * 3 + 1] += y;
+      cellSums[cellId * 3 + 2] += z;
+      cellCounts[cellId]++;
+      vertexMap[i] = cellId;
+    }
+
+    // Build decimated positions (cell centroids)
+    const decimatedVertexCount = nextCellId;
+    const newPositions = new Float32Array(decimatedVertexCount * 3);
+    for (let c = 0; c < decimatedVertexCount; c++) {
+      newPositions[c * 3] = cellSums[c * 3] / cellCounts[c];
+      newPositions[c * 3 + 1] = cellSums[c * 3 + 1] / cellCounts[c];
+      newPositions[c * 3 + 2] = cellSums[c * 3 + 2] / cellCounts[c];
+    }
+
+    // Remap indices, skip degenerate faces
+    const newIndices: number[] = [];
+    for (let f = 0; f < faceCount; f++) {
+      const a = vertexMap[indices[f * 3]];
+      const b = vertexMap[indices[f * 3 + 1]];
+      const c = vertexMap[indices[f * 3 + 2]];
+      if (a !== b && b !== c && a !== c) {
+        newIndices.push(a, b, c);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(newPositions, 3));
+    geometry.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(newIndices), 1));
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+
+    return { geometry, vertexMap, decimatedVertexCount };
+  }
+
+  /**
+   * Remap vertex colors from full mesh to decimated mesh by averaging per cluster.
+   */
+  private remapColors(fullColors: Float32Array): Float32Array {
+    const result = new Float32Array(this._decimatedVertexCount * 3);
+    const counts = new Float32Array(this._decimatedVertexCount);
+
+    const fullVertexCount = this._vertexMap!.length;
+    for (let i = 0; i < fullVertexCount; i++) {
+      const dv = this._vertexMap![i];
+      result[dv * 3] += fullColors[i * 3];
+      result[dv * 3 + 1] += fullColors[i * 3 + 1];
+      result[dv * 3 + 2] += fullColors[i * 3 + 2];
+      counts[dv]++;
+    }
+
+    for (let i = 0; i < this._decimatedVertexCount; i++) {
+      if (counts[i] > 0) {
+        result[i * 3] /= counts[i];
+        result[i * 3 + 1] /= counts[i];
+        result[i * 3 + 2] /= counts[i];
+      }
+    }
+
+    return result;
   }
 
   /** Get the Three.js inner mesh object */

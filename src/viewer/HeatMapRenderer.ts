@@ -12,6 +12,10 @@ export class HeatMapRenderer {
   private legendContainer: HTMLElement | null;
   private currentColorMap: string = 'rainbow';
 
+  // Cache last generated colors to avoid re-computation
+  private _cachedColors: Float32Array | null = null;
+  private _cacheKey: string = '';
+
   constructor() {
     this.lut = new Lut('rainbow', 512);
     this.legendCanvas = document.getElementById('legend-canvas') as HTMLCanvasElement;
@@ -32,6 +36,12 @@ export class HeatMapRenderer {
     maxValue: number,
     colorMapName: string = 'rainbow'
   ): Float32Array {
+    // Check cache — return immediately if params unchanged
+    const key = `${colorMapName}|${minValue}|${maxValue}|${deviations.length}`;
+    if (key === this._cacheKey && this._cachedColors) {
+      return this._cachedColors;
+    }
+
     if (colorMapName !== this.currentColorMap) {
       this.lut = new Lut(colorMapName, 512);
       this.currentColorMap = colorMapName;
@@ -58,6 +68,9 @@ export class HeatMapRenderer {
         colors[i * 3 + 2] = 0.5;
       }
     }
+
+    this._cachedColors = colors;
+    this._cacheKey = key;
 
     return colors;
   }

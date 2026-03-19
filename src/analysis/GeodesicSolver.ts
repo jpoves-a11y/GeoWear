@@ -220,6 +220,48 @@ export function computeGeodesics(
   const geodesics: Geodesic[] = [];
   const angularStep = (2 * Math.PI) / geodesicCount;
 
+  // --- Longitude culling: precompute per-face centroid longitude and angular radius ---
+  // This allows skipping faces that can't intersect a given meridian plane,
+  // reducing work from O(360 × faceCount) to ~O(360 × faceCount/18).
+  const LONGITUDE_MARGIN = Math.PI / 36; // 5° safety margin
+  const poleLat = latPerVertex[poleVertex];
+  const POLE_LAT_THRESHOLD = poleLat * 0.85;
+
+  const faceCentroidLon = new Float64Array(faceCount);
+  const faceAngularRadius = new Float64Array(faceCount);
+  const faceNearPole = new Uint8Array(faceCount);
+
+  for (let f = 0; f < faceCount; f++) {
+    const i0 = indices[f * 3];
+    const i1 = indices[f * 3 + 1];
+    const i2 = indices[f * 3 + 2];
+
+    const l0 = lonPerVertex[i0], l1 = lonPerVertex[i1], l2 = lonPerVertex[i2];
+
+    // Circular centroid via vector averaging
+    const ccx = Math.cos(l0) + Math.cos(l1) + Math.cos(l2);
+    const ccy = Math.sin(l0) + Math.sin(l1) + Math.sin(l2);
+    let centroidLon = Math.atan2(ccy, ccx);
+    if (centroidLon < 0) centroidLon += 2 * Math.PI;
+    faceCentroidLon[f] = centroidLon;
+
+    // Angular radius = max circular distance from centroid to any vertex longitude
+    let maxCDist = 0;
+    for (const l of [l0, l1, l2]) {
+      let d = Math.abs(l - centroidLon);
+      if (d > Math.PI) d = 2 * Math.PI - d;
+      if (d > maxCDist) maxCDist = d;
+    }
+    faceAngularRadius[f] = maxCDist;
+
+    // Faces near the pole have unstable longitudes; always include them
+    if (latPerVertex[i0] > POLE_LAT_THRESHOLD ||
+        latPerVertex[i1] > POLE_LAT_THRESHOLD ||
+        latPerVertex[i2] > POLE_LAT_THRESHOLD) {
+      faceNearPole[f] = 1;
+    }
+  }
+
   for (let g = 0; g < geodesicCount; g++) {
     const theta = g * angularStep;
     const angleDeg = (g * 360) / geodesicCount;
@@ -248,6 +290,15 @@ export function computeGeodesics(
     }> = [];
 
     for (let f = 0; f < faceCount; f++) {
+      // Longitude culling: skip faces far from this meridian
+      if (!faceNearPole[f]) {
+        let dLon = Math.abs(faceCentroidLon[f] - theta);
+        if (dLon > Math.PI) dLon = 2 * Math.PI - dLon;
+        if (dLon > faceAngularRadius[f] + LONGITUDE_MARGIN) {
+          continue;
+        }
+      }
+
       const i0 = indices[f * 3];
       const i1 = indices[f * 3 + 1];
       const i2 = indices[f * 3 + 2];

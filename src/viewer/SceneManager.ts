@@ -23,6 +23,10 @@ export class SceneManager {
   private fpsElement: HTMLElement | null;
   private fpsFrames = 0;
   private fpsTime = 0;
+  private _needsRender = true;
+  private _idleFrameCount = 0;
+  private _fullPixelRatio = 1;
+  private _largeScene = false;
 
   constructor() {
     this.canvas = document.getElementById('three-canvas') as HTMLCanvasElement;
@@ -48,13 +52,13 @@ export class SceneManager {
       alpha: false,
       preserveDrawingBuffer: true, // needed for PNG screenshots
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this._fullPixelRatio = Math.min(window.devicePixelRatio, 2);
+    this.renderer.setPixelRatio(this._fullPixelRatio);
     this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.enabled = false;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
-    this.renderer.sortObjects = true; // Enable renderOrder sorting for transparency
+    this.renderer.sortObjects = false;
 
     // ---- CSS2D Renderer (for annotations) ----
     this.cssRenderer = new CSS2DRenderer();
@@ -75,6 +79,24 @@ export class SceneManager {
     this.controls.minDistance = 5;
     this.controls.maxDistance = 200;
     this.controls.target.set(0, 0, 0);
+
+    // Render-on-demand: only render when camera changes
+    this.controls.addEventListener('change', () => { this._needsRender = true; });
+
+    // Adaptive quality: lower pixel ratio during interaction on large scenes
+    this.controls.addEventListener('start', () => {
+      if (this._largeScene && this._fullPixelRatio > 1) {
+        this.renderer.setPixelRatio(1);
+        this.onResize();
+      }
+    });
+    this.controls.addEventListener('end', () => {
+      if (this._largeScene) {
+        this.renderer.setPixelRatio(this._fullPixelRatio);
+        this.onResize();
+        this._needsRender = true;
+      }
+    });
 
     // ---- Lighting ----
     this.setupLighting();
@@ -102,16 +124,6 @@ export class SceneManager {
     // Key light — warm white, main shadow caster (top-right-front)
     const keyLight = new THREE.DirectionalLight(0xfff5e8, 1.2);
     keyLight.position.set(25, 45, 35);
-    keyLight.castShadow = true;
-    keyLight.shadow.mapSize.width = 2048;
-    keyLight.shadow.mapSize.height = 2048;
-    keyLight.shadow.camera.near = 0.5;
-    keyLight.shadow.camera.far = 200;
-    keyLight.shadow.camera.left = -50;
-    keyLight.shadow.camera.right = 50;
-    keyLight.shadow.camera.top = 50;
-    keyLight.shadow.camera.bottom = -50;
-    keyLight.shadow.bias = -0.0001;
     this.scene.add(keyLight);
 
     // Fill light — cool tint, opposite side, softer (left-front)
@@ -123,11 +135,6 @@ export class SceneManager {
     const rimLight = new THREE.DirectionalLight(0xc0d0e0, 0.35);
     rimLight.position.set(5, 10, -35);
     this.scene.add(rimLight);
-
-    // Bottom fill — very soft, reduces harsh underside shadows
-    const bottomLight = new THREE.DirectionalLight(0xe0e0e8, 0.15);
-    bottomLight.position.set(0, -30, 10);
-    this.scene.add(bottomLight);
   }
 
   private setupHelpers(): void {
@@ -170,6 +177,7 @@ export class SceneManager {
       center.clone().add(new THREE.Vector3(0, distance * 0.5, distance))
     );
     this.controls.update();
+    this._needsRender = true;
     
     // Adjust fog — color must match scene background for correct blending
     const bgColor = (this.scene.background as THREE.Color)?.getHex?.() ?? 0xe8e8e8;
@@ -202,6 +210,7 @@ export class SceneManager {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
     this.cssRenderer.setSize(w, h);
+    this._needsRender = true;
   }
 
   private animate = (): void => {
@@ -210,21 +219,30 @@ export class SceneManager {
     this.timer.update();
     const dt = this.timer.getDelta();
 
-    this.controls.update();
+    this.controls.update(); // always update for damping
 
     // Run frame callbacks
     for (const cb of this.frameCallbacks) {
       cb(dt);
     }
 
-    this.renderer.render(this.scene, this.camera);
-    this.cssRenderer.render(this.scene, this.camera);
+    // Render-on-demand: skip expensive GPU work when idle
+    this._idleFrameCount++;
+    const shouldRender = this._needsRender || this._idleFrameCount >= 60;
+
+    if (shouldRender) {
+      this.renderer.render(this.scene, this.camera);
+      this.cssRenderer.render(this.scene, this.camera);
+      this._needsRender = false;
+      this._idleFrameCount = 0;
+      this.fpsFrames++;
+    }
 
     // FPS counter
-    this.fpsFrames++;
     this.fpsTime += dt;
     if (this.fpsTime >= 1.0 && this.fpsElement) {
-      this.fpsElement.textContent = `${Math.round(this.fpsFrames / this.fpsTime)} FPS`;
+      const fps = Math.round(this.fpsFrames / this.fpsTime);
+      this.fpsElement.textContent = fps > 0 ? `${fps} FPS` : 'idle';
       this.fpsFrames = 0;
       this.fpsTime = 0;
     }
@@ -233,6 +251,16 @@ export class SceneManager {
   /** Trigger a resize (e.g., when sidebar toggles) */
   public resize(): void {
     this.onResize();
+  }
+
+  /** Request a render on the next animation frame */
+  public requestRender(): void {
+    this._needsRender = true;
+  }
+
+  /** Mark the scene as large (enables adaptive quality during interaction) */
+  public setLargeScene(large: boolean): void {
+    this._largeScene = large;
   }
 
   /** Dispose of all resources */

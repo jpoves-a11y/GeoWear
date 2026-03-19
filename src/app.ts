@@ -6,7 +6,6 @@
 import * as THREE from 'three';
 import type { MeshData, AnalysisParams, AnalysisResults, DoubleGeodesic } from './types';
 import { DEFAULT_PARAMS } from './types';
-import { weldVertices, buildTriangleIndices } from './utils/geometry';
 import { SceneManager } from './viewer/SceneManager';
 import { MeshViewer } from './viewer/MeshViewer';
 import { HeatMapRenderer } from './viewer/HeatMapRenderer';
@@ -46,6 +45,7 @@ export class App {
   private currentResults: AnalysisResults | null = null;
   private fileName: string = '';
   private isRunning = false;
+  private stlWorker: Worker | null = null;
 
   // Parameters (copy from defaults)
   private params: AnalysisParams = { ...DEFAULT_PARAMS };
@@ -105,20 +105,20 @@ export class App {
       onStepClassifyWear: () => this.stepClassifyWear(),
       onStepWearVolume: () => this.stepWearVolume(),
       // --- Visualization toggles ---
-      onToggleWireframe: (v: boolean) => this.meshViewer.setWireframe(v),
-      onGeodesicDisplayMode: (mode: string) => this.geodesicRenderer.setDisplayMode(mode),
+      onToggleWireframe: (v: boolean) => { this.meshViewer.setWireframe(v); this.scene.requestRender(); },
+      onGeodesicDisplayMode: (mode: string) => { this.geodesicRenderer.setDisplayMode(mode); this.scene.requestRender(); },
       onToggleHeatmap: (v: boolean) => this.toggleHeatMap(v),
-      onToggleAnnotations: (v: boolean) => this.annotations.setVisible(v),
+      onToggleAnnotations: (v: boolean) => { this.annotations.setVisible(v); this.scene.requestRender(); },
       onToggleRefSphere: (v: boolean) => this.toggleRefSphere(v),
-      onToggleContext: (opaque: boolean) => this.meshViewer.setContextOpaque(opaque),
-      onToggleCommercialSphere: (v: boolean) => this.meshViewer.setCommercialSphereVisible(v),
-      onToggleWornSphere: (v: boolean) => this.meshViewer.setWornSphereVisible(v),
-      onToggleUnwornSphere: (v: boolean) => this.meshViewer.setUnwornSphereVisible(v),
-      onToggleRimPlane: (v: boolean) => this.meshViewer.setRimPlaneVisible(v),
-      onToggleWearPlane: (v: boolean) => this.meshViewer.setWearPlaneVisible(v),
-      onToggleMeshVolume: (v: boolean) => this.meshViewer.setMeshVolumeVisible(v),
-      onToggleSphereCapVolume: (v: boolean) => this.meshViewer.setSphereCapVisible(v),
-      onToggleOriginalMesh: (v: boolean) => this.meshViewer.setOriginalVisible(v),
+      onToggleContext: (opaque: boolean) => { this.meshViewer.setContextOpaque(opaque); this.scene.requestRender(); },
+      onToggleCommercialSphere: (v: boolean) => { this.meshViewer.setCommercialSphereVisible(v); this.scene.requestRender(); },
+      onToggleWornSphere: (v: boolean) => { this.meshViewer.setWornSphereVisible(v); this.scene.requestRender(); },
+      onToggleUnwornSphere: (v: boolean) => { this.meshViewer.setUnwornSphereVisible(v); this.scene.requestRender(); },
+      onToggleRimPlane: (v: boolean) => { this.meshViewer.setRimPlaneVisible(v); this.scene.requestRender(); },
+      onToggleWearPlane: (v: boolean) => { this.meshViewer.setWearPlaneVisible(v); this.scene.requestRender(); },
+      onToggleMeshVolume: (v: boolean) => { this.meshViewer.setMeshVolumeVisible(v); this.scene.requestRender(); },
+      onToggleSphereCapVolume: (v: boolean) => { this.meshViewer.setSphereCapVisible(v); this.scene.requestRender(); },
+      onToggleOriginalMesh: (v: boolean) => { this.meshViewer.setOriginalVisible(v); this.scene.requestRender(); },
       // --- Export ---
       onExportPNG: () => this.exportPNG(),
       onExportCSV: () => this.exportCSV(),
@@ -187,99 +187,30 @@ export class App {
     try {
       const buffer = await file.arrayBuffer();
 
-      // Yield to allow the UI to update before heavy parsing
+      // Yield to allow the UI to update
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      // Use MeshViewer's loadSTL for parsing & display geometry
+      // Parse and weld in a Web Worker to keep the UI responsive
       this.status.setStatus('Parsing STL geometry...');
-      const { geometry, meshData: rawMesh } = await this.meshViewer.loadSTL(buffer, file.name);
-
-      // --- Auto-detect unit scale (must be first, before anything else) ---
-      // Acetabular cups have bounding-box diagonals ~ 30-50 mm.
-      // If the diagonal is 1000× too large the file is in μm; if 1000× too small it is in m.
-      {
-        let minX = Infinity, minY = Infinity, minZ = Infinity;
-        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-        const pos = rawMesh.positions;
-        for (let i = 0; i < rawMesh.vertexCount; i++) {
-          const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
-          if (x < minX) minX = x; if (x > maxX) maxX = x;
-          if (y < minY) minY = y; if (y > maxY) maxY = y;
-          if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-        }
-        const diag = Math.sqrt(
-          (maxX - minX) ** 2 + (maxY - minY) ** 2 + (maxZ - minZ) ** 2
-        );
-
-        let scaleFactor = 1;
-        if (diag > 5000) {
-          scaleFactor = 0.001;
-          console.log(`[Auto-Scale] Diagonal=${diag.toFixed(1)} — detected μm units, scaling ×0.001`);
-        } else if (diag < 0.1) {
-          scaleFactor = 1000;
-          console.log(`[Auto-Scale] Diagonal=${diag.toFixed(6)} — detected m units, scaling ×1000`);
-        }
-
-        if (scaleFactor !== 1) {
-          // Scale raw mesh positions
-          for (let i = 0; i < pos.length; i++) {
-            pos[i] *= scaleFactor;
-          }
-          // Scale display geometry
-          const geoPos = geometry.attributes.position.array as Float32Array;
-          for (let i = 0; i < geoPos.length; i++) {
-            (geoPos as Float32Array)[i] *= scaleFactor;
-          }
-          geometry.attributes.position.needsUpdate = true;
-          geometry.computeBoundingBox();
-          geometry.computeBoundingSphere();
-          if (geometry.attributes.normal) {
-            geometry.computeVertexNormals();
-          }
-          this.status.setStatus(`Auto-scaled from ${scaleFactor === 0.001 ? 'μm' : 'm'} to mm`);
-        }
-      }
-
-      // Validate parsed geometry
-      if (rawMesh.vertexCount === 0) {
-        throw new Error('STL file contains no vertices');
-      }
-      if (rawMesh.faceCount === 0) {
-        throw new Error('STL file contains no faces');
-      }
-
-      // Check for NaN/Infinity in positions
-      let hasInvalid = false;
-      for (let i = 0; i < Math.min(rawMesh.positions.length, 300); i++) {
-        if (!isFinite(rawMesh.positions[i])) { hasInvalid = true; break; }
-      }
-      if (hasInvalid) {
-        throw new Error('STL file contains invalid coordinate values (NaN or Infinity)');
-      }
-
-      console.log(`Parsed STL: ${rawMesh.vertexCount} vertices, ${rawMesh.faceCount} faces`);
-
-      // Yield before heavy vertex welding
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-      // Weld vertices for adjacency graph construction
-      this.status.setStatus('Welding vertices...');
-      const welded = weldVertices(rawMesh.positions, rawMesh.normals, 1e-6);
-      const indices = buildTriangleIndices(welded.indices);
+      const workerResult = await this.parseSTLInWorker(buffer);
 
       const meshData: MeshData = {
-        positions: welded.positions,
-        normals: welded.normals,
-        indices,
-        vertexCount: welded.positions.length / 3,
-        faceCount: indices.length / 3,
+        positions: workerResult.positions,
+        normals: workerResult.normals,
+        indices: workerResult.indices,
+        vertexCount: workerResult.vertexCount,
+        faceCount: workerResult.faceCount,
       };
 
       if (meshData.vertexCount === 0) {
-        throw new Error('Vertex welding produced no vertices — check the STL file');
+        throw new Error('STL file contains no vertices after welding');
       }
 
-      console.log(`Welded: ${rawMesh.vertexCount} → ${meshData.vertexCount} vertices, ${meshData.faceCount} faces`);
+      console.log(`Welded: ${workerResult.displayPositions.length / 3} → ${meshData.vertexCount} vertices, ${meshData.faceCount} faces`);
+
+      if (workerResult.scaleFactor !== 1) {
+        this.status.setStatus(`Auto-scaled from ${workerResult.scaleFactor === 0.001 ? 'μm' : 'm'} to mm`);
+      }
 
       this.currentMeshData = meshData;
       this.currentResults = null;
@@ -291,8 +222,18 @@ export class App {
       // Yield before display
       await new Promise(resolve => setTimeout(resolve, 0));
 
+      // Create display geometry from raw (non-welded) data
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(workerResult.displayPositions, 3));
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(workerResult.displayNormals, 3));
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+
       // Display original mesh
       this.meshViewer.displayOriginalMesh(geometry);
+
+      // Mark scene as large for adaptive quality
+      this.scene.setLargeScene(meshData.faceCount > 500_000);
 
       // Update status
       const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
@@ -306,6 +247,59 @@ export class App {
       this.status.setStatus(`Error loading file: ${(err as Error).message}`);
       this.hideLoading();
     }
+  }
+
+  /**
+   * Parse an STL ArrayBuffer in a Web Worker.
+   * Returns welded mesh data + raw display geometry arrays.
+   */
+  private parseSTLInWorker(buffer: ArrayBuffer): Promise<{
+    positions: Float32Array;
+    normals: Float32Array;
+    indices: Uint32Array;
+    vertexCount: number;
+    faceCount: number;
+    scaleFactor: number;
+    displayPositions: Float32Array;
+    displayNormals: Float32Array;
+  }> {
+    return new Promise((resolve, reject) => {
+      // Terminate previous worker if any
+      if (this.stlWorker) {
+        this.stlWorker.terminate();
+      }
+
+      const worker = new Worker(
+        new URL('./workers/stl.worker.ts', import.meta.url),
+        { type: 'module' }
+      );
+      this.stlWorker = worker;
+
+      worker.onmessage = (e: MessageEvent) => {
+        const { type } = e.data;
+        if (type === 'progress') {
+          this.status.setStatus(e.data.message);
+        } else if (type === 'result') {
+          const r = e.data.result;
+          worker.terminate();
+          this.stlWorker = null;
+          resolve(r);
+        } else if (type === 'error') {
+          worker.terminate();
+          this.stlWorker = null;
+          reject(new Error(e.data.error));
+        }
+      };
+
+      worker.onerror = (err) => {
+        worker.terminate();
+        this.stlWorker = null;
+        reject(new Error(err.message || 'Worker error'));
+      };
+
+      // Transfer the buffer to the worker (zero-copy)
+      worker.postMessage({ type: 'parse', buffer }, [buffer]);
+    });
   }
 
   // ---- Full Analysis ----
@@ -365,6 +359,7 @@ export class App {
       this.meshViewer.hideOriginal();
       this.status.setStatus(`Separated: ${sep.inner.faceCount} inner / ${sep.outer.faceCount} outer faces`);
       this.controls.markStepCompleted('separate');
+      this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -380,6 +375,7 @@ export class App {
       this.meshViewer.hideOriginal();
       this.status.setStatus(`Trimmed: ${(trim.rimPercentRemoved).toFixed(1)}% rim removed`);
       this.controls.markStepCompleted('trim');
+      this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -398,6 +394,7 @@ export class App {
         `Ellipsoid: ${p.state.ellipsoidFit!.shapeClass}, sphericity=${p.state.ellipsoidFit!.sphericityPercent.toFixed(1)}%`
       );
       this.controls.markStepCompleted('fit');
+      this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -436,6 +433,7 @@ export class App {
       
       // Enable section profile mode
       this.enableSectionModeButton();
+      this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
       this.hideLoading();
@@ -528,6 +526,7 @@ export class App {
       this.status.setStatus(`Analysis complete: ${p.state.results?.totalAnomalyPoints || 0} anomaly points`);
       this.hideLoading();
       this.controls.markStepCompleted('analyze');
+      this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
       this.hideLoading();
@@ -657,6 +656,7 @@ export class App {
         wv.maxDepth, wv.angle
       );
     }
+    this.scene.requestRender();
   }
   // --- Sphere BestFit step methods ---
   private async stepCommercialRadius(): Promise<void> {
@@ -669,6 +669,7 @@ export class App {
       this.controls.markStepCompleted('commercial');
       this.currentResults = p.state.results;
       this.resultsPanel.show(p.state.results!);
+      this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -684,6 +685,7 @@ export class App {
       this.controls.markStepCompleted('classifywear');
       this.currentResults = p.state.results;
       this.resultsPanel.show(p.state.results!);
+      this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -734,6 +736,7 @@ export class App {
       this.controls.markStepCompleted('wearvolume');
       this.currentResults = p.state.results;
       this.resultsPanel.show(p.state.results!);
+      this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -749,6 +752,7 @@ export class App {
     this.resultsPanel.hide();
     this.profileWindows.closeAll();
     this.disableSectionModeButton();
+    this.scene.requestRender();
   }
 
   private toggleHeatMap(visible: boolean): void {
@@ -765,10 +769,12 @@ export class App {
       this.meshViewer.applyVertexColors(colors);
       this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
     }
+    this.scene.requestRender();
   }
 
   private toggleRefSphere(visible: boolean): void {
     this.meshViewer.setReferenceSphereVisible(visible);
+    this.scene.requestRender();
   }
 
   /**
@@ -808,6 +814,7 @@ export class App {
       );
       this.meshViewer.applyVertexColors(colors);
       this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
+      this.scene.requestRender();
     }
   }
 
