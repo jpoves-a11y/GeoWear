@@ -240,7 +240,7 @@ export class ResultsPanel {
     const zs = results.zoneSpheres!;
 
     const linearWear = zs.wornSphere.center.distanceTo(zs.unwornSphere.center);
-    this.addMetric(section, 'Linear Wear', (linearWear * 1000).toFixed(1), 'μm', 'danger', true);
+    this.addMetric(section, 'Linear Wear', (linearWear * 1000).toFixed(1), 'μm', 'danger');
     this.addMetric(section, 'Worn Sphere RMS', (zs.wornSphere.rmsError * 1000).toFixed(2), 'μm', 'danger');
     this.addMetric(section, 'Unworn Sphere RMS', (zs.unwornSphere.rmsError * 1000).toFixed(2), 'μm', 'success');
 
