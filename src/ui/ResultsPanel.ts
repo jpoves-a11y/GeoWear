@@ -92,6 +92,15 @@ export class ResultsPanel {
         undefined, results.wearClassification.wornCount > 0 ? 'danger' : 'success');
       this.addMetric(section, 'Worn %', `${results.wearClassification.wornPercent.toFixed(1)}`, '%',
         results.wearClassification.wornPercent > 5 ? 'danger' : 'success');
+      if (results.wearVolumeResult) {
+        this.addMetric(section, 'Wear Volume', results.wearVolumeResult.wearVolume.toFixed(4), 'mm³',
+          results.wearVolumeResult.wearVolume > 0.1 ? 'danger' : 'success', true);
+      }
+      if (results.zoneSpheres) {
+        const linearWear = results.zoneSpheres.wornSphere.center.distanceTo(results.zoneSpheres.unwornSphere.center);
+        this.addMetric(section, 'Linear Wear', (linearWear * 1000).toFixed(1), 'μm',
+          linearWear > 0.01 ? 'danger' : 'success', true);
+      }
     } else {
       this.addMetric(section, 'Anomaly Points', results.totalAnomalyPoints.toLocaleString(),
         undefined, results.totalAnomalyPoints > 0 ? 'warning' : 'success');
@@ -230,6 +239,8 @@ export class ResultsPanel {
     const section = this.createSection('Zone Spheres');
     const zs = results.zoneSpheres!;
 
+    const linearWear = zs.wornSphere.center.distanceTo(zs.unwornSphere.center);
+    this.addMetric(section, 'Linear Wear', (linearWear * 1000).toFixed(1), 'μm', 'danger', true);
     this.addMetric(section, 'Worn Sphere RMS', (zs.wornSphere.rmsError * 1000).toFixed(2), 'μm', 'danger');
     this.addMetric(section, 'Unworn Sphere RMS', (zs.unwornSphere.rmsError * 1000).toFixed(2), 'μm', 'success');
 
@@ -329,10 +340,11 @@ export class ResultsPanel {
     label: string,
     value: string,
     unit?: string,
-    colorClass?: string
+    colorClass?: string,
+    highlight?: boolean
   ): void {
     const row = document.createElement('div');
-    row.className = 'metric-row';
+    row.className = highlight ? 'metric-row highlight' : 'metric-row';
 
     const labelSpan = document.createElement('span');
     labelSpan.className = 'metric-label';

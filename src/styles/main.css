@@ -487,6 +487,21 @@ html, body {
 .metric-value.success { color: var(--success); }
 .metric-value.info { color: var(--info); }
 
+.metric-row.highlight {
+  background: rgba(255, 200, 50, 0.10);
+  border-radius: 4px;
+  padding: 5px 6px;
+  margin: 2px -6px;
+}
+.metric-row.highlight .metric-label {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.metric-row.highlight .metric-value {
+  font-weight: 700;
+  font-size: 13px;
+}
+
 .metric-unit {
   font-size: 10px;
   color: var(--text-muted);
