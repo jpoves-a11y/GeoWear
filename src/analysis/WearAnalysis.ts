@@ -694,14 +694,14 @@ export class WearAnalysisPipeline {
 
   /**
    * Compute the rim plane from the boundary edges of the working mesh.
-   * The plane is fitted to the last vertices of the rim (the "mouth" of the cup).
+   * The plane is fitted to the artificial rim boundary after trimming.
    */
   stepComputeRimPlane(): RimPlaneResult {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.separation) throw new Error('Run separation first');
 
-    // Use the real cup opening boundary from separation.inner (not the trimmed mesh)
-    const mesh = this.state.separation.inner;
+    // Use the trimmed working mesh boundary (artificial rim after trim)
+    const mesh = this.state.workingMesh;
     const fc = mesh.indices.length / 3;
 
     // Find boundary edges
@@ -779,7 +779,6 @@ export class WearAnalysisPipeline {
    */
   stepComputeWearVolumeBestFit(): WearVolumeResult {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
-    if (!this.state.separation) throw new Error('Run separation first');
     if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
     if (!this.state.sphereFit) throw new Error('Run sphere fit first');
@@ -792,9 +791,9 @@ export class WearAnalysisPipeline {
     const capCenter = this.state.commercialSphere.center;
     const capRadius = this.state.commercialSphere.commercialRadius;
 
-    // Volume enclosed between the full inner face and the real rim plane
+    // Volume enclosed between the trimmed inner face and the rim plane
     const meshEnclosedVolume = computeMeshEnclosedVolume(
-      this.state.separation.inner,
+      this.state.workingMesh,
       planePoint,
       planeNormal
     );

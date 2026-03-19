@@ -613,9 +613,9 @@ export class App {
         );
       }
       // Volume preview (mesh volume vs sphere cap, hidden by default)
-      if (results.rimPlane && results.commercialSphere && p.state.separation) {
+      if (results.rimPlane && results.commercialSphere && p.state.workingMesh) {
         this.meshViewer.displayVolumePreview(
-          p.state.separation.inner,
+          p.state.workingMesh,
           results.commercialSphere.center,
           results.commercialSphere.commercialRadius,
           results.rimPlane.point,
@@ -720,9 +720,9 @@ export class App {
         );
       }
       // Volume preview (mesh volume vs sphere cap, hidden by default)
-      if (p.state.rimPlane && p.state.commercialSphere && p.state.separation) {
+      if (p.state.rimPlane && p.state.commercialSphere && p.state.workingMesh) {
         this.meshViewer.displayVolumePreview(
-          p.state.separation.inner,
+          p.state.workingMesh,
           p.state.commercialSphere.center,
           p.state.commercialSphere.commercialRadius,
           p.state.rimPlane.point,
