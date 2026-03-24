@@ -180,14 +180,14 @@ export class WearAnalysisPipeline {
       this.progress('commercial', 0.83, 'Determining commercial radius...');
       this.stepDetermineCommercialRadius(params.commercialRadius);
 
+      this.progress('rim-plane', 0.85, 'Computing rim plane...');
+      this.stepComputeRimPlane(params.rimTrimPercent);
+
       this.progress('classifying', 0.86, 'Classifying wear zones...');
-      this.stepClassifyWear();
+      this.stepClassifyWear(params.rimTrimPercent);
 
       this.progress('zone-spheres', 0.89, 'Fitting zone spheres...');
       this.stepFitZoneSpheres();
-
-      this.progress('rim-plane', 0.92, 'Computing rim plane...');
-      this.stepComputeRimPlane(params.rimTrimPercent);
 
       this.progress('wear-volume', 0.93, 'Computing wear volume...');
       this.stepComputeWearVolumeBestFit();
@@ -621,51 +621,78 @@ export class WearAnalysisPipeline {
    * A vertex is worn if its distance to the commercial sphere center
    * exceeds 102% of the commercial radius.
    */
-  stepClassifyWear(): WearClassification {
+  stepClassifyWear(rimTrimPercent: number = 6): WearClassification {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
+
+    // Ensure classification uses the same unified rim plane used for enclosed-volume logic.
+    if (!this.state.rimPlane) {
+      this.stepComputeRimPlane(rimTrimPercent);
+    }
 
     const mesh = this.state.workingMesh;
     const center = this.state.commercialSphere.center;
     const R = this.state.commercialSphere.commercialRadius;
     const threshold = R * 1.02;
+    const rimPlane = this.state.rimPlane;
 
     const n = mesh.vertexCount;
     const isWorn = new Uint8Array(n);
     const distances = new Float32Array(n);
+    const deviations = new Float32Array(n);
     let wornCount = 0;
+    let activeCount = 0;
 
     for (let i = 0; i < n; i++) {
-      const dx = mesh.positions[i * 3] - center.x;
-      const dy = mesh.positions[i * 3 + 1] - center.y;
-      const dz = mesh.positions[i * 3 + 2] - center.z;
+      const px = mesh.positions[i * 3];
+      const py = mesh.positions[i * 3 + 1];
+      const pz = mesh.positions[i * 3 + 2];
+
+      const rimDist = rimPlane
+        ? (px - rimPlane.point.x) * rimPlane.normal.x +
+          (py - rimPlane.point.y) * rimPlane.normal.y +
+          (pz - rimPlane.point.z) * rimPlane.normal.z
+        : 1;
+
+      // Outside rim plane: exclude from worn/unworn fitting and keep neutral heatmap value.
+      if (rimDist < 0) {
+        isWorn[i] = 0;
+        distances[i] = R;
+        deviations[i] = 0;
+        continue;
+      }
+
+      activeCount++;
+
+      const dx = px - center.x;
+      const dy = py - center.y;
+      const dz = pz - center.z;
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       distances[i] = dist;
+      deviations[i] = (dist - R) * 1000; // mm → μm
+
       if (dist > threshold) {
         isWorn[i] = 1;
         wornCount++;
       }
     }
 
-    const unwornCount = n - wornCount;
+    const denom = Math.max(1, activeCount);
+    const unwornCount = Math.max(0, activeCount - wornCount);
 
     this.state.wearClassification = {
       isWorn,
       distances,
       wornCount,
       unwornCount,
-      wornPercent: (wornCount / n) * 100,
+      wornPercent: (wornCount / denom) * 100,
       threshold,
     };
 
     // Store deviations from commercial radius in μm for heatmap
-    const deviations = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      deviations[i] = (distances[i] - R) * 1000; // mm → μm
-    }
     this.state.vertexDeviations = deviations;
 
-    console.log(`[Wear Classification] worn=${wornCount} (${this.state.wearClassification.wornPercent.toFixed(1)}%), unworn=${unwornCount}, threshold=${threshold.toFixed(3)}mm`);
+    console.log(`[Wear Classification] active=${activeCount}, worn=${wornCount} (${this.state.wearClassification.wornPercent.toFixed(1)}%), unworn=${unwornCount}, threshold=${threshold.toFixed(3)}mm`);
     return this.state.wearClassification;
   }
 
@@ -677,10 +704,12 @@ export class WearAnalysisPipeline {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.wearClassification) throw new Error('Run wear classification first');
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
+    if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
 
     const mesh = this.state.workingMesh;
     const { isWorn } = this.state.wearClassification;
     const R = this.state.commercialSphere.commercialRadius;
+    const rim = this.state.rimPlane;
 
     // Separate vertex positions
     const wornPositions: number[] = [];
@@ -690,6 +719,11 @@ export class WearAnalysisPipeline {
       const px = mesh.positions[i * 3];
       const py = mesh.positions[i * 3 + 1];
       const pz = mesh.positions[i * 3 + 2];
+      const rimDist = (px - rim.point.x) * rim.normal.x +
+                      (py - rim.point.y) * rim.normal.y +
+                      (pz - rim.point.z) * rim.normal.z;
+      if (rimDist < 0) continue;
+
       if (isWorn[i]) {
         wornPositions.push(px, py, pz);
       } else {
