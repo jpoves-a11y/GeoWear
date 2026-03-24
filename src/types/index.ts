@@ -259,6 +259,7 @@ export interface AppState {
 export interface AnalysisParams {
   geodesicCount: number;       // default 360
   rimTrimPercent: number;      // default 6
+  repairInnerFace: boolean;    // optional inner-face cleanup before trimming/analysis
   smoothingIterations: number; // Taubin smoothing iterations, default 3
   thresholdMicrons: number;    // default 1.0
   colorMapName: string;        // 'rainbow' | 'cooltowarm'
@@ -273,11 +274,20 @@ export interface AnalysisParams {
   density: number;             // UHMWPE density g/cm³, default 0.935
   analysisMode: 'pure-geodesic' | 'sphere-bestfit'; // wear calculation model
   commercialRadius: number;    // 0 = auto-detect, or 14|16|18|20 mm
+  showCommercialSphere: boolean;
+  showWornSphere: boolean;
+  showUnwornSphere: boolean;
+  showRimPlane: boolean;
+  showWearPlane: boolean;
+  showMeshVolume: boolean;
+  showSphereCapVolume: boolean;
+  showOriginalMesh: boolean;
 }
 
 export const DEFAULT_PARAMS: AnalysisParams = {
   geodesicCount: 360,
   rimTrimPercent: 6,
+  repairInnerFace: false,
   smoothingIterations: 3,
   thresholdMicrons: 1.0,
   colorMapName: 'rainbow',
@@ -292,4 +302,12 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   density: 0.935,
   analysisMode: 'sphere-bestfit',
   commercialRadius: 0,
+  showCommercialSphere: false,
+  showWornSphere: true,
+  showUnwornSphere: true,
+  showRimPlane: false,
+  showWearPlane: false,
+  showMeshVolume: false,
+  showSphereCapVolume: false,
+  showOriginalMesh: false,
 };

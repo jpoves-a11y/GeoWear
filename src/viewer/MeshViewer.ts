@@ -572,20 +572,29 @@ export class MeshViewer {
     if (this.volumePreviewGroup) this.volumePreviewGroup.visible = visible;
   }
 
+  private updateVolumePreviewGroupVisibility(): void {
+    if (!this.volumePreviewGroup) return;
+    const surf = this.volumePreviewGroup.getObjectByName('vol-mesh-surface');
+    const cap = this.volumePreviewGroup.getObjectByName('vol-mesh-cap');
+    const sphere = this.volumePreviewGroup.getObjectByName('vol-sphere-cap');
+    const anyVisible = Boolean(surf?.visible || cap?.visible || sphere?.visible);
+    this.volumePreviewGroup.visible = anyVisible;
+  }
+
   public setMeshVolumeVisible(visible: boolean): void {
     if (!this.volumePreviewGroup) return;
-    this.volumePreviewGroup.visible = true;
     const surf = this.volumePreviewGroup.getObjectByName('vol-mesh-surface');
     const cap = this.volumePreviewGroup.getObjectByName('vol-mesh-cap');
     if (surf) surf.visible = visible;
     if (cap) cap.visible = visible;
+    this.updateVolumePreviewGroupVisibility();
   }
 
   public setSphereCapVisible(visible: boolean): void {
     if (!this.volumePreviewGroup) return;
-    this.volumePreviewGroup.visible = true;
     const cap = this.volumePreviewGroup.getObjectByName('vol-sphere-cap');
     if (cap) cap.visible = visible;
+    this.updateVolumePreviewGroupVisibility();
   }
 
   public showOriginal(): void {
@@ -594,13 +603,9 @@ export class MeshViewer {
   }
 
   public setOriginalVisible(visible: boolean): void {
-    // Show/hide ALL STL surface meshes (original + analysis inner/outer/ghost)
-    const stlNames = new Set(['original-mesh', 'inner-mesh', 'outer-mesh', 'ghost-mesh', 'wireframe']);
-    this.originalGroup.children.forEach(child => {
-      if (stlNames.has(child.name)) {
-        child.visible = visible;
-      }
-    });
+    // Show/hide only the full STL sample mesh.
+    const original = this.originalGroup.getObjectByName('original-mesh');
+    if (original) original.visible = visible;
   }
 
   /**

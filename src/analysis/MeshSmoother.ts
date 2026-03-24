@@ -7,6 +7,21 @@
 import type { MeshData } from '../types';
 
 /**
+ * Optional cleanup pass for scanned inner faces:
+ * 1) fill small boundary holes (except the largest rim loop),
+ * 2) apply a light Taubin smoothing to soften scan texture.
+ */
+export function repairInnerFaceMesh(
+  meshData: MeshData,
+  smoothingIterations: number = 2,
+  maxHoleLoopSize: number = 40,
+): MeshData {
+  const holeFilled = fillSmallBoundaryHoles(meshData, maxHoleLoopSize);
+  if (smoothingIterations <= 0) return holeFilled;
+  return smoothMesh(holeFilled, smoothingIterations);
+}
+
+/**
  * Build an adjacency list from the index buffer.
  * Returns an array where neighbors[v] = Set of vertex indices adjacent to v.
  */
@@ -88,6 +103,202 @@ export function smoothMesh(
     indices: new Uint32Array(meshData.indices),
     vertexCount: meshData.vertexCount,
     faceCount: meshData.faceCount,
+  };
+}
+
+/**
+ * Fill small boundary holes by triangulating boundary loops with a fan.
+ * The largest boundary loop is assumed to be the cup rim and is never filled.
+ */
+function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): MeshData {
+  const { positions, normals, indices, vertexCount, faceCount } = meshData;
+
+  // Count edge usage.
+  const edgeUsage = new Map<string, { a: number; b: number; count: number }>();
+  for (let f = 0; f < faceCount; f++) {
+    for (let e = 0; e < 3; e++) {
+      const a = indices[f * 3 + e];
+      const b = indices[f * 3 + ((e + 1) % 3)];
+      const min = Math.min(a, b);
+      const max = Math.max(a, b);
+      const key = `${min}_${max}`;
+      const existing = edgeUsage.get(key);
+      if (existing) existing.count++;
+      else edgeUsage.set(key, { a, b, count: 1 });
+    }
+  }
+
+  // Boundary adjacency from edges used by exactly one face.
+  const boundaryAdj = new Map<number, Set<number>>();
+  for (const [, edge] of edgeUsage) {
+    if (edge.count !== 1) continue;
+    if (!boundaryAdj.has(edge.a)) boundaryAdj.set(edge.a, new Set());
+    if (!boundaryAdj.has(edge.b)) boundaryAdj.set(edge.b, new Set());
+    boundaryAdj.get(edge.a)!.add(edge.b);
+    boundaryAdj.get(edge.b)!.add(edge.a);
+  }
+
+  if (boundaryAdj.size === 0) {
+    return {
+      positions: new Float32Array(positions),
+      normals: new Float32Array(normals),
+      indices: new Uint32Array(indices),
+      vertexCount,
+      faceCount,
+    };
+  }
+
+  const loops: number[][] = [];
+  const visited = new Set<number>();
+
+  // Build ordered boundary loops/components.
+  for (const start of boundaryAdj.keys()) {
+    if (visited.has(start)) continue;
+
+    // Collect component vertices first.
+    const component: number[] = [];
+    const stack = [start];
+    visited.add(start);
+    while (stack.length > 0) {
+      const v = stack.pop()!;
+      component.push(v);
+      const nbs = boundaryAdj.get(v);
+      if (!nbs) continue;
+      for (const nb of nbs) {
+        if (!visited.has(nb)) {
+          visited.add(nb);
+          stack.push(nb);
+        }
+      }
+    }
+
+    if (component.length < 3) continue;
+
+    // Order the component as a chain/loop.
+    const compSet = new Set(component);
+    let orderedStart = component[0];
+    for (const v of component) {
+      const deg = Array.from(boundaryAdj.get(v) || []).filter(nb => compSet.has(nb)).length;
+      if (deg === 1) {
+        orderedStart = v;
+        break;
+      }
+    }
+
+    const ordered: number[] = [];
+    let prev = -1;
+    let curr = orderedStart;
+    const guardMax = component.length + 4;
+
+    for (let guard = 0; guard < guardMax; guard++) {
+      ordered.push(curr);
+      const nbs = Array.from(boundaryAdj.get(curr) || []).filter(nb => compSet.has(nb));
+      let next = -1;
+      if (nbs.length === 0) break;
+      if (nbs.length === 1) {
+        next = nbs[0] === prev ? -1 : nbs[0];
+      } else {
+        next = nbs[0] === prev ? nbs[1] : nbs[0];
+      }
+      if (next < 0 || next === orderedStart) break;
+      prev = curr;
+      curr = next;
+    }
+
+    if (ordered.length >= 3) loops.push(ordered);
+  }
+
+  if (loops.length === 0) {
+    return {
+      positions: new Float32Array(positions),
+      normals: new Float32Array(normals),
+      indices: new Uint32Array(indices),
+      vertexCount,
+      faceCount,
+    };
+  }
+
+  // Skip the largest boundary loop (real cup rim opening).
+  let largestLoopIdx = 0;
+  for (let i = 1; i < loops.length; i++) {
+    if (loops[i].length > loops[largestLoopIdx].length) largestLoopIdx = i;
+  }
+
+  const posOut = Array.from(positions);
+  const idxOut = Array.from(indices);
+  let filledAny = false;
+
+  for (let li = 0; li < loops.length; li++) {
+    if (li === largestLoopIdx) continue;
+    const loop = loops[li];
+    if (loop.length < 3 || loop.length > maxHoleLoopSize) continue;
+
+    let cx = 0, cy = 0, cz = 0;
+    let nx = 0, ny = 0, nz = 0;
+    for (const v of loop) {
+      cx += positions[v * 3];
+      cy += positions[v * 3 + 1];
+      cz += positions[v * 3 + 2];
+      nx += normals[v * 3];
+      ny += normals[v * 3 + 1];
+      nz += normals[v * 3 + 2];
+    }
+    cx /= loop.length;
+    cy /= loop.length;
+    cz /= loop.length;
+
+    // Orient loop consistently with average boundary normal.
+    let lnx = 0, lny = 0, lnz = 0;
+    for (let i = 0; i < loop.length; i++) {
+      const a = loop[i];
+      const b = loop[(i + 1) % loop.length];
+      const ax = positions[a * 3] - cx;
+      const ay = positions[a * 3 + 1] - cy;
+      const az = positions[a * 3 + 2] - cz;
+      const bx = positions[b * 3] - cx;
+      const by = positions[b * 3 + 1] - cy;
+      const bz = positions[b * 3 + 2] - cz;
+      lnx += ay * bz - az * by;
+      lny += az * bx - ax * bz;
+      lnz += ax * by - ay * bx;
+    }
+    const dot = lnx * nx + lny * ny + lnz * nz;
+    if (dot < 0) loop.reverse();
+
+    const centerIdx = posOut.length / 3;
+    posOut.push(cx, cy, cz);
+
+    for (let i = 0; i < loop.length; i++) {
+      const a = loop[i];
+      const b = loop[(i + 1) % loop.length];
+      idxOut.push(a, b, centerIdx);
+    }
+
+    filledAny = true;
+  }
+
+  if (!filledAny) {
+    return {
+      positions: new Float32Array(positions),
+      normals: new Float32Array(normals),
+      indices: new Uint32Array(indices),
+      vertexCount,
+      faceCount,
+    };
+  }
+
+  const posArr = new Float32Array(posOut);
+  const idxArr = new Uint32Array(idxOut);
+  const vCount = posArr.length / 3;
+  const fCount = idxArr.length / 3;
+  const nrmArr = recomputeNormals(posArr, idxArr, vCount);
+
+  return {
+    positions: posArr,
+    normals: nrmArr,
+    indices: idxArr,
+    vertexCount: vCount,
+    faceCount: fCount,
   };
 }
 

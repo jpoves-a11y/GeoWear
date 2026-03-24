@@ -12,7 +12,7 @@ import type {
 } from '../types';
 import { COMMERCIAL_RADII } from '../types';
 import { separateFaces, trimRim } from './MeshProcessor';
-import { smoothMesh } from './MeshSmoother';
+import { smoothMesh, repairInnerFaceMesh } from './MeshSmoother';
 import { fitSphereRobust, fitSphereFixedRadius } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
 import { MeshGraph } from '../math/MeshGraph';
@@ -153,6 +153,12 @@ export class WearAnalysisPipeline {
     this.state.originalMesh = meshData;
     this.stepSeparateFaces(meshData);
 
+    // Optional: repair inner face scan defects before trimming/analysis
+    if (params.repairInnerFace) {
+      this.progress('repair-inner', 0.06, 'Repairing inner face (smooth + hole fill)...');
+      this.stepRepairInnerFace();
+    }
+
     // Step 2: Trim rim
     this.progress('trimming', 0.1, `Trimming rim (${params.rimTrimPercent}%)...`);
     this.stepTrimRim(params.rimTrimPercent);
@@ -215,6 +221,16 @@ export class WearAnalysisPipeline {
 
     this.state.separation = separateFaces(data);
     return this.state.separation;
+  }
+
+  stepRepairInnerFace(iterations: number = 2): void {
+    if (!this.state.separation) throw new Error('Run face separation first');
+
+    const repairedInner = repairInnerFaceMesh(this.state.separation.inner, iterations);
+    this.state.separation = {
+      ...this.state.separation,
+      inner: repairedInner,
+    };
   }
 
   stepTrimRim(rimPercent: number = 5): TrimResult {

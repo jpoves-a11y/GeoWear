@@ -99,6 +99,10 @@ export class ControlPanel {
     const runAll = { 'Run Full Analysis': () => this.callbacks.onRunAnalysis() };
     this.processingFolder.add(runAll, 'Run Full Analysis');
 
+    this.processingFolder.add(this.params, 'repairInnerFace')
+      .name('Repair Inner Face')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+
     // Step-by-step controls
     const steps = this.processingFolder.addFolder('Step by Step');
 
@@ -106,8 +110,8 @@ export class ControlPanel {
     this.analysisButtons['separate'] = { '1. Detect Inner Face': () => this.callbacks.onStepSeparate() };
     this.buttonControllers['separate'] = steps.add(this.analysisButtons['separate'], '1. Detect Inner Face');
 
-    this.analysisButtons['trim'] = { '2. Trim Rim (15%)': () => this.callbacks.onStepTrim() };
-    this.buttonControllers['trim'] = steps.add(this.analysisButtons['trim'], '2. Trim Rim (15%)');
+    this.analysisButtons['trim'] = { '2. Trim Rim': () => this.callbacks.onStepTrim() };
+    this.buttonControllers['trim'] = steps.add(this.analysisButtons['trim'], '2. Trim Rim');
 
     this.analysisButtons['geodesics'] = { '3. Compute Geodesics': () => this.callbacks.onStepGeodesics() };
     this.buttonControllers['geodesics'] = steps.add(this.analysisButtons['geodesics'], '3. Compute Geodesics');
@@ -223,45 +227,43 @@ export class ControlPanel {
       .name('Opaque Context')
       .onChange((v: boolean) => this.callbacks.onToggleContext(v));
 
-    // BestFit-specific toggles
-    const bestfitVis = { commercialSphere: false, wornSphere: true, unwornSphere: true, rimPlane: false, wearPlane: false, meshVolume: false, sphereCapVolume: false, originalMesh: false };
-
-    const csc = folder.add(bestfitVis, 'commercialSphere')
+    // BestFit-specific toggles (bound directly to global params)
+    const csc = folder.add(this.params, 'showCommercialSphere')
       .name('Commercial Sphere')
       .onChange((v: boolean) => this.callbacks.onToggleCommercialSphere(v));
     this.bestfitVisControllers.push(csc);
 
-    const wsc = folder.add(bestfitVis, 'wornSphere')
+    const wsc = folder.add(this.params, 'showWornSphere')
       .name('Worn Sphere (Red)')
       .onChange((v: boolean) => this.callbacks.onToggleWornSphere(v));
     this.bestfitVisControllers.push(wsc);
 
-    const usc = folder.add(bestfitVis, 'unwornSphere')
+    const usc = folder.add(this.params, 'showUnwornSphere')
       .name('Unworn Sphere (Green)')
       .onChange((v: boolean) => this.callbacks.onToggleUnwornSphere(v));
     this.bestfitVisControllers.push(usc);
 
-    const rpc = folder.add(bestfitVis, 'rimPlane')
+    const rpc = folder.add(this.params, 'showRimPlane')
       .name('Rim Plane')
       .onChange((v: boolean) => this.callbacks.onToggleRimPlane(v));
     this.bestfitVisControllers.push(rpc);
 
-    const wpc = folder.add(bestfitVis, 'wearPlane')
+    const wpc = folder.add(this.params, 'showWearPlane')
       .name('Wear Section Plane')
       .onChange((v: boolean) => this.callbacks.onToggleWearPlane(v));
     this.bestfitVisControllers.push(wpc);
 
-    const mvc = folder.add(bestfitVis, 'meshVolume')
+    const mvc = folder.add(this.params, 'showMeshVolume')
       .name('Mesh Volume (Blue)')
       .onChange((v: boolean) => this.callbacks.onToggleMeshVolume(v));
     this.bestfitVisControllers.push(mvc);
 
-    const scc = folder.add(bestfitVis, 'sphereCapVolume')
+    const scc = folder.add(this.params, 'showSphereCapVolume')
       .name('Sphere Cap (Green)')
       .onChange((v: boolean) => this.callbacks.onToggleSphereCapVolume(v));
     this.bestfitVisControllers.push(scc);
 
-    const omc = folder.add(bestfitVis, 'originalMesh')
+    const omc = folder.add(this.params, 'showOriginalMesh')
       .name('Full STL Sample')
       .onChange((v: boolean) => this.callbacks.onToggleOriginalMesh(v));
     this.bestfitVisControllers.push(omc);
