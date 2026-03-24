@@ -14,7 +14,7 @@ import type { MeshData } from '../types';
 export function repairInnerFaceMesh(
   meshData: MeshData,
   smoothingIterations: number = 2,
-  maxHoleLoopSize: number = 40,
+  maxHoleLoopSize: number = 300,
 ): MeshData {
   const holeFilled = fillSmallBoundaryHoles(meshData, maxHoleLoopSize);
   if (smoothingIterations <= 0) return holeFilled;

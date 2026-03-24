@@ -497,30 +497,12 @@ export class MeshViewer {
       : meshData.positions;
 
     // --- 1. Mesh enclosed volume (blue, filled) ---
-    // Inner face surface on the pole side of the rim plane
-    const faceCount = meshData.indices.length / 3;
-    const filteredIndices: number[] = [];
-    for (let f = 0; f < faceCount; f++) {
-      const i0 = meshData.indices[f * 3];
-      const i1 = meshData.indices[f * 3 + 1];
-      const i2 = meshData.indices[f * 3 + 2];
-      const d0 = (previewPositions[i0 * 3] - planePoint.x) * pn.x +
-             (previewPositions[i0 * 3 + 1] - planePoint.y) * pn.y +
-             (previewPositions[i0 * 3 + 2] - planePoint.z) * pn.z;
-      const d1 = (previewPositions[i1 * 3] - planePoint.x) * pn.x +
-             (previewPositions[i1 * 3 + 1] - planePoint.y) * pn.y +
-             (previewPositions[i1 * 3 + 2] - planePoint.z) * pn.z;
-      const d2 = (previewPositions[i2 * 3] - planePoint.x) * pn.x +
-             (previewPositions[i2 * 3 + 1] - planePoint.y) * pn.y +
-             (previewPositions[i2 * 3 + 2] - planePoint.z) * pn.z;
-
-      // Keep only triangles fully on the pole side to avoid faces crossing the rim plane.
-      if (Math.min(d0, d1, d2) >= -0.01) filteredIndices.push(i0, i1, i2);
-    }
+    // Clip triangles against the rim plane so the surface reaches the plane continuously.
+    const clipped = this.buildClippedSurfaceToPlane(previewPositions, meshData.indices, planePoint, pn);
 
     const meshGeo = new THREE.BufferGeometry();
-    meshGeo.setAttribute('position', new THREE.Float32BufferAttribute(previewPositions, 3));
-    meshGeo.setIndex(filteredIndices);
+    meshGeo.setAttribute('position', new THREE.Float32BufferAttribute(clipped.positions, 3));
+    meshGeo.setIndex(new THREE.Uint32BufferAttribute(clipped.indices, 1));
     meshGeo.computeVertexNormals();
     meshGeo.computeBoundingSphere();
 
@@ -538,7 +520,7 @@ export class MeshViewer {
 
     // Cap polygon from boundary edges of the FILTERED faces projected onto the rim plane.
     // This ensures the cap exactly matches the visible blue mesh surface.
-    const capGeo = this.buildBoundaryCapGeometry(previewPositions, filteredIndices, planePoint, pn);
+    const capGeo = this.buildBoundaryCapGeometry(clipped.positions, clipped.indices, planePoint, pn);
     if (capGeo) {
       const capMat = new THREE.MeshStandardMaterial({
         color: 0x2266dd,
@@ -696,6 +678,106 @@ export class MeshViewer {
     mesh.name = 'original-mesh';
     mesh.visible = visible;
     this.originalGroup.add(mesh);
+  }
+
+  private buildClippedSurfaceToPlane(
+    positions: Float32Array,
+    indices: Uint32Array,
+    planePoint: THREE.Vector3,
+    planeNormal: THREE.Vector3,
+  ): { positions: Float32Array; indices: Uint32Array } {
+    const px = planePoint.x, py = planePoint.y, pz = planePoint.z;
+    const nx = planeNormal.x, ny = planeNormal.y, nz = planeNormal.z;
+    const eps = 1e-6;
+
+    const outPositions: number[] = [];
+    const outIndices: number[] = [];
+    const vertexMap = new Map<string, number>();
+
+    const addVertex = (x: number, y: number, z: number): number => {
+      const qx = Math.round(x * 1e5);
+      const qy = Math.round(y * 1e5);
+      const qz = Math.round(z * 1e5);
+      const key = `${qx}_${qy}_${qz}`;
+      const existing = vertexMap.get(key);
+      if (existing !== undefined) return existing;
+      const idx = outPositions.length / 3;
+      outPositions.push(x, y, z);
+      vertexMap.set(key, idx);
+      return idx;
+    };
+
+    type Vtx = { x: number; y: number; z: number; d: number };
+    const intersect = (a: Vtx, b: Vtx): Vtx => {
+      const t = a.d / (a.d - b.d);
+      return {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        z: a.z + (b.z - a.z) * t,
+        d: 0,
+      };
+    };
+
+    const faceCount = indices.length / 3;
+    for (let f = 0; f < faceCount; f++) {
+      const i0 = indices[f * 3];
+      const i1 = indices[f * 3 + 1];
+      const i2 = indices[f * 3 + 2];
+
+      const v0: Vtx = {
+        x: positions[i0 * 3],
+        y: positions[i0 * 3 + 1],
+        z: positions[i0 * 3 + 2],
+        d: (positions[i0 * 3] - px) * nx + (positions[i0 * 3 + 1] - py) * ny + (positions[i0 * 3 + 2] - pz) * nz,
+      };
+      const v1: Vtx = {
+        x: positions[i1 * 3],
+        y: positions[i1 * 3 + 1],
+        z: positions[i1 * 3 + 2],
+        d: (positions[i1 * 3] - px) * nx + (positions[i1 * 3 + 1] - py) * ny + (positions[i1 * 3 + 2] - pz) * nz,
+      };
+      const v2: Vtx = {
+        x: positions[i2 * 3],
+        y: positions[i2 * 3 + 1],
+        z: positions[i2 * 3 + 2],
+        d: (positions[i2 * 3] - px) * nx + (positions[i2 * 3 + 1] - py) * ny + (positions[i2 * 3 + 2] - pz) * nz,
+      };
+
+      let poly: Vtx[] = [v0, v1, v2];
+
+      // Clip polygon by half-space d >= 0 (Sutherland-Hodgman for a single plane)
+      const clipped: Vtx[] = [];
+      for (let e = 0; e < poly.length; e++) {
+        const a = poly[e];
+        const b = poly[(e + 1) % poly.length];
+        const aInside = a.d >= -eps;
+        const bInside = b.d >= -eps;
+
+        if (aInside && bInside) {
+          clipped.push({ ...b, d: Math.max(0, b.d) });
+        } else if (aInside && !bInside) {
+          clipped.push(intersect(a, b));
+        } else if (!aInside && bInside) {
+          clipped.push(intersect(a, b));
+          clipped.push({ ...b, d: Math.max(0, b.d) });
+        }
+      }
+
+      if (clipped.length < 3) continue;
+
+      // Triangulate clipped polygon as a fan
+      const iA = addVertex(clipped[0].x, clipped[0].y, clipped[0].z);
+      for (let k = 1; k + 1 < clipped.length; k++) {
+        const iB = addVertex(clipped[k].x, clipped[k].y, clipped[k].z);
+        const iC = addVertex(clipped[k + 1].x, clipped[k + 1].y, clipped[k + 1].z);
+        outIndices.push(iA, iB, iC);
+      }
+    }
+
+    return {
+      positions: new Float32Array(outPositions),
+      indices: new Uint32Array(outIndices),
+    };
   }
 
   /**

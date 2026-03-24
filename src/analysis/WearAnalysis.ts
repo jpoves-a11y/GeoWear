@@ -226,7 +226,7 @@ export class WearAnalysisPipeline {
   stepRepairInnerFace(iterations: number = 2): void {
     if (!this.state.separation) throw new Error('Run face separation first');
 
-    const repairedInner = repairInnerFaceMesh(this.state.separation.inner, iterations);
+    const repairedInner = repairInnerFaceMesh(this.state.separation.inner, iterations, 300);
     this.state.separation = {
       ...this.state.separation,
       inner: repairedInner,
