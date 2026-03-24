@@ -469,7 +469,8 @@ export class MeshViewer {
     sphereRadius: number,
     planePoint: THREE.Vector3,
     planeNormal: THREE.Vector3,
-    visible: boolean = false
+    visible: boolean = false,
+    smoothContinuous: boolean = false
   ): void {
     this.removeNamedObject('volume-preview');
     if (this.volumePreviewGroup) {
@@ -489,6 +490,12 @@ export class MeshViewer {
 
     const pn = planeNormal.clone().normalize();
 
+    // For better visual continuity at the rim cut, use a lightly smoothed
+    // preview surface when inner-face repair is enabled.
+    const previewPositions = smoothContinuous
+      ? this.smoothPositionsPreview(meshData.positions, meshData.indices, 2, 0.25)
+      : meshData.positions;
+
     // --- 1. Mesh enclosed volume (blue, filled) ---
     // Inner face surface on the pole side of the rim plane
     const faceCount = meshData.indices.length / 3;
@@ -497,26 +504,24 @@ export class MeshViewer {
       const i0 = meshData.indices[f * 3];
       const i1 = meshData.indices[f * 3 + 1];
       const i2 = meshData.indices[f * 3 + 2];
-      const d0 = (meshData.positions[i0 * 3] - planePoint.x) * pn.x +
-                 (meshData.positions[i0 * 3 + 1] - planePoint.y) * pn.y +
-                 (meshData.positions[i0 * 3 + 2] - planePoint.z) * pn.z;
-      const d1 = (meshData.positions[i1 * 3] - planePoint.x) * pn.x +
-                 (meshData.positions[i1 * 3 + 1] - planePoint.y) * pn.y +
-                 (meshData.positions[i1 * 3 + 2] - planePoint.z) * pn.z;
-      const d2 = (meshData.positions[i2 * 3] - planePoint.x) * pn.x +
-                 (meshData.positions[i2 * 3 + 1] - planePoint.y) * pn.y +
-                 (meshData.positions[i2 * 3 + 2] - planePoint.z) * pn.z;
+      const d0 = (previewPositions[i0 * 3] - planePoint.x) * pn.x +
+             (previewPositions[i0 * 3 + 1] - planePoint.y) * pn.y +
+             (previewPositions[i0 * 3 + 2] - planePoint.z) * pn.z;
+      const d1 = (previewPositions[i1 * 3] - planePoint.x) * pn.x +
+             (previewPositions[i1 * 3 + 1] - planePoint.y) * pn.y +
+             (previewPositions[i1 * 3 + 2] - planePoint.z) * pn.z;
+      const d2 = (previewPositions[i2 * 3] - planePoint.x) * pn.x +
+             (previewPositions[i2 * 3 + 1] - planePoint.y) * pn.y +
+             (previewPositions[i2 * 3 + 2] - planePoint.z) * pn.z;
 
       // Keep only triangles fully on the pole side to avoid faces crossing the rim plane.
       if (Math.min(d0, d1, d2) >= -0.01) filteredIndices.push(i0, i1, i2);
     }
 
     const meshGeo = new THREE.BufferGeometry();
-    meshGeo.setAttribute('position', new THREE.Float32BufferAttribute(meshData.positions, 3));
-    if (meshData.normals.length > 0) {
-      meshGeo.setAttribute('normal', new THREE.Float32BufferAttribute(meshData.normals, 3));
-    }
+    meshGeo.setAttribute('position', new THREE.Float32BufferAttribute(previewPositions, 3));
     meshGeo.setIndex(filteredIndices);
+    meshGeo.computeVertexNormals();
     meshGeo.computeBoundingSphere();
 
     const meshMat = new THREE.MeshStandardMaterial({
@@ -533,7 +538,7 @@ export class MeshViewer {
 
     // Cap polygon from boundary edges of the FILTERED faces projected onto the rim plane.
     // This ensures the cap exactly matches the visible blue mesh surface.
-    const capGeo = this.buildBoundaryCapGeometry(meshData.positions, filteredIndices, planePoint, pn);
+    const capGeo = this.buildBoundaryCapGeometry(previewPositions, filteredIndices, planePoint, pn);
     if (capGeo) {
       const capMat = new THREE.MeshStandardMaterial({
         color: 0x2266dd,
@@ -603,9 +608,69 @@ export class MeshViewer {
   }
 
   public setOriginalVisible(visible: boolean): void {
-    // Show/hide only the full STL sample mesh.
+    // Full STL Sample controls the analysis STL surfaces as one block.
+    // Keep original-mesh hidden to avoid duplicate overlay with inner/outer/ghost.
+    if (this.innerMeshObject) this.innerMeshObject.visible = visible;
+    if (this.outerMeshObject) this.outerMeshObject.visible = visible;
+    if (this.ghostMeshObject) this.ghostMeshObject.visible = visible;
+    if (this.wireframeObject) this.wireframeObject.visible = visible;
     const original = this.originalGroup.getObjectByName('original-mesh');
-    if (original) original.visible = visible;
+    if (original) original.visible = false;
+  }
+
+  private smoothPositionsPreview(
+    positions: Float32Array,
+    indices: Uint32Array,
+    iterations: number,
+    alpha: number
+  ): Float32Array {
+    const vertexCount = positions.length / 3;
+    const adj: Array<Set<number>> = new Array(vertexCount);
+    for (let i = 0; i < vertexCount; i++) adj[i] = new Set<number>();
+
+    const faceCount = indices.length / 3;
+    for (let f = 0; f < faceCount; f++) {
+      const a = indices[f * 3];
+      const b = indices[f * 3 + 1];
+      const c = indices[f * 3 + 2];
+      adj[a].add(b); adj[a].add(c);
+      adj[b].add(a); adj[b].add(c);
+      adj[c].add(a); adj[c].add(b);
+    }
+
+    let curr = new Float32Array(positions);
+    let next = new Float32Array(positions.length);
+
+    for (let it = 0; it < iterations; it++) {
+      for (let v = 0; v < vertexCount; v++) {
+        const neighbors = adj[v];
+        if (!neighbors || neighbors.size === 0) {
+          next[v * 3] = curr[v * 3];
+          next[v * 3 + 1] = curr[v * 3 + 1];
+          next[v * 3 + 2] = curr[v * 3 + 2];
+          continue;
+        }
+
+        let ax = 0, ay = 0, az = 0;
+        for (const n of neighbors) {
+          ax += curr[n * 3];
+          ay += curr[n * 3 + 1];
+          az += curr[n * 3 + 2];
+        }
+        const inv = 1 / neighbors.size;
+        ax *= inv; ay *= inv; az *= inv;
+
+        next[v * 3] = curr[v * 3] + alpha * (ax - curr[v * 3]);
+        next[v * 3 + 1] = curr[v * 3 + 1] + alpha * (ay - curr[v * 3 + 1]);
+        next[v * 3 + 2] = curr[v * 3 + 2] + alpha * (az - curr[v * 3 + 2]);
+      }
+
+      const swap = curr;
+      curr = next;
+      next = swap;
+    }
+
+    return curr;
   }
 
   /**

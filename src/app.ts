@@ -362,6 +362,7 @@ export class App {
       this.meshViewer.hideOriginal();
       this.status.setStatus(`Separated: ${sep.inner.faceCount} inner / ${sep.outer.faceCount} outer faces${this.params.repairInnerFace ? ' (inner repaired)' : ''}`);
       this.controls.markStepCompleted('separate');
+      this.applyVisibilityFromParams();
       this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
@@ -378,6 +379,7 @@ export class App {
       this.meshViewer.hideOriginal();
       this.status.setStatus(`Trimmed: ${(trim.rimPercentRemoved).toFixed(1)}% rim removed`);
       this.controls.markStepCompleted('trim');
+      this.applyVisibilityFromParams();
       this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
@@ -397,6 +399,7 @@ export class App {
         `Ellipsoid: ${p.state.ellipsoidFit!.shapeClass}, sphericity=${p.state.ellipsoidFit!.sphericityPercent.toFixed(1)}%`
       );
       this.controls.markStepCompleted('fit');
+      this.applyVisibilityFromParams();
       this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
@@ -433,6 +436,7 @@ export class App {
       this.status.setStatus(`Geodesics: ${regularCount} regular, ${irregularCount} irregular`);
       this.hideLoading();
       this.controls.markStepCompleted('geodesics');
+      this.applyVisibilityFromParams();
       
       // Enable section profile mode
       this.enableSectionModeButton();
@@ -529,6 +533,7 @@ export class App {
       this.status.setStatus(`Analysis complete: ${p.state.results?.totalAnomalyPoints || 0} anomaly points`);
       this.hideLoading();
       this.controls.markStepCompleted('analyze');
+      this.applyVisibilityFromParams();
       this.scene.requestRender();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
@@ -543,12 +548,6 @@ export class App {
     const p = this.pipeline;
     const offset = this.meshViewer.getGroupOffset();
     const results = p.state.results!;
-
-    // Recreate full STL sample (hidden by default) so its UI toggle works
-    // even after clearAll() during full analysis.
-    if (this.currentMeshData) {
-      this.meshViewer.displayOriginalMeshFromData(this.currentMeshData, false);
-    }
 
     // Show inner mesh (trimmed, opaque)
     if (p.state.workingMesh) {
@@ -634,7 +633,8 @@ export class App {
           results.commercialSphere.commercialRadius,
           results.rimPlane.point,
           results.rimPlane.normal,
-          this.params.showMeshVolume || this.params.showSphereCapVolume
+          this.params.showMeshVolume || this.params.showSphereCapVolume,
+          this.params.repairInnerFace
         );
       }
     }
@@ -756,7 +756,8 @@ export class App {
           p.state.commercialSphere.commercialRadius,
           p.state.rimPlane.point,
           p.state.rimPlane.normal,
-          this.params.showMeshVolume || this.params.showSphereCapVolume
+          this.params.showMeshVolume || this.params.showSphereCapVolume,
+          this.params.repairInnerFace
         );
       }
       this.status.setStatus(`Wear volume: ${p.state.wearVolume!.wearVolume.toFixed(4)} mm³`);
@@ -852,6 +853,9 @@ export class App {
     this.toggleHeatMap(this.params.showHeatmap);
     this.annotations.setVisible(this.params.showAnnotations);
     this.meshViewer.setContextOpaque(this.params.contextOpaque);
+    if (this.params.showOriginalMesh) {
+      this.meshViewer.setInnerTransparency(1.0);
+    }
     this.meshViewer.setWireframe(this.params.showWireframe);
     this.meshViewer.setReferenceSphereVisible(this.params.showReferenceShape);
     this.meshViewer.setCommercialSphereVisible(this.params.showCommercialSphere);
