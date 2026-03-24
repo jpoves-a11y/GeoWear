@@ -258,7 +258,7 @@ export interface AppState {
 /** User-configurable parameters */
 export interface AnalysisParams {
   geodesicCount: number;       // default 360
-  rimTrimPercent: number;      // default 15
+  rimTrimPercent: number;      // default 6
   smoothingIterations: number; // Taubin smoothing iterations, default 3
   thresholdMicrons: number;    // default 1.0
   colorMapName: string;        // 'rainbow' | 'cooltowarm'
@@ -277,7 +277,7 @@ export interface AnalysisParams {
 
 export const DEFAULT_PARAMS: AnalysisParams = {
   geodesicCount: 360,
-  rimTrimPercent: 15,
+  rimTrimPercent: 6,
   smoothingIterations: 3,
   thresholdMicrons: 1.0,
   colorMapName: 'rainbow',

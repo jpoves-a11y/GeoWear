@@ -90,6 +90,9 @@ export interface PipelineState {
   curvatureThreshold: number;
   vertexDeviations: Float32Array | null;
   results: AnalysisResults | null;
+  // Real rim geometry (from untrimmed inner surface boundary, computed during pole detection)
+  realRimCentroid: THREE.Vector3 | null;
+  realRimPlaneNormal: THREE.Vector3 | null;
   // Sphere BestFit mode state
   commercialSphere: CommercialSphereInfo | null;
   wearClassification: WearClassification | null;
@@ -116,6 +119,8 @@ export class WearAnalysisPipeline {
     curvatureThreshold: 0,
     vertexDeviations: null,
     results: null,
+    realRimCentroid: null,
+    realRimPlaneNormal: null,
     commercialSphere: null,
     wearClassification: null,
     zoneSpheres: null,
@@ -176,7 +181,7 @@ export class WearAnalysisPipeline {
       this.stepFitZoneSpheres();
 
       this.progress('rim-plane', 0.92, 'Computing rim plane...');
-      this.stepComputeRimPlane();
+      this.stepComputeRimPlane(params.rimTrimPercent);
 
       this.progress('wear-volume', 0.93, 'Computing wear volume...');
       this.stepComputeWearVolumeBestFit();
@@ -349,6 +354,10 @@ export class WearAnalysisPipeline {
       cyy += dy * dy; cyz += dy * dz; czz += dz * dz;
     }
     const planeN = smallestEigenvector3x3(cxx, cxy, cxz, cyy, cyz, czz);
+
+    // Store the real rim geometry for later use in rim plane computation
+    this.state.realRimCentroid = new THREE.Vector3(rimCx, rimCy, rimCz);
+    this.state.realRimPlaneNormal = new THREE.Vector3(planeN[0], planeN[1], planeN[2]);
 
     // 4. Pole = vertex with maximum perpendicular distance from rim plane
     //    distance = dot(pos - rimCentroid, planeN), take absolute value
@@ -693,83 +702,41 @@ export class WearAnalysisPipeline {
   }
 
   /**
-   * Compute the rim plane from the boundary edges of the working mesh.
-   * The plane is fitted to the artificial rim boundary after trimming.
+   * Compute the rim plane from the real cup border (untrimmed inner surface).
+   * The plane is parallel to the border plane and translated toward the pole
+   * by rimTrimPercent% of the border-centroid-to-pole distance.
+   * This same plane is used for both mesh enclosed volume and sphere cap volume.
    */
-  stepComputeRimPlane(): RimPlaneResult {
-    if (!this.state.workingMesh) throw new Error('No working mesh available');
-    if (!this.state.separation) throw new Error('Run separation first');
+  stepComputeRimPlane(rimTrimPercent: number = 6): RimPlaneResult {
+    if (!this.state.realRimCentroid) throw new Error('Run geodesics first (real rim data needed)');
+    if (!this.state.realRimPlaneNormal) throw new Error('Run geodesics first (real rim data needed)');
+    if (!this.state.polePosition) throw new Error('No pole position available');
 
-    // Use the trimmed working mesh boundary (artificial rim after trim)
-    const mesh = this.state.workingMesh;
-    const fc = mesh.indices.length / 3;
+    // Use the real border plane normal (from untrimmed inner surface boundary)
+    const normal = this.state.realRimPlaneNormal.clone().normalize();
+    const rimCentroid = this.state.realRimCentroid.clone();
+    const pole = this.state.polePosition.clone();
 
-    // Find boundary edges
-    const edgeFaceMap = new Map<string, number>();
-    for (let f = 0; f < fc; f++) {
-      for (let e = 0; e < 3; e++) {
-        const a = mesh.indices[f * 3 + e];
-        const b = mesh.indices[f * 3 + ((e + 1) % 3)];
-        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
-        edgeFaceMap.set(key, (edgeFaceMap.get(key) || 0) + 1);
-      }
+    // Orient normal toward the pole (interior)
+    const toPole = pole.clone().sub(rimCentroid);
+    if (toPole.dot(normal) < 0) {
+      normal.negate();
     }
 
-    const rimVerticesSet = new Set<number>();
-    for (const [key, count] of edgeFaceMap) {
-      if (count === 1) {
-        const parts = key.split('_');
-        rimVerticesSet.add(Number(parts[0]));
-        rimVerticesSet.add(Number(parts[1]));
-      }
-    }
+    // Distance from border centroid to pole along the normal direction
+    const distToPole = toPole.dot(normal);
 
-    const rimVertices = Array.from(rimVerticesSet);
-
-    // Compute rim centroid
-    let cx = 0, cy = 0, cz = 0;
-    for (const v of rimVertices) {
-      cx += mesh.positions[v * 3];
-      cy += mesh.positions[v * 3 + 1];
-      cz += mesh.positions[v * 3 + 2];
-    }
-    cx /= rimVertices.length;
-    cy /= rimVertices.length;
-    cz /= rimVertices.length;
-
-    // PCA for plane normal
-    let covxx = 0, covxy = 0, covxz = 0, covyy = 0, covyz = 0, covzz = 0;
-    for (const v of rimVertices) {
-      const dx = mesh.positions[v * 3] - cx;
-      const dy = mesh.positions[v * 3 + 1] - cy;
-      const dz = mesh.positions[v * 3 + 2] - cz;
-      covxx += dx * dx; covxy += dx * dy; covxz += dx * dz;
-      covyy += dy * dy; covyz += dy * dz; covzz += dz * dz;
-    }
-    const normal = smallestEigenvector3x3(covxx, covxy, covxz, covyy, covyz, covzz);
-
-    // Orient normal toward the interior (same side as pole)
-    if (this.state.polePosition) {
-      const toPole = new THREE.Vector3(
-        this.state.polePosition.x - cx,
-        this.state.polePosition.y - cy,
-        this.state.polePosition.z - cz
-      );
-      const normalVec = new THREE.Vector3(normal[0], normal[1], normal[2]);
-      if (toPole.dot(normalVec) < 0) {
-        normal[0] = -normal[0];
-        normal[1] = -normal[1];
-        normal[2] = -normal[2];
-      }
-    }
+    // Translate the plane toward the pole by rimTrimPercent% of that distance
+    const offset = (rimTrimPercent / 100) * distToPole;
+    const planePoint = rimCentroid.clone().add(normal.clone().multiplyScalar(offset));
 
     this.state.rimPlane = {
-      point: new THREE.Vector3(cx, cy, cz),
-      normal: new THREE.Vector3(normal[0], normal[1], normal[2]),
-      rimVertices,
+      point: planePoint,
+      normal: normal,
+      rimVertices: [],
     };
 
-    console.log(`[Rim Plane] center=(${cx.toFixed(3)}, ${cy.toFixed(3)}, ${cz.toFixed(3)}), normal=(${normal[0].toFixed(4)}, ${normal[1].toFixed(4)}, ${normal[2].toFixed(4)}), ${rimVertices.length} rim vertices`);
+    console.log(`[Rim Plane] center=(${planePoint.x.toFixed(3)}, ${planePoint.y.toFixed(3)}, ${planePoint.z.toFixed(3)}), normal=(${normal.x.toFixed(4)}, ${normal.y.toFixed(4)}, ${normal.z.toFixed(4)}), offset=${offset.toFixed(4)}mm (${rimTrimPercent}% of ${distToPole.toFixed(4)}mm)`);
     return this.state.rimPlane;
   }
 
@@ -778,7 +745,7 @@ export class WearAnalysisPipeline {
    * Wear = (mesh enclosed volume cut by rim plane) - (unworn sphere cap volume cut by same plane)
    */
   stepComputeWearVolumeBestFit(): WearVolumeResult {
-    if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.separation) throw new Error('Run face separation first');
     if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
     if (!this.state.sphereFit) throw new Error('Run sphere fit first');
@@ -791,9 +758,10 @@ export class WearAnalysisPipeline {
     const capCenter = this.state.commercialSphere.center;
     const capRadius = this.state.commercialSphere.commercialRadius;
 
-    // Volume enclosed between the trimmed inner face and the rim plane
+    // Volume enclosed between the untrimmed inner face and the rim plane
+    const innerMesh = this.state.separation!.inner;
     const meshEnclosedVolume = computeMeshEnclosedVolume(
-      this.state.workingMesh,
+      innerMesh,
       planePoint,
       planeNormal
     );
@@ -835,8 +803,8 @@ export class WearAnalysisPipeline {
       rimPlane: this.state.rimPlane ?? undefined,
       wearVolumeResult: this.state.wearVolume,
       processingTimeMs: 0,
-      vertexCount: this.state.workingMesh.vertexCount,
-      faceCount: this.state.workingMesh.faceCount,
+      vertexCount: innerMesh.vertexCount,
+      faceCount: innerMesh.faceCount,
     };
 
     console.log(`[Wear Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, sphereCap=${sphereCapVolume.toFixed(4)}mm³, wear=${wearVolume.toFixed(4)}mm³`);

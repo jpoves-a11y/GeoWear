@@ -612,9 +612,9 @@ export class App {
         );
       }
       // Volume preview (mesh volume vs sphere cap, hidden by default)
-      if (results.rimPlane && results.commercialSphere && p.state.workingMesh) {
+      if (results.rimPlane && results.commercialSphere && p.state.separation) {
         this.meshViewer.displayVolumePreview(
-          p.state.workingMesh,
+          p.state.separation.inner,
           results.commercialSphere.center,
           results.commercialSphere.commercialRadius,
           results.rimPlane.point,
@@ -696,7 +696,7 @@ export class App {
     try {
       this.status.setStatus('Computing wear volume...');
       p.stepFitZoneSpheres();
-      p.stepComputeRimPlane();
+      p.stepComputeRimPlane(this.params.rimTrimPercent);
       p.stepComputeWearVolumeBestFit();
       p.stepComputeWearPlane();
       this.meshViewer.displayWornSphere(p.state.zoneSpheres!.wornSphere.center, p.state.zoneSpheres!.wornSphere.radius);
@@ -722,9 +722,9 @@ export class App {
         );
       }
       // Volume preview (mesh volume vs sphere cap, hidden by default)
-      if (p.state.rimPlane && p.state.commercialSphere && p.state.workingMesh) {
+      if (p.state.rimPlane && p.state.commercialSphere && p.state.separation) {
         this.meshViewer.displayVolumePreview(
-          p.state.workingMesh,
+          p.state.separation.inner,
           p.state.commercialSphere.center,
           p.state.commercialSphere.commercialRadius,
           p.state.rimPlane.point,
