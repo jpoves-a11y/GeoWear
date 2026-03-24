@@ -33,6 +33,7 @@ export interface ControlCallbacks {
   onToggleWearPlane: (v: boolean) => void;
   onToggleMeshVolume: (v: boolean) => void;
   onToggleSphereCapVolume: (v: boolean) => void;
+  onToggleWearVolume: (v: boolean) => void;
   onToggleOriginalMesh: (v: boolean) => void;
   // Export
   onExportPNG: () => void;
@@ -262,6 +263,11 @@ export class ControlPanel {
       .name('Sphere Cap (Green)')
       .onChange((v: boolean) => this.callbacks.onToggleSphereCapVolume(v));
     this.bestfitVisControllers.push(scc);
+
+    const wvc = folder.add(this.params, 'showWearVolume')
+      .name('Wear Volume (Red)')
+      .onChange((v: boolean) => this.callbacks.onToggleWearVolume(v));
+    this.bestfitVisControllers.push(wvc);
 
     const omc = folder.add(this.params, 'showOriginalMesh')
       .name('Full STL Sample')

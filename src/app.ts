@@ -118,6 +118,7 @@ export class App {
       onToggleWearPlane: (v: boolean) => { this.meshViewer.setWearPlaneVisible(v); this.scene.requestRender(); },
       onToggleMeshVolume: (v: boolean) => { this.meshViewer.setMeshVolumeVisible(v); this.scene.requestRender(); },
       onToggleSphereCapVolume: (v: boolean) => { this.meshViewer.setSphereCapVisible(v); this.scene.requestRender(); },
+      onToggleWearVolume: (v: boolean) => { this.meshViewer.setWearVolumeVisible(v); this.scene.requestRender(); },
       onToggleOriginalMesh: (v: boolean) => { this.meshViewer.setOriginalVisible(v); this.scene.requestRender(); },
       // --- Export ---
       onExportPNG: () => this.exportPNG(),
@@ -633,7 +634,7 @@ export class App {
           results.commercialSphere.commercialRadius,
           results.rimPlane.point,
           results.rimPlane.normal,
-          this.params.showMeshVolume || this.params.showSphereCapVolume,
+          this.params.showMeshVolume || this.params.showSphereCapVolume || this.params.showWearVolume,
           this.params.repairInnerFace
         );
       }
@@ -757,7 +758,7 @@ export class App {
           p.state.commercialSphere.commercialRadius,
           p.state.rimPlane.point,
           p.state.rimPlane.normal,
-          this.params.showMeshVolume || this.params.showSphereCapVolume,
+          this.params.showMeshVolume || this.params.showSphereCapVolume || this.params.showWearVolume,
           this.params.repairInnerFace
         );
       }
@@ -866,6 +867,7 @@ export class App {
     this.meshViewer.setWearPlaneVisible(this.params.showWearPlane);
     this.meshViewer.setMeshVolumeVisible(this.params.showMeshVolume);
     this.meshViewer.setSphereCapVisible(this.params.showSphereCapVolume);
+    this.meshViewer.setWearVolumeVisible(this.params.showWearVolume);
     this.meshViewer.setOriginalVisible(this.params.showOriginalMesh);
   }
 

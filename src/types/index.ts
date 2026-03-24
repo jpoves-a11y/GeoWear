@@ -281,6 +281,7 @@ export interface AnalysisParams {
   showWearPlane: boolean;
   showMeshVolume: boolean;
   showSphereCapVolume: boolean;
+  showWearVolume: boolean;
   showOriginalMesh: boolean;
 }
 
@@ -309,5 +310,6 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showWearPlane: false,
   showMeshVolume: false,
   showSphereCapVolume: false,
+  showWearVolume: false,
   showOriginalMesh: false,
 };

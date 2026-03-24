@@ -551,6 +551,22 @@ export class MeshViewer {
       group.add(capObj2);
     }
 
+    // --- 3. Wear volume (red) = region between worn mesh surface and ideal sphere ---
+    const wearGeo = this.buildWearVolumeGeometry(clipped.positions, clipped.indices, sphereCenter, sphereRadius);
+    if (wearGeo) {
+      const wearMat = new THREE.MeshStandardMaterial({
+        color: 0xdd2222,
+        transparent: true,
+        opacity: 0.45,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const wearObj = new THREE.Mesh(wearGeo, wearMat);
+      wearObj.renderOrder = 10;
+      wearObj.name = 'vol-wear-volume';
+      group.add(wearObj);
+    }
+
     this.volumePreviewGroup = group;
     this.originalGroup.add(group);
   }
@@ -564,7 +580,8 @@ export class MeshViewer {
     const surf = this.volumePreviewGroup.getObjectByName('vol-mesh-surface');
     const cap = this.volumePreviewGroup.getObjectByName('vol-mesh-cap');
     const sphere = this.volumePreviewGroup.getObjectByName('vol-sphere-cap');
-    const anyVisible = Boolean(surf?.visible || cap?.visible || sphere?.visible);
+    const wear = this.volumePreviewGroup.getObjectByName('vol-wear-volume');
+    const anyVisible = Boolean(surf?.visible || cap?.visible || sphere?.visible || wear?.visible);
     this.volumePreviewGroup.visible = anyVisible;
   }
 
@@ -581,6 +598,13 @@ export class MeshViewer {
     if (!this.volumePreviewGroup) return;
     const cap = this.volumePreviewGroup.getObjectByName('vol-sphere-cap');
     if (cap) cap.visible = visible;
+    this.updateVolumePreviewGroupVisibility();
+  }
+
+  public setWearVolumeVisible(visible: boolean): void {
+    if (!this.volumePreviewGroup) return;
+    const wear = this.volumePreviewGroup.getObjectByName('vol-wear-volume');
+    if (wear) wear.visible = visible;
     this.updateVolumePreviewGroupVisibility();
   }
 
@@ -988,6 +1012,70 @@ export class MeshViewer {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geo.setIndex(idxs);
     geo.computeVertexNormals();
+    return geo;
+  }
+
+  /**
+   * Build a solid geometry representing the wear volume:
+   * the region between the actual worn mesh surface and the ideal sphere surface.
+   * Each face of the clipped mesh that lies outside the sphere (worn) generates
+   * a closed triangular prism bounded by the mesh face and its radial projection onto the sphere.
+   */
+  private buildWearVolumeGeometry(
+    clippedPositions: Float32Array,
+    clippedIndices: Uint32Array,
+    sphereCenter: THREE.Vector3,
+    sphereRadius: number,
+  ): THREE.BufferGeometry | null {
+    const cx = sphereCenter.x, cy = sphereCenter.y, cz = sphereCenter.z;
+    const pos: number[] = [];
+    const idx: number[] = [];
+
+    const faceCount = clippedIndices.length / 3;
+    for (let f = 0; f < faceCount; f++) {
+      const i0 = clippedIndices[f * 3];
+      const i1 = clippedIndices[f * 3 + 1];
+      const i2 = clippedIndices[f * 3 + 2];
+
+      const v0x = clippedPositions[i0 * 3], v0y = clippedPositions[i0 * 3 + 1], v0z = clippedPositions[i0 * 3 + 2];
+      const v1x = clippedPositions[i1 * 3], v1y = clippedPositions[i1 * 3 + 1], v1z = clippedPositions[i1 * 3 + 2];
+      const v2x = clippedPositions[i2 * 3], v2y = clippedPositions[i2 * 3 + 1], v2z = clippedPositions[i2 * 3 + 2];
+
+      const d0 = Math.sqrt((v0x - cx) ** 2 + (v0y - cy) ** 2 + (v0z - cz) ** 2) || 1e-10;
+      const d1 = Math.sqrt((v1x - cx) ** 2 + (v1y - cy) ** 2 + (v1z - cz) ** 2) || 1e-10;
+      const d2 = Math.sqrt((v2x - cx) ** 2 + (v2y - cy) ** 2 + (v2z - cz) ** 2) || 1e-10;
+
+      // Only include triangles where the average distance from sphere center exceeds the radius (worn region)
+      if ((d0 + d1 + d2) / 3 <= sphereRadius) continue;
+
+      // Project each vertex radially onto the sphere
+      const r0 = sphereRadius / d0, r1 = sphereRadius / d1, r2 = sphereRadius / d2;
+      const s0x = cx + (v0x - cx) * r0, s0y = cy + (v0y - cy) * r0, s0z = cz + (v0z - cz) * r0;
+      const s1x = cx + (v1x - cx) * r1, s1y = cy + (v1y - cy) * r1, s1z = cz + (v1z - cz) * r1;
+      const s2x = cx + (v2x - cx) * r2, s2y = cy + (v2y - cy) * r2, s2z = cz + (v2z - cz) * r2;
+
+      const base = pos.length / 3;
+      // 6 vertices per prism: [0]=v0, [1]=v1, [2]=v2, [3]=s0, [4]=s1, [5]=s2
+      pos.push(v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z);
+      pos.push(s0x, s0y, s0z, s1x, s1y, s1z, s2x, s2y, s2z);
+
+      // Top face (actual worn surface)
+      idx.push(base + 0, base + 1, base + 2);
+      // Bottom face (sphere surface, reversed winding so normal points inward)
+      idx.push(base + 3, base + 5, base + 4);
+      // 3 side quads (each split into 2 triangles)
+      idx.push(base + 0, base + 1, base + 4); idx.push(base + 0, base + 4, base + 3);
+      idx.push(base + 1, base + 2, base + 5); idx.push(base + 1, base + 5, base + 4);
+      idx.push(base + 2, base + 0, base + 3); idx.push(base + 2, base + 3, base + 5);
+    }
+
+    if (idx.length === 0) return null;
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
     return geo;
   }
 
