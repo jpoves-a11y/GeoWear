@@ -283,3 +283,123 @@ export function fitSphereFixedRadius(
     rmsError: Math.sqrt(sumSq / n),
   };
 }
+
+/**
+ * Robust version of fitSphereFixedRadius using iterative reweighted least-squares (IRLS).
+ * Downweights outlier vertices using Tukey bisquare weights, so that spatially
+ * scattered noise points don't drag the center away from the true worn zone.
+ */
+export function fitSphereFixedRadiusRobust(
+  positions: Float32Array,
+  vertexCount: number,
+  fixedRadius: number,
+  irlsIterations: number = 5,
+  centerIterations: number = 30
+): { center: THREE.Vector3; radius: number; rmsError: number } {
+  const n = vertexCount;
+  if (n === 0) {
+    return { center: new THREE.Vector3(), radius: fixedRadius, rmsError: 0 };
+  }
+
+  // Initial fit (unweighted) to get a starting center
+  let { center } = fitSphereFixedRadius(positions, n, fixedRadius, centerIterations);
+  let cx = center.x, cy = center.y, cz = center.z;
+
+  for (let irlsIter = 0; irlsIter < irlsIterations; irlsIter++) {
+    // Compute residuals and sigma
+    const residuals = new Float64Array(n);
+    let sumSq = 0;
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = positions[i * 3] - cx;
+      const dy = positions[i * 3 + 1] - cy;
+      const dz = positions[i * 3 + 2] - cz;
+      const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      residuals[i] = r - fixedRadius;
+      sumSq += residuals[i] * residuals[i];
+      count++;
+    }
+    const sigma = Math.max(Math.sqrt(sumSq / Math.max(1, count)), 1e-6);
+
+    // Compute Tukey bisquare weights
+    const weights = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const absR = Math.abs(residuals[i]);
+      if (absR < 3 * sigma) {
+        const u = absR / (3 * sigma);
+        const w = (1 - u * u);
+        weights[i] = w * w;
+      } else {
+        weights[i] = 0;
+      }
+    }
+
+    // Weighted center-only optimization
+    for (let iter = 0; iter < centerIterations; iter++) {
+      let nx = 0, ny = 0, nz = 0, wSum = 0;
+      for (let i = 0; i < n; i++) {
+        if (weights[i] < 1e-8) continue;
+        const px = positions[i * 3];
+        const py = positions[i * 3 + 1];
+        const pz = positions[i * 3 + 2];
+        const dx = px - cx, dy = py - cy, dz = pz - cz;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist < 1e-12) continue;
+        const s = fixedRadius / dist;
+        const w = weights[i];
+        nx += w * (px - dx * s);
+        ny += w * (py - dy * s);
+        nz += w * (pz - dz * s);
+        wSum += w;
+      }
+      if (wSum > 1e-12) {
+        cx = nx / wSum;
+        cy = ny / wSum;
+        cz = nz / wSum;
+      }
+    }
+  }
+
+  // Enforce inscribed constraint
+  for (let attempt = 0; attempt < 100; attempt++) {
+    let dispX = 0, dispY = 0, dispZ = 0;
+    let violationCount = 0;
+
+    for (let i = 0; i < n; i++) {
+      const dx = positions[i * 3] - cx;
+      const dy = positions[i * 3 + 1] - cy;
+      const dz = positions[i * 3 + 2] - cz;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d < fixedRadius) {
+        const deficit = fixedRadius - d;
+        const invD = 1 / Math.max(d, 1e-12);
+        dispX -= (dx * invD) * deficit;
+        dispY -= (dy * invD) * deficit;
+        dispZ -= (dz * invD) * deficit;
+        violationCount++;
+      }
+    }
+
+    if (violationCount === 0) break;
+    cx += dispX / violationCount;
+    cy += dispY / violationCount;
+    cz += dispZ / violationCount;
+  }
+
+  // Compute RMS error
+  let sumSq = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = positions[i * 3] - cx;
+    const dy = positions[i * 3 + 1] - cy;
+    const dz = positions[i * 3 + 2] - cz;
+    const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const residual = r - fixedRadius;
+    sumSq += residual * residual;
+  }
+
+  return {
+    center: new THREE.Vector3(cx, cy, cz),
+    radius: fixedRadius,
+    rmsError: Math.sqrt(sumSq / n),
+  };
+}

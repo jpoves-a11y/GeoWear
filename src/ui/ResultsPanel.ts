@@ -98,8 +98,13 @@ export class ResultsPanel {
       }
       if (results.zoneSpheres) {
         const linearWear = results.zoneSpheres.wornSphere.center.distanceTo(results.zoneSpheres.unwornSphere.center);
-        this.addMetric(section, 'Linear Wear', (linearWear * 1000).toFixed(1), 'μm',
-          linearWear > 0.01 ? 'danger' : 'success', true);
+        const unreliable = results.zoneSpheres.linearWearUnreliable;
+        const label = unreliable ? 'Linear Wear ⚠' : 'Linear Wear';
+        this.addMetric(section, label, (linearWear * 1000).toFixed(1), 'μm',
+          unreliable ? 'warning' : (linearWear > 0.01 ? 'danger' : 'success'), true);
+        if (unreliable && results.zoneSpheres.unreliableReason) {
+          this.addMetric(section, 'Warning', results.zoneSpheres.unreliableReason, undefined, 'warning');
+        }
       }
     } else {
       this.addMetric(section, 'Anomaly Points', results.totalAnomalyPoints.toLocaleString(),
@@ -240,7 +245,32 @@ export class ResultsPanel {
     const zs = results.zoneSpheres!;
 
     const linearWear = zs.wornSphere.center.distanceTo(zs.unwornSphere.center);
-    this.addMetric(section, 'Linear Wear', (linearWear * 1000).toFixed(1), 'μm', 'danger');
+    const unreliable = zs.linearWearUnreliable;
+    this.addMetric(section, unreliable ? 'Linear Wear ⚠' : 'Linear Wear',
+      (linearWear * 1000).toFixed(1), 'μm', unreliable ? 'warning' : 'danger');
+
+    if (unreliable && zs.unreliableReason) {
+      this.addMetric(section, 'Warning', zs.unreliableReason, undefined, 'warning');
+    }
+
+    if (zs.filterUsed) {
+      const filterNames: Record<string, string> = {
+        'none': 'None',
+        'robust-irls': 'Robust IRLS',
+        'dbscan-spatial': 'Spatial DBSCAN',
+        'combined': 'Combined',
+      };
+      this.addMetric(section, 'Filter', filterNames[zs.filterUsed] || zs.filterUsed);
+    }
+    if (zs.rawWornVertexCount !== undefined && zs.filteredWornVertexCount !== undefined) {
+      this.addMetric(section, 'Worn Vertices (raw)', zs.rawWornVertexCount.toLocaleString());
+      this.addMetric(section, 'Worn Vertices (filtered)', zs.filteredWornVertexCount.toLocaleString(),
+        undefined, zs.filteredWornVertexCount < zs.rawWornVertexCount ? 'warning' : 'success');
+    }
+    if (zs.discardedClusters !== undefined && zs.discardedClusters > 0) {
+      this.addMetric(section, 'Discarded Clusters', zs.discardedClusters.toString(), undefined, 'warning');
+    }
+
     this.addMetric(section, 'Worn Sphere RMS', (zs.wornSphere.rmsError * 1000).toFixed(2), 'μm', 'danger');
     this.addMetric(section, 'Unworn Sphere RMS', (zs.unwornSphere.rmsError * 1000).toFixed(2), 'μm', 'success');
 

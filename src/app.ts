@@ -717,7 +717,7 @@ export class App {
       this.status.setStatus('Computing wear volume...');
       p.stepComputeRimPlane(this.params.rimTrimPercent);
       p.stepClassifyWear(this.params.rimTrimPercent);
-      p.stepFitZoneSpheres();
+      p.stepFitZoneSpheres(this.params.linearWearFilter, this.params.minWornCoveragePct);
       p.stepComputeWearVolumeBestFit();
       p.stepComputeWearPlane();
       this.meshViewer.displayWornSphere(

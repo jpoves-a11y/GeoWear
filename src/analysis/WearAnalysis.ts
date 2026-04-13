@@ -8,12 +8,13 @@ import type {
   MeshData, SeparationResult, TrimResult, SphereFitResult,
   EllipsoidFitResult, Geodesic, AnalysisResults, AnomalyCluster,
   AnalysisParams, CommercialSphereInfo, WearClassification,
-  ZoneSphereResult, RimPlaneResult, WearVolumeResult, WearPlaneResult
+  ZoneSphereResult, RimPlaneResult, WearVolumeResult, WearPlaneResult,
+  LinearWearFilter
 } from '../types';
 import { COMMERCIAL_RADII } from '../types';
 import { separateFaces, trimRim } from './MeshProcessor';
 import { smoothMesh, repairInnerFaceMesh } from './MeshSmoother';
-import { fitSphereRobust, fitSphereFixedRadius } from './SphereFitter';
+import { fitSphereRobust, fitSphereFixedRadius, fitSphereFixedRadiusRobust } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
 import { MeshGraph } from '../math/MeshGraph';
 import { computeGeodesics } from './GeodesicSolver';
@@ -187,7 +188,7 @@ export class WearAnalysisPipeline {
       this.stepClassifyWear(params.rimTrimPercent);
 
       this.progress('zone-spheres', 0.89, 'Fitting zone spheres...');
-      this.stepFitZoneSpheres();
+      this.stepFitZoneSpheres(params.linearWearFilter, params.minWornCoveragePct);
 
       this.progress('wear-volume', 0.93, 'Computing wear volume...');
       this.stepComputeWearVolumeBestFit();
@@ -699,8 +700,19 @@ export class WearAnalysisPipeline {
   /**
    * Fit spheres with the commercial radius to worn and unworn vertex subsets.
    * Uses iterative center-only optimization (radius is fixed).
+   * 
+   * @param filter Filtering strategy to reduce noise in worn sphere fitting:
+   *   - 'none': no filtering (original behavior)
+   *   - 'robust-irls': Tukey bisquare IRLS reweighting of outlier vertices
+   *   - 'dbscan-spatial': discard spatially isolated worn vertex clusters
+   *   - 'combined': apply DBSCAN spatial filtering + IRLS robust fitting
+   * @param minWornCoveragePct minimum % of active vertices that must be worn
+   *   for linear wear to be considered reliable (default 1%)
    */
-  stepFitZoneSpheres(): ZoneSphereResult {
+  stepFitZoneSpheres(
+    filter: LinearWearFilter = 'combined',
+    minWornCoveragePct: number = 1.0
+  ): ZoneSphereResult {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.wearClassification) throw new Error('Run wear classification first');
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
@@ -711,9 +723,10 @@ export class WearAnalysisPipeline {
     const R = this.state.commercialSphere.commercialRadius;
     const rim = this.state.rimPlane;
 
-    // Separate vertex positions
+    // Collect worn and unworn vertex positions (inside rim plane only)
     const wornPositions: number[] = [];
     const unwornPositions: number[] = [];
+    const wornVertexIndices: number[] = [];
 
     for (let i = 0; i < mesh.vertexCount; i++) {
       const px = mesh.positions[i * 3];
@@ -726,17 +739,58 @@ export class WearAnalysisPipeline {
 
       if (isWorn[i]) {
         wornPositions.push(px, py, pz);
+        wornVertexIndices.push(i);
       } else {
         unwornPositions.push(px, py, pz);
       }
     }
 
-    const wornArr = new Float32Array(wornPositions);
+    const rawWornVertexCount = wornPositions.length / 3;
+    let filteredWornPositions = wornPositions;
+    let discardedClusters = 0;
+
+    // --- Strategy: DBSCAN spatial pre-filter ---
+    const useDbscan = filter === 'dbscan-spatial' || filter === 'combined';
+    if (useDbscan && rawWornVertexCount >= 6) {
+      const spatialResult = this.filterWornVerticesDbscan(
+        wornPositions, wornVertexIndices, mesh
+      );
+      filteredWornPositions = spatialResult.filteredPositions;
+      discardedClusters = spatialResult.discardedClusters;
+      console.log(`[Zone Spheres] DBSCAN: ${rawWornVertexCount} → ${filteredWornPositions.length / 3} vertices (discarded ${discardedClusters} isolated clusters)`);
+    }
+
+    const filteredWornCount = filteredWornPositions.length / 3;
+
+    // --- Strategy: minimum coverage guard ---
+    const activeCount = rawWornVertexCount + unwornPositions.length / 3;
+    const wornPercent = (filteredWornCount / Math.max(1, activeCount)) * 100;
+    const isBelowMinCoverage = wornPercent < minWornCoveragePct;
+    let linearWearUnreliable = false;
+    let unreliableReason = '';
+
+    if (filteredWornCount < 9) {
+      linearWearUnreliable = true;
+      unreliableReason = `Too few worn vertices after filtering (${filteredWornCount})`;
+    } else if (isBelowMinCoverage) {
+      linearWearUnreliable = true;
+      unreliableReason = `Worn coverage ${wornPercent.toFixed(2)}% below minimum ${minWornCoveragePct}%`;
+    }
+
+    // --- Fit spheres ---
+    const useRobust = filter === 'robust-irls' || filter === 'combined';
+
+    const wornArr = new Float32Array(filteredWornPositions);
     const unwornArr = new Float32Array(unwornPositions);
 
-    const wornFit = wornPositions.length >= 9
-      ? fitSphereFixedRadius(wornArr, wornPositions.length / 3, R)
-      : { center: this.state.commercialSphere.center.clone(), radius: R, rmsError: 0 };
+    let wornFit: { center: THREE.Vector3; radius: number; rmsError: number };
+    if (filteredWornPositions.length >= 9) {
+      wornFit = useRobust
+        ? fitSphereFixedRadiusRobust(wornArr, filteredWornPositions.length / 3, R)
+        : fitSphereFixedRadius(wornArr, filteredWornPositions.length / 3, R);
+    } else {
+      wornFit = { center: this.state.commercialSphere.center.clone(), radius: R, rmsError: 0 };
+    }
 
     const unwornFit = unwornPositions.length >= 9
       ? fitSphereFixedRadius(unwornArr, unwornPositions.length / 3, R)
@@ -745,10 +799,156 @@ export class WearAnalysisPipeline {
     this.state.zoneSpheres = {
       wornSphere: { center: wornFit.center, radius: R, rmsError: wornFit.rmsError },
       unwornSphere: { center: unwornFit.center, radius: R, rmsError: unwornFit.rmsError },
+      filterUsed: filter,
+      rawWornVertexCount: rawWornVertexCount,
+      filteredWornVertexCount: filteredWornCount,
+      discardedClusters,
+      linearWearUnreliable,
+      unreliableReason,
     };
 
-    console.log(`[Zone Spheres] worn RMS=${wornFit.rmsError.toFixed(4)}mm, unworn RMS=${unwornFit.rmsError.toFixed(4)}mm`);
+    const linearMm = wornFit.center.distanceTo(unwornFit.center);
+    console.log(`[Zone Spheres] filter=${filter}, worn RMS=${wornFit.rmsError.toFixed(4)}mm, unworn RMS=${unwornFit.rmsError.toFixed(4)}mm, linear=${(linearMm * 1000).toFixed(1)}μm` +
+      (linearWearUnreliable ? ` ⚠ UNRELIABLE: ${unreliableReason}` : ''));
+
     return this.state.zoneSpheres;
+  }
+
+  /**
+   * DBSCAN spatial filtering of worn vertices.
+   * Clusters worn vertices and discards clusters that are too small
+   * (likely noise/scan artifacts rather than real wear).
+   */
+  private filterWornVerticesDbscan(
+    wornPositions: number[],
+    _wornVertexIndices: number[],
+    _mesh: MeshData
+  ): { filteredPositions: number[]; discardedClusters: number } {
+    const n = wornPositions.length / 3;
+    if (n < 3) return { filteredPositions: wornPositions, discardedClusters: 0 };
+
+    // DBSCAN parameters—use a larger eps than AnomalyRegistry since we're
+    // working with contiguous mesh vertices, not geodesic sample points.
+    const eps = 0.8; // mm
+    const minClusterPoints = 5;
+    // Minimum fraction of total worn vertices a cluster must have to be kept.
+    const minClusterFraction = 0.05; // 5% of worn vertices
+
+    // Simple grid-based DBSCAN
+    const cellSize = eps;
+    const inv = 1 / cellSize;
+    const cells = new Map<string, number[]>();
+
+    for (let i = 0; i < n; i++) {
+      const cx = (wornPositions[i * 3] * inv) | 0;
+      const cy = (wornPositions[i * 3 + 1] * inv) | 0;
+      const cz = (wornPositions[i * 3 + 2] * inv) | 0;
+      const key = `${cx}_${cy}_${cz}`;
+      const arr = cells.get(key);
+      if (arr) arr.push(i);
+      else cells.set(key, [i]);
+    }
+
+    const queryBall = (idx: number): number[] => {
+      const px = wornPositions[idx * 3];
+      const py = wornPositions[idx * 3 + 1];
+      const pz = wornPositions[idx * 3 + 2];
+      const cx0 = (px * inv) | 0;
+      const cy0 = (py * inv) | 0;
+      const cz0 = (pz * inv) | 0;
+      const eps2 = eps * eps;
+      const result: number[] = [];
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const key = `${cx0 + dx}_${cy0 + dy}_${cz0 + dz}`;
+            const cell = cells.get(key);
+            if (!cell) continue;
+            for (const j of cell) {
+              const ddx = wornPositions[j * 3] - px;
+              const ddy = wornPositions[j * 3 + 1] - py;
+              const ddz = wornPositions[j * 3 + 2] - pz;
+              if (ddx * ddx + ddy * ddy + ddz * ddz <= eps2) {
+                result.push(j);
+              }
+            }
+          }
+        }
+      }
+      return result;
+    };
+
+    // DBSCAN
+    const labels = new Int32Array(n).fill(-1);
+    let clusterId = 0;
+
+    for (let i = 0; i < n; i++) {
+      if (labels[i] !== -1) continue;
+      const neighbors = queryBall(i);
+      if (neighbors.length < minClusterPoints) {
+        labels[i] = -2; // noise
+        continue;
+      }
+      labels[i] = clusterId;
+      const seedSet = new Set(neighbors);
+      const seedArr = [...seedSet];
+      while (seedArr.length > 0) {
+        const j = seedArr.pop()!;
+        if (labels[j] === -2) { labels[j] = clusterId; }
+        if (labels[j] !== -1) continue;
+        labels[j] = clusterId;
+        const jNeighbors = queryBall(j);
+        if (jNeighbors.length >= minClusterPoints) {
+          for (const k of jNeighbors) {
+            if (!seedSet.has(k)) {
+              seedSet.add(k);
+              seedArr.push(k);
+            }
+          }
+        }
+      }
+      clusterId++;
+    }
+
+    // Count cluster sizes
+    const clusterSizes = new Map<number, number>();
+    for (let i = 0; i < n; i++) {
+      if (labels[i] >= 0) {
+        clusterSizes.set(labels[i], (clusterSizes.get(labels[i]) || 0) + 1);
+      }
+    }
+
+    // Keep clusters with enough points
+    const minSize = Math.max(minClusterPoints, Math.floor(n * minClusterFraction));
+    const keepClusters = new Set<number>();
+    let discarded = 0;
+    for (const [id, size] of clusterSizes) {
+      if (size >= minSize) {
+        keepClusters.add(id);
+      } else {
+        discarded++;
+      }
+    }
+
+    // If all clusters are discarded, keep the largest one
+    if (keepClusters.size === 0 && clusterSizes.size > 0) {
+      let maxSize = 0, maxId = 0;
+      for (const [id, size] of clusterSizes) {
+        if (size > maxSize) { maxSize = size; maxId = id; }
+      }
+      keepClusters.add(maxId);
+      discarded--;
+    }
+
+    // Collect filtered positions
+    const filtered: number[] = [];
+    for (let i = 0; i < n; i++) {
+      if (keepClusters.has(labels[i])) {
+        filtered.push(wornPositions[i * 3], wornPositions[i * 3 + 1], wornPositions[i * 3 + 2]);
+      }
+    }
+
+    return { filteredPositions: filtered, discardedClusters: discarded };
   }
 
   /**

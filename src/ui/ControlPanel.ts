@@ -168,6 +168,28 @@ export class ControlPanel {
         }
         this.callbacks.onParamsChange(this.params);
       });
+
+    const filterLabelMap: Record<string, string> = {
+      'None': 'none',
+      'Robust IRLS': 'robust-irls',
+      'Spatial DBSCAN': 'dbscan-spatial',
+      'Combined (recommended)': 'combined',
+    };
+    const filterProxy = { value: 'Combined (recommended)' };
+    const filterCtrl = wearModel.add(filterProxy, 'value',
+      ['None', 'Robust IRLS', 'Spatial DBSCAN', 'Combined (recommended)'])
+      .name('Linear Wear Filter')
+      .onChange((v: string) => {
+        this.params.linearWearFilter = filterLabelMap[v] as any;
+        this.callbacks.onParamsChange(this.params);
+      });
+    this.bestfitVisControllers.push(filterCtrl);
+
+    const minCovCtrl = wearModel.add(this.params, 'minWornCoveragePct', 0, 10, 0.1)
+      .name('Min Worn Coverage %')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.bestfitVisControllers.push(minCovCtrl);
+
     wearModel.open();
 
     folder.add(this.params, 'geodesicCount', 36, 720, 1)

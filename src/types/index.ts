@@ -129,10 +129,25 @@ export interface WearClassification {
   threshold: number;            // 1.02 * commercialRadius
 }
 
+/** Linear wear filtering strategies */
+export type LinearWearFilter = 'none' | 'robust-irls' | 'dbscan-spatial' | 'combined';
+
 /** Sphere fit with fixed radius for worn/unworn zones */
 export interface ZoneSphereResult {
   wornSphere: { center: THREE.Vector3; radius: number; rmsError: number };
   unwornSphere: { center: THREE.Vector3; radius: number; rmsError: number };
+  /** Applied filtering strategy */
+  filterUsed?: LinearWearFilter;
+  /** Original (unfiltered) worn vertex count before spatial filtering */
+  rawWornVertexCount?: number;
+  /** Worn vertex count after spatial filtering */
+  filteredWornVertexCount?: number;
+  /** How many isolated worn clusters were discarded */
+  discardedClusters?: number;
+  /** Linear wear is unreliable (too few worn vertices after filtering) */
+  linearWearUnreliable?: boolean;
+  /** Reason for unreliability */
+  unreliableReason?: string;
 }
 
 /** Rim plane for volume computation */
@@ -274,6 +289,8 @@ export interface AnalysisParams {
   density: number;             // UHMWPE density g/cm³, default 0.935
   analysisMode: 'pure-geodesic' | 'sphere-bestfit'; // wear calculation model
   commercialRadius: number;    // 0 = auto-detect, or 14|16|18|20 mm
+  linearWearFilter: LinearWearFilter; // filtering strategy for linear wear
+  minWornCoveragePct: number;          // minimum % of worn vertices to consider linear wear reliable
   showCommercialSphere: boolean;
   showWornSphere: boolean;
   showUnwornSphere: boolean;
@@ -303,6 +320,8 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   density: 0.935,
   analysisMode: 'sphere-bestfit',
   commercialRadius: 0,
+  linearWearFilter: 'combined',
+  minWornCoveragePct: 1.0,
   showCommercialSphere: false,
   showWornSphere: true,
   showUnwornSphere: true,
