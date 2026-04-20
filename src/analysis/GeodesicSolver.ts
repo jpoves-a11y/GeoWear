@@ -415,6 +415,15 @@ export function computeGeodesics(
         const a = segIndices[0], b = segIndices[1];
         segNeighbors[a].push(b);
         segNeighbors[b].push(a);
+      } else if (segIndices.length > 2) {
+        // Multiple segments share this edge key (near pole or non-manifold edges).
+        // Link all pairs so chains don't break.
+        for (let i = 0; i < segIndices.length; i++) {
+          for (let j = i + 1; j < segIndices.length; j++) {
+            segNeighbors[segIndices[i]].push(segIndices[j]);
+            segNeighbors[segIndices[j]].push(segIndices[i]);
+          }
+        }
       }
     }
 
@@ -469,34 +478,71 @@ export function computeGeodesics(
       bestChain.reverse();
     }
 
-    // Walk the chain, collecting ordered points
-    // For each segment, determine which endpoint is the "shared" one (with previous segment)
-    // and which is the "new" one; add the new one.
+    // Walk the chain, collecting ordered points.
+    // Use edge keys (not distance) to determine which endpoint is "shared"
+    // (connecting to the previous segment) vs "new" (continuing the path).
+    // Distance-based detection fails when the chain link happens via the
+    // "backward" edge key of the previous segment, causing wrong point selection.
     const uniquePoints: Array<{ pos: [number, number, number]; lat: number }> = [];
     for (let ci = 0; ci < bestChain.length; ci++) {
       const seg = segments[bestChain[ci]];
       if (ci === 0) {
-        // First segment: add both points, pole-closest first
-        const d1 = (seg.p1[0] - polePx) ** 2 + (seg.p1[1] - polePy) ** 2 + (seg.p1[2] - polePz) ** 2;
-        const d2 = (seg.p2[0] - polePx) ** 2 + (seg.p2[1] - polePy) ** 2 + (seg.p2[2] - polePz) ** 2;
-        if (d1 <= d2) {
-          uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
-          uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
+        // First segment: determine orientation from connection to next segment
+        if (bestChain.length > 1) {
+          const nextSeg = segments[bestChain[1]];
+          // Check which edge key of seg connects to nextSeg
+          const fwdIsKey1 = (seg.edgeKey1 === nextSeg.edgeKey1 || seg.edgeKey1 === nextSeg.edgeKey2);
+          if (fwdIsKey1) {
+            // edgeKey1 connects forward: p2 is the start (backward end), p1 is forward
+            uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
+            uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
+          } else {
+            // edgeKey2 connects forward: p1 is the start (backward end), p2 is forward
+            uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
+            uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
+          }
         } else {
-          uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
-          uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
+          // Single segment: pole-closest first
+          const d1 = (seg.p1[0] - polePx) ** 2 + (seg.p1[1] - polePy) ** 2 + (seg.p1[2] - polePz) ** 2;
+          const d2 = (seg.p2[0] - polePx) ** 2 + (seg.p2[1] - polePy) ** 2 + (seg.p2[2] - polePz) ** 2;
+          if (d1 <= d2) {
+            uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
+            uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
+          } else {
+            uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
+            uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
+          }
         }
       } else {
-        // Find which endpoint is shared with previous segment (closer to last added point)
-        const lastPt = uniquePoints[uniquePoints.length - 1].pos;
-        const d1 = (seg.p1[0] - lastPt[0]) ** 2 + (seg.p1[1] - lastPt[1]) ** 2 + (seg.p1[2] - lastPt[2]) ** 2;
-        const d2 = (seg.p2[0] - lastPt[0]) ** 2 + (seg.p2[1] - lastPt[1]) ** 2 + (seg.p2[2] - lastPt[2]) ** 2;
-        if (d1 <= d2) {
-          // p1 is the shared point, p2 is new
+        // Determine shared vs new endpoint using edge keys
+        const prevSeg = segments[bestChain[ci - 1]];
+        const sharedIsKey1 = (seg.edgeKey1 === prevSeg.edgeKey1 || seg.edgeKey1 === prevSeg.edgeKey2);
+        if (sharedIsKey1) {
+          // seg.p1 is on the shared edge → p2 is the new point
           uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
         } else {
-          // p2 is the shared point, p1 is new
+          // seg.p2 is on the shared edge → p1 is the new point
           uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
+        }
+      }
+    }
+
+    // Post-process: remove spike points that create anomalous detours
+    // (safety net for edge cases like non-manifold edges or spurious segments)
+    if (uniquePoints.length > 3) {
+      let si = 1;
+      while (si < uniquePoints.length - 1) {
+        const prev = uniquePoints[si - 1].pos;
+        const curr = uniquePoints[si].pos;
+        const next = uniquePoints[si + 1].pos;
+        const dPC = Math.sqrt((curr[0] - prev[0]) ** 2 + (curr[1] - prev[1]) ** 2 + (curr[2] - prev[2]) ** 2);
+        const dCN = Math.sqrt((next[0] - curr[0]) ** 2 + (next[1] - curr[1]) ** 2 + (next[2] - curr[2]) ** 2);
+        const dPN = Math.sqrt((next[0] - prev[0]) ** 2 + (next[1] - prev[1]) ** 2 + (next[2] - prev[2]) ** 2);
+        const detour = dPN > 1e-12 ? (dPC + dCN) / dPN : 1;
+        if (detour > 4) {
+          uniquePoints.splice(si, 1);
+        } else {
+          si++;
         }
       }
     }
