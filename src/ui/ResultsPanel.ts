@@ -103,7 +103,7 @@ export class ResultsPanel {
           results.wearVolumeResult.wearVolume > 0.1 ? 'danger' : 'success', true);
         if (this.yearsInVivo > 0) {
           const volRate = results.wearVolumeResult.wearVolume / this.yearsInVivo;
-          this.addMetric(section, 'Vol. Wear Rate', volRate.toFixed(4), 'mm³/year',
+          this.addRateMetric(section, 'Vol. Wear Rate', volRate.toFixed(4), 'mm³/year',
             volRate > 0.01 ? 'danger' : 'success');
         }
       }
@@ -115,7 +115,7 @@ export class ResultsPanel {
           unreliable ? 'warning' : (linearWear > 0.01 ? 'danger' : 'success'), true);
         if (this.yearsInVivo > 0) {
           const linearRate = linearWear / this.yearsInVivo; // mm/year
-          this.addMetric(section, 'Linear Wear Rate', linearRate.toFixed(4), 'mm/year',
+          this.addRateMetric(section, 'Linear Wear Rate', linearRate.toFixed(4), 'mm/year',
             linearRate > 0.01 ? 'danger' : 'success');
         }
         if (unreliable && results.zoneSpheres.unreliableReason) {
@@ -307,9 +307,9 @@ export class ResultsPanel {
 
     if (this.yearsInVivo > 0) {
       const volRate = wv.wearVolume / this.yearsInVivo;
-      this.addMetric(section, 'Volumetric Wear Rate', volRate.toFixed(4), 'mm³/year',
+      this.addRateMetric(section, 'Volumetric Wear Rate', volRate.toFixed(4), 'mm³/year',
         volRate > 0.01 ? 'danger' : 'success');
-      this.addMetric(section, 'Mass Wear Rate', (volRate * density).toFixed(4), 'mg/year');
+      this.addRateMetric(section, 'Mass Wear Rate', (volRate * density).toFixed(4), 'mg/year');
     }
 
     this.container.appendChild(section);
@@ -398,6 +398,36 @@ export class ResultsPanel {
   ): void {
     const row = document.createElement('div');
     row.className = highlight ? 'metric-row highlight' : 'metric-row';
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'metric-label';
+    labelSpan.textContent = label;
+
+    const valueSpan = document.createElement('span');
+    valueSpan.className = `metric-value ${colorClass || ''}`;
+    valueSpan.textContent = value;
+    if (unit) {
+      const unitSpan = document.createElement('span');
+      unitSpan.className = 'metric-unit';
+      unitSpan.textContent = unit;
+      valueSpan.appendChild(unitSpan);
+    }
+
+    row.appendChild(labelSpan);
+    row.appendChild(valueSpan);
+    section.appendChild(row);
+  }
+
+  /** Like addMetric but styled with blue accent for wear-rate rows. */
+  private addRateMetric(
+    section: HTMLElement,
+    label: string,
+    value: string,
+    unit?: string,
+    colorClass?: string
+  ): void {
+    const row = document.createElement('div');
+    row.className = 'metric-row rate-highlight';
 
     const labelSpan = document.createElement('span');
     labelSpan.className = 'metric-label';

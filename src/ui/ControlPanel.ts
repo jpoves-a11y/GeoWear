@@ -192,9 +192,11 @@ export class ControlPanel {
 
     wearModel.open();
 
-    folder.add(this.params, 'yearsInVivo', 0, 40, 0.1)
-      .name('Years In Vivo')
+    const yivCtrl = folder.add(this.params, 'yearsInVivo', 0, 40, 0.1)
+      .name('⏱ Years In Vivo')
       .onChange(() => this.callbacks.onParamsChange(this.params));
+    yivCtrl.domElement.parentElement!.style.cssText +=
+      'background: rgba(56,154,237,0.12); border-left: 3px solid #389aed; border-radius: 3px; padding-left: 4px;';
 
     folder.add(this.params, 'geodesicCount', 36, 720, 1)
       .name('Geodesics')
