@@ -170,7 +170,7 @@ export class ProfileChart {
   }
 
   /**
-   * Set sphere center and radius for ideal sphere visualization.
+   * Set sphere center and radius for commercial sphere visualization.
    */
   setSphereRadius(radius: number): void {
     this.sphereRadius = radius;
@@ -199,7 +199,7 @@ export class ProfileChart {
   }
 
   /**
-   * Toggle showing the ideal sphere arc.
+   * Toggle showing the commercial sphere arc.
    */
   setShowSphere(show: boolean): void {
     this.showSphere = show;
@@ -757,7 +757,7 @@ export class ProfileChart {
       this.drawOuterLayer();
     }
 
-    // Draw ideal sphere arc
+    // Draw commercial sphere arc
     if (this.showSphere && this.sphereRadius > 0) {
       this.drawSphereArc();
     }
@@ -847,6 +847,7 @@ export class ProfileChart {
 
   private drawSphereArc(): void {
     if (this.sphereRadius <= 0) return;
+    if (this.profilePoints.length < 3) return; // Need profile data for valid projection axes
 
     const ctx = this.ctx;
     
@@ -854,11 +855,18 @@ export class ProfileChart {
     const scx = this.sphereCenter[0] - this.centroid.x;
     const scy = this.sphereCenter[1] - this.centroid.y;
     const scz = this.sphereCenter[2] - this.centroid.z;
+    // In-plane coordinates of sphere center
     const cx = scx * this.uAxis.x + scy * this.uAxis.y + scz * this.uAxis.z;
     const cy = scx * this.vAxis.x + scy * this.vAxis.y + scz * this.vAxis.z;
-    const r = this.sphereRadius;
+    // Out-of-plane distance: projection onto plane normal
+    const dPerp = scx * this.planeNormal.x + scy * this.planeNormal.y + scz * this.planeNormal.z;
+    // Section circle radius: R_section = sqrt(R² - d²)
+    const R = this.sphereRadius;
+    const rSq = R * R - dPerp * dPerp;
+    if (rSq <= 0) return; // Sphere doesn't intersect this plane
+    const r = Math.sqrt(rSq);
 
-    // Draw arc of ideal sphere (full circle intersected with the geodesic plane)
+    // Draw arc of commercial sphere (full circle intersected with the geodesic plane)
     ctx.strokeStyle = this.COLORS.sphere;
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
@@ -889,7 +897,7 @@ export class ProfileChart {
     ctx.textAlign = 'left';
     const labelX = this.dataToScreenX(cx + r * 0.7);
     const labelY = this.dataToScreenY(cy + r * 0.7);
-    ctx.fillText('Ideal sphere', labelX + 5, labelY);
+    ctx.fillText('Commercial sphere', labelX + 5, labelY);
   }
 
   /**

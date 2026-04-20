@@ -164,7 +164,7 @@ export class ProfileWindowManager {
         <div class="profile-chart-controls">
           <label class="profile-checkbox">
             <input type="checkbox" class="show-sphere-checkbox" checked>
-            <span>Show ideal sphere</span>
+            <span>Show commercial sphere</span>
           </label>
           <button class="profile-btn-reset" title="Reset view">Reset View</button>
         </div>

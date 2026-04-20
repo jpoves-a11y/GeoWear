@@ -948,7 +948,13 @@ export class App {
       this.geodesicInteraction.setGeodesics(this.pipeline.state.geodesics, offset);
       
       // Set sphere radius and center for profile charts
-      if (this.pipeline.state.sphereFit) {
+      // Prefer commercial sphere (unworn zone center + commercial radius) when available
+      if (this.pipeline.state.zoneSpheres && this.pipeline.state.commercialSphere) {
+        const R = this.pipeline.state.commercialSphere.commercialRadius;
+        const c = this.pipeline.state.zoneSpheres.unwornSphere.center;
+        this.profileWindows.setSphereRadius(R);
+        this.profileWindows.setSphereCenter([c.x, c.y, c.z]);
+      } else if (this.pipeline.state.sphereFit) {
         this.profileWindows.setSphereRadius(this.pipeline.state.sphereFit.radius);
         const center = this.pipeline.state.sphereFit.center;
         this.profileWindows.setSphereCenter([center.x, center.y, center.z]);
