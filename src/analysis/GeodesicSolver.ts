@@ -308,14 +308,15 @@ export function computeGeodesics(
 
       // Signed distances to the meridian plane
       // Perturb near-zero values to avoid vertex-on-plane edge cases
-      // that produce unmatchable keys and break edge-key chaining
+      // that produce unmatchable keys and break edge-key chaining.
+      // IMPORTANT: preserve original sign so crossings aren't eliminated.
       const SD_EPS = 1e-10;
       let sd0 = (positions[i0 * 3] - cx) * nx + (positions[i0 * 3 + 1] - cy) * ny + (positions[i0 * 3 + 2] - cz) * nz;
       let sd1 = (positions[i1 * 3] - cx) * nx + (positions[i1 * 3 + 1] - cy) * ny + (positions[i1 * 3 + 2] - cz) * nz;
       let sd2 = (positions[i2 * 3] - cx) * nx + (positions[i2 * 3 + 1] - cy) * ny + (positions[i2 * 3 + 2] - cz) * nz;
-      if (Math.abs(sd0) < SD_EPS) sd0 = SD_EPS;
-      if (Math.abs(sd1) < SD_EPS) sd1 = SD_EPS;
-      if (Math.abs(sd2) < SD_EPS) sd2 = SD_EPS;
+      if (Math.abs(sd0) < SD_EPS) sd0 = sd0 >= 0 ? SD_EPS : -SD_EPS;
+      if (Math.abs(sd1) < SD_EPS) sd1 = sd1 >= 0 ? SD_EPS : -SD_EPS;
+      if (Math.abs(sd2) < SD_EPS) sd2 = sd2 >= 0 ? SD_EPS : -SD_EPS;
 
       // Find edges that cross the plane (sd changes sign)
       const crossings: Array<[number, number, number]> = [];
@@ -462,6 +463,97 @@ export function computeGeodesics(
     for (const chain of chains) {
       if (chain.length > bestChain.length) {
         bestChain = chain;
+      }
+    }
+
+    // Try to extend bestChain toward the pole by concatenating nearby chains.
+    // This bridges small gaps caused by missing segments near the pole.
+    if (chains.length > 1) {
+      // Compute average segment length for gap threshold
+      let sumSegLen = 0;
+      for (const seg of segments) {
+        const dx = seg.p2[0] - seg.p1[0], dy = seg.p2[1] - seg.p1[1], dz = seg.p2[2] - seg.p1[2];
+        sumSegLen += Math.sqrt(dx * dx + dy * dy + dz * dz);
+      }
+      const avgSegLen = sumSegLen / segments.length;
+      const gapThreshold = avgSegLen * 5; // allow gaps up to 5× average segment length
+      const gapThresholdSq = gapThreshold * gapThreshold;
+
+      // Iteratively try to prepend/append other chains to bestChain
+      const usedChainIdx = new Set<number>();
+      usedChainIdx.add(chains.indexOf(bestChain));
+      let changed = true;
+      while (changed) {
+        changed = false;
+        // Get current endpoints of bestChain
+        const headSeg = segments[bestChain[0]];
+        const tailSeg = segments[bestChain[bestChain.length - 1]];
+        const headPts = [headSeg.p1, headSeg.p2];
+        const tailPts = [tailSeg.p1, tailSeg.p2];
+
+        for (let ci = 0; ci < chains.length; ci++) {
+          if (usedChainIdx.has(ci)) continue;
+          const chain = chains[ci];
+          const cHeadSeg = segments[chain[0]];
+          const cTailSeg = segments[chain[chain.length - 1]];
+          const cHeadPts = [cHeadSeg.p1, cHeadSeg.p2];
+          const cTailPts = [cTailSeg.p1, cTailSeg.p2];
+
+          // Check if chain's tail connects to bestChain's head
+          let canPrepend = false;
+          for (const cp of cTailPts) {
+            for (const bp of headPts) {
+              const d2 = (cp[0] - bp[0]) ** 2 + (cp[1] - bp[1]) ** 2 + (cp[2] - bp[2]) ** 2;
+              if (d2 < gapThresholdSq) canPrepend = true;
+            }
+          }
+          // Check if chain's head connects to bestChain's head
+          let canPrependReversed = false;
+          for (const cp of cHeadPts) {
+            for (const bp of headPts) {
+              const d2 = (cp[0] - bp[0]) ** 2 + (cp[1] - bp[1]) ** 2 + (cp[2] - bp[2]) ** 2;
+              if (d2 < gapThresholdSq) canPrependReversed = true;
+            }
+          }
+          // Check if chain's head connects to bestChain's tail
+          let canAppend = false;
+          for (const cp of cHeadPts) {
+            for (const bp of tailPts) {
+              const d2 = (cp[0] - bp[0]) ** 2 + (cp[1] - bp[1]) ** 2 + (cp[2] - bp[2]) ** 2;
+              if (d2 < gapThresholdSq) canAppend = true;
+            }
+          }
+          // Check if chain's tail connects to bestChain's tail
+          let canAppendReversed = false;
+          for (const cp of cTailPts) {
+            for (const bp of tailPts) {
+              const d2 = (cp[0] - bp[0]) ** 2 + (cp[1] - bp[1]) ** 2 + (cp[2] - bp[2]) ** 2;
+              if (d2 < gapThresholdSq) canAppendReversed = true;
+            }
+          }
+
+          if (canPrepend) {
+            bestChain = [...chain, ...bestChain];
+            usedChainIdx.add(ci);
+            changed = true;
+            break;
+          } else if (canPrependReversed) {
+            bestChain = [...chain.slice().reverse(), ...bestChain];
+            usedChainIdx.add(ci);
+            changed = true;
+            break;
+          } else if (canAppend) {
+            bestChain = [...bestChain, ...chain];
+            usedChainIdx.add(ci);
+            changed = true;
+            break;
+          } else if (canAppendReversed) {
+            bestChain = [...bestChain, ...chain.slice().reverse()];
+            usedChainIdx.add(ci);
+            changed = true;
+            break;
+          }
+        }
       }
     }
 
