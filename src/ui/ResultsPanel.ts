@@ -10,6 +10,12 @@ export class ResultsPanel {
   private sidebar: HTMLElement;
   private closeBtn: HTMLElement;
   private onGeodesicSelect?: (angle: number) => void;
+  private yearsInVivo: number = 0;
+
+  /** Update the implantation duration used for wear rate computation. */
+  setYearsInVivo(years: number): void {
+    this.yearsInVivo = years;
+  }
 
   constructor() {
     this.container = document.getElementById('results-container')!;
@@ -95,6 +101,11 @@ export class ResultsPanel {
       if (results.wearVolumeResult) {
         this.addMetric(section, 'Wear Volume', results.wearVolumeResult.wearVolume.toFixed(4), 'mm³',
           results.wearVolumeResult.wearVolume > 0.1 ? 'danger' : 'success', true);
+        if (this.yearsInVivo > 0) {
+          const volRate = results.wearVolumeResult.wearVolume / this.yearsInVivo;
+          this.addMetric(section, 'Vol. Wear Rate', volRate.toFixed(4), 'mm³/year',
+            volRate > 0.01 ? 'danger' : 'success');
+        }
       }
       if (results.zoneSpheres) {
         const linearWear = results.zoneSpheres.wornSphere.center.distanceTo(results.zoneSpheres.unwornSphere.center);
@@ -102,6 +113,11 @@ export class ResultsPanel {
         const label = unreliable ? 'Linear Wear ⚠' : 'Linear Wear';
         this.addMetric(section, label, (linearWear * 1000).toFixed(1), 'μm',
           unreliable ? 'warning' : (linearWear > 0.01 ? 'danger' : 'success'), true);
+        if (this.yearsInVivo > 0) {
+          const linearRate = linearWear / this.yearsInVivo; // mm/year
+          this.addMetric(section, 'Linear Wear Rate', linearRate.toFixed(4), 'mm/year',
+            linearRate > 0.01 ? 'danger' : 'success');
+        }
         if (unreliable && results.zoneSpheres.unreliableReason) {
           this.addMetric(section, 'Warning', results.zoneSpheres.unreliableReason, undefined, 'warning');
         }
@@ -288,6 +304,13 @@ export class ResultsPanel {
       wv.wearVolume > 0.1 ? 'danger' : 'success');
     this.addMetric(section, 'Wear Mass', (wv.wearVolume * density).toFixed(4), 'mg',
       wv.wearVolume > 0.1 ? 'danger' : 'success');
+
+    if (this.yearsInVivo > 0) {
+      const volRate = wv.wearVolume / this.yearsInVivo;
+      this.addMetric(section, 'Volumetric Wear Rate', volRate.toFixed(4), 'mm³/year',
+        volRate > 0.01 ? 'danger' : 'success');
+      this.addMetric(section, 'Mass Wear Rate', (volRate * density).toFixed(4), 'mg/year');
+    }
 
     this.container.appendChild(section);
   }

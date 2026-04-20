@@ -192,6 +192,10 @@ export class ControlPanel {
 
     wearModel.open();
 
+    folder.add(this.params, 'yearsInVivo', 0, 40, 0.1)
+      .name('Years In Vivo')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+
     folder.add(this.params, 'geodesicCount', 36, 720, 1)
       .name('Geodesics')
       .onChange(() => this.callbacks.onParamsChange(this.params));

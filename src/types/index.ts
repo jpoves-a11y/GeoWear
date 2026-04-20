@@ -300,6 +300,7 @@ export interface AnalysisParams {
   showSphereCapVolume: boolean;
   showWearVolume: boolean;
   showOriginalMesh: boolean;
+  yearsInVivo: number;         // 0 = unknown; if >0, wear rates (mm/year, mm³/year) are shown
 }
 
 export const DEFAULT_PARAMS: AnalysisParams = {
@@ -331,4 +332,5 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showSphereCapVolume: false,
   showWearVolume: false,
   showOriginalMesh: false,
+  yearsInVivo: 0,
 };

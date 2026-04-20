@@ -24,7 +24,7 @@ export class ExportManager {
 
   // ---- CSV Export ----
 
-  exportCSV(results: AnalysisResults, fileName: string = 'geowear-data'): void {
+  exportCSV(results: AnalysisResults, fileName: string = 'geowear-data', yearsInVivo: number = 0): void {
     const lines: string[] = [];
 
     // Summary header
@@ -54,6 +54,11 @@ export class ExportManager {
     }
     lines.push(`Wear Volume (mm³),${results.totalBumpVolume.toFixed(6)}`);
     lines.push(`Wear Mass (mg),${(results.totalBumpVolume * 0.935).toFixed(6)}`);
+    if (yearsInVivo > 0) {
+      lines.push(`Years In Vivo,${yearsInVivo}`);
+      lines.push(`Volumetric Wear Rate (mm³/year),${(results.totalBumpVolume / yearsInVivo).toFixed(6)}`);
+      lines.push(`Mass Wear Rate (mg/year),${(results.totalBumpVolume * 0.935 / yearsInVivo).toFixed(6)}`);
+    }
     lines.push(`Wear Clusters,${results.bumpClusters.length}`);
     lines.push(`Total Anomaly Points,${results.totalAnomalyPoints}`);
     lines.push('');
@@ -184,7 +189,8 @@ export class ExportManager {
 
   async exportPDF(
     results: AnalysisResults,
-    fileName: string = 'geowear-report'
+    fileName: string = 'geowear-report',
+    yearsInVivo: number = 0
   ): Promise<void> {
     const pdf = new jsPDF('p', 'mm', 'a4');
     const pageWidth = pdf.internal.pageSize.getWidth();
@@ -253,6 +259,11 @@ export class ExportManager {
       ['Wear Volume', `${results.totalBumpVolume.toFixed(4)} mm³`],
       ['Wear Mass', `${(results.totalBumpVolume * 0.935).toFixed(4)} mg`],
     ];
+    if (yearsInVivo > 0) {
+      volumeData.push(['Years In Vivo', `${yearsInVivo}`]);
+      volumeData.push(['Volumetric Wear Rate', `${(results.totalBumpVolume / yearsInVivo).toFixed(4)} mm³/year`]);
+      volumeData.push(['Mass Wear Rate', `${(results.totalBumpVolume * 0.935 / yearsInVivo).toFixed(4)} mg/year`]);
+    }
 
     for (const [label, value] of volumeData) {
       pdf.text(`${label}: ${value}`, margin + 5, y);

@@ -126,9 +126,20 @@ export class App {
       onExportSTL: () => this.exportSTL(),
       onExportPDF: () => this.exportPDF(),
       onShowResults: () => {
-        if (this.currentResults) this.resultsPanel.show(this.currentResults);
+        if (this.currentResults) {
+          this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
+          this.resultsPanel.show(this.currentResults);
+        }
       },
-      onParamsChange: (p: AnalysisParams) => this.onParamsChange(p),
+      onParamsChange: (p: AnalysisParams) => {
+        const yearsChanged = p.yearsInVivo !== this.params.yearsInVivo;
+        this.resultsPanel.setYearsInVivo(p.yearsInVivo);
+        this.onParamsChange(p);
+        // Refresh results panel when yearsInVivo changes (no re-analysis needed)
+        if (yearsChanged && this.currentResults) {
+          this.resultsPanel.show(this.currentResults);
+        }
+      },
     };
     this.controls = new ControlPanel(callbacks);
 
@@ -325,6 +336,7 @@ export class App {
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
       this.currentResults = results;
       this.applyVisualization();
+      this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(results);
       this.status.setStatus(`Analysis complete in ${(results.processingTimeMs / 1000).toFixed(1)}s`);
     } catch (err) {
@@ -528,6 +540,7 @@ export class App {
         }
 
         this.currentResults = p.state.results;
+        this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
         this.resultsPanel.show(p.state.results);
       }
 
@@ -687,6 +700,7 @@ export class App {
       this.status.setStatus(`Commercial radius: ${p.state.commercialSphere!.commercialRadius.toFixed(2)} mm`);
       this.controls.markStepCompleted('commercial');
       this.currentResults = p.state.results;
+      this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(p.state.results!);
       this.applyVisibilityFromParams();
       this.scene.requestRender();
@@ -704,6 +718,7 @@ export class App {
       this.status.setStatus(`Worn vertices: ${p.state.wearClassification!.wornCount}`);
       this.controls.markStepCompleted('classifywear');
       this.currentResults = p.state.results;
+      this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(p.state.results!);
       this.scene.requestRender();
     } catch (e) {
@@ -765,6 +780,7 @@ export class App {
       this.status.setStatus(`Wear volume: ${p.state.wearVolume!.wearVolume.toFixed(4)} mm³`);
       this.controls.markStepCompleted('wearvolume');
       this.currentResults = p.state.results;
+      this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(p.state.results!);
       this.applyVisibilityFromParams();
       this.scene.requestRender();
@@ -880,7 +896,7 @@ export class App {
 
   private exportCSV(): void {
     if (!this.currentResults) { this.status.setStatus('Run analysis first'); return; }
-    this.exporter.exportCSV(this.currentResults, this.fileName);
+    this.exporter.exportCSV(this.currentResults, this.fileName, this.params.yearsInVivo);
     this.status.setStatus('CSV exported');
   }
 
@@ -898,7 +914,7 @@ export class App {
 
   private async exportPDF(): Promise<void> {
     if (!this.currentResults) { this.status.setStatus('Run analysis first'); return; }
-    await this.exporter.exportPDF(this.currentResults, this.fileName);
+    await this.exporter.exportPDF(this.currentResults, this.fileName, this.params.yearsInVivo);
     this.status.setStatus('PDF report exported');
   }
 
