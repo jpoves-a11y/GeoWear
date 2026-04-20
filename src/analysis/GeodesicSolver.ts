@@ -281,12 +281,15 @@ export function computeGeodesics(
     // sd[i] = dot(pos[i] - center, n)
     // We'll compute per-vertex on the fly for each face
 
-    // Collect intersection segments: pairs of points
+    // Collect intersection segments: pairs of points, with edge keys for chaining
+    // Edge key = "min_max" of the two vertex indices forming the mesh edge
     const segments: Array<{
       p1: [number, number, number];
       p2: [number, number, number];
-      lat1: number; // latitude of p1
+      lat1: number;
       lat2: number;
+      edgeKey1: string; // edge key for p1
+      edgeKey2: string; // edge key for p2
     }> = [];
 
     for (let f = 0; f < faceCount; f++) {
@@ -311,6 +314,7 @@ export function computeGeodesics(
       // Find edges that cross the plane (sd changes sign)
       const crossings: Array<[number, number, number]> = [];
       const crossLats: number[] = [];
+      const crossEdgeKeys: string[] = [];
 
       const edges: [number, number, number, number][] = [
         [i0, i1, sd0, sd1],
@@ -330,6 +334,10 @@ export function computeGeodesics(
           // Latitude: projection onto cup axis
           const lat = (px - cx) * wx + (py - cy) * wy + (pz - cz) * wz;
           crossLats.push(lat);
+          // Edge key: canonical "min_max" of vertex indices
+          const eMin = ia < ib ? ia : ib;
+          const eMax = ia < ib ? ib : ia;
+          crossEdgeKeys.push(`${eMin}_${eMax}`);
         } else if (Math.abs(sda) < 1e-10) {
           // Vertex exactly on plane — include it
           crossings.push([
@@ -338,6 +346,7 @@ export function computeGeodesics(
             positions[ia * 3 + 2],
           ]);
           crossLats.push(latPerVertex[ia]);
+          crossEdgeKeys.push(`v_${ia}`);
         }
       }
 
@@ -357,13 +366,18 @@ export function computeGeodesics(
         let lonDiff = Math.abs(mLon - theta);
         if (lonDiff > Math.PI) lonDiff = 2 * Math.PI - lonDiff;
 
-        if (lonDiff < Math.PI / 2) {
+        // Near the pole, use a tighter longitude filter to reduce spurious segments
+        const midLat = (crossLats[0] + crossLats[1]) / 2;
+        const lonThreshold = midLat > POLE_LAT_THRESHOLD ? Math.PI / 3 : Math.PI / 2;
+        if (lonDiff < lonThreshold) {
           // This segment is on the correct half-plane
           segments.push({
             p1: crossings[0],
             p2: crossings[1],
             lat1: crossLats[0],
             lat2: crossLats[1],
+            edgeKey1: crossEdgeKeys[0],
+            edgeKey2: crossEdgeKeys[1],
           });
         }
       }
@@ -383,32 +397,127 @@ export function computeGeodesics(
       continue;
     }
 
-    // Chain segments into an ordered polyline by sorting all intersection points
-    // by latitude (projection on cup axis). High latitude = near pole.
-    // Each segment contributes 2 points; we collect all unique points sorted by latitude.
-    const allPoints: Array<{ pos: [number, number, number]; lat: number }> = [];
-    for (const seg of segments) {
-      allPoints.push({ pos: seg.p1, lat: seg.lat1 });
-      allPoints.push({ pos: seg.p2, lat: seg.lat2 });
+    // ---- Chain segments into an ordered polyline using edge-key adjacency ----
+    // Two segments sharing a mesh edge (same edgeKey) are topological neighbors.
+    // This produces correctly ordered polylines even near the pole where
+    // latitude-based sorting fails.
+
+    // Build adjacency: for each edge key, collect which segments touch it
+    const edgeKeyToSegIdx = new Map<string, number[]>();
+    for (let s = 0; s < segments.length; s++) {
+      const seg = segments[s];
+      for (const ek of [seg.edgeKey1, seg.edgeKey2]) {
+        let arr = edgeKeyToSegIdx.get(ek);
+        if (!arr) { arr = []; edgeKeyToSegIdx.set(ek, arr); }
+        arr.push(s);
+      }
     }
 
-    // Sort by latitude descending (pole first, rim last)
-    allPoints.sort((a, b) => b.lat - a.lat);
+    // For each segment, find its neighbors (segments sharing an edge key)
+    const segNeighbors: number[][] = new Array(segments.length);
+    for (let s = 0; s < segments.length; s++) segNeighbors[s] = [];
+    for (const [, segIndices] of edgeKeyToSegIdx) {
+      if (segIndices.length === 2) {
+        const a = segIndices[0], b = segIndices[1];
+        segNeighbors[a].push(b);
+        segNeighbors[b].push(a);
+      }
+    }
 
-    // Remove near-duplicate points (within epsilon)
-    const eps = 1e-6;
-    const uniquePoints: Array<{ pos: [number, number, number]; lat: number }> = [allPoints[0]];
-    for (let i = 1; i < allPoints.length; i++) {
-      const prev = uniquePoints[uniquePoints.length - 1];
-      const dx = allPoints[i].pos[0] - prev.pos[0];
-      const dy = allPoints[i].pos[1] - prev.pos[1];
-      const dz = allPoints[i].pos[2] - prev.pos[2];
-      if (dx * dx + dy * dy + dz * dz > eps * eps) {
-        uniquePoints.push(allPoints[i]);
+    // Extract connected chains by walking the adjacency graph
+    const visitedSeg = new Uint8Array(segments.length);
+    const chains: number[][] = [];
+    for (let s = 0; s < segments.length; s++) {
+      if (visitedSeg[s]) continue;
+      // Find a chain-end (degree 0 or 1) to start from
+      let start = s;
+      const seen = new Set<number>();
+      seen.add(start);
+      // Walk to one end
+      let cur = start;
+      while (true) {
+        const nbs = segNeighbors[cur].filter(n => !seen.has(n));
+        if (nbs.length === 0) break;
+        cur = nbs[0];
+        seen.add(cur);
+      }
+      // cur is now one end; walk the full chain from here
+      const chain: number[] = [cur];
+      visitedSeg[cur] = 1;
+      while (true) {
+        const nbs = segNeighbors[chain[chain.length - 1]].filter(n => !visitedSeg[n]);
+        if (nbs.length === 0) break;
+        const next = nbs[0];
+        chain.push(next);
+        visitedSeg[next] = 1;
+      }
+      chains.push(chain);
+    }
+
+    // Pick the best chain: the one whose endpoint is closest to the pole
+    let bestChain = chains[0];
+    let bestDist = Infinity;
+    for (const chain of chains) {
+      for (const endIdx of [0, chain.length - 1]) {
+        const seg = segments[chain[endIdx]];
+        for (const pt of [seg.p1, seg.p2]) {
+          const dx = pt[0] - polePx, dy = pt[1] - polePy, dz = pt[2] - polePz;
+          const d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 < bestDist) {
+            bestDist = d2;
+            bestChain = chain;
+          }
+        }
+      }
+    }
+
+    // Orient chain so it starts at the pole end
+    const firstSeg = segments[bestChain[0]];
+    const lastSeg = segments[bestChain[bestChain.length - 1]];
+    const dFirst1 = (firstSeg.p1[0] - polePx) ** 2 + (firstSeg.p1[1] - polePy) ** 2 + (firstSeg.p1[2] - polePz) ** 2;
+    const dFirst2 = (firstSeg.p2[0] - polePx) ** 2 + (firstSeg.p2[1] - polePy) ** 2 + (firstSeg.p2[2] - polePz) ** 2;
+    const dFirstMin = Math.min(dFirst1, dFirst2);
+    const dLast1 = (lastSeg.p1[0] - polePx) ** 2 + (lastSeg.p1[1] - polePy) ** 2 + (lastSeg.p1[2] - polePz) ** 2;
+    const dLast2 = (lastSeg.p2[0] - polePx) ** 2 + (lastSeg.p2[1] - polePy) ** 2 + (lastSeg.p2[2] - polePz) ** 2;
+    const dLastMin = Math.min(dLast1, dLast2);
+    if (dLastMin < dFirstMin) {
+      bestChain.reverse();
+    }
+
+    // Walk the chain, collecting ordered points
+    // For each segment, determine which endpoint is the "shared" one (with previous segment)
+    // and which is the "new" one; add the new one.
+    const uniquePoints: Array<{ pos: [number, number, number]; lat: number }> = [];
+    for (let ci = 0; ci < bestChain.length; ci++) {
+      const seg = segments[bestChain[ci]];
+      if (ci === 0) {
+        // First segment: add both points, pole-closest first
+        const d1 = (seg.p1[0] - polePx) ** 2 + (seg.p1[1] - polePy) ** 2 + (seg.p1[2] - polePz) ** 2;
+        const d2 = (seg.p2[0] - polePx) ** 2 + (seg.p2[1] - polePy) ** 2 + (seg.p2[2] - polePz) ** 2;
+        if (d1 <= d2) {
+          uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
+          uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
+        } else {
+          uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
+          uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
+        }
+      } else {
+        // Find which endpoint is shared with previous segment (closer to last added point)
+        const lastPt = uniquePoints[uniquePoints.length - 1].pos;
+        const d1 = (seg.p1[0] - lastPt[0]) ** 2 + (seg.p1[1] - lastPt[1]) ** 2 + (seg.p1[2] - lastPt[2]) ** 2;
+        const d2 = (seg.p2[0] - lastPt[0]) ** 2 + (seg.p2[1] - lastPt[1]) ** 2 + (seg.p2[2] - lastPt[2]) ** 2;
+        if (d1 <= d2) {
+          // p1 is the shared point, p2 is new
+          uniquePoints.push({ pos: seg.p2, lat: seg.lat2 });
+        } else {
+          // p2 is the shared point, p1 is new
+          uniquePoints.push({ pos: seg.p1, lat: seg.lat1 });
+        }
       }
     }
 
     // Add pole as the first point if not already very close
+    const eps = 1e-6;
     const poleLatVal = (polePx - cx) * wx + (polePy - cy) * wy + (polePz - cz) * wz;
     if (uniquePoints.length > 0) {
       const first = uniquePoints[0];
