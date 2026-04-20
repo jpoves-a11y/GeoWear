@@ -307,9 +307,15 @@ export function computeGeodesics(
       const i2 = indices[f * 3 + 2];
 
       // Signed distances to the meridian plane
-      const sd0 = (positions[i0 * 3] - cx) * nx + (positions[i0 * 3 + 1] - cy) * ny + (positions[i0 * 3 + 2] - cz) * nz;
-      const sd1 = (positions[i1 * 3] - cx) * nx + (positions[i1 * 3 + 1] - cy) * ny + (positions[i1 * 3 + 2] - cz) * nz;
-      const sd2 = (positions[i2 * 3] - cx) * nx + (positions[i2 * 3 + 1] - cy) * ny + (positions[i2 * 3 + 2] - cz) * nz;
+      // Perturb near-zero values to avoid vertex-on-plane edge cases
+      // that produce unmatchable keys and break edge-key chaining
+      const SD_EPS = 1e-10;
+      let sd0 = (positions[i0 * 3] - cx) * nx + (positions[i0 * 3 + 1] - cy) * ny + (positions[i0 * 3 + 2] - cz) * nz;
+      let sd1 = (positions[i1 * 3] - cx) * nx + (positions[i1 * 3 + 1] - cy) * ny + (positions[i1 * 3 + 2] - cz) * nz;
+      let sd2 = (positions[i2 * 3] - cx) * nx + (positions[i2 * 3 + 1] - cy) * ny + (positions[i2 * 3 + 2] - cz) * nz;
+      if (Math.abs(sd0) < SD_EPS) sd0 = SD_EPS;
+      if (Math.abs(sd1) < SD_EPS) sd1 = SD_EPS;
+      if (Math.abs(sd2) < SD_EPS) sd2 = SD_EPS;
 
       // Find edges that cross the plane (sd changes sign)
       const crossings: Array<[number, number, number]> = [];
@@ -338,15 +344,6 @@ export function computeGeodesics(
           const eMin = ia < ib ? ia : ib;
           const eMax = ia < ib ? ib : ia;
           crossEdgeKeys.push(`${eMin}_${eMax}`);
-        } else if (Math.abs(sda) < 1e-10) {
-          // Vertex exactly on plane — include it
-          crossings.push([
-            positions[ia * 3],
-            positions[ia * 3 + 1],
-            positions[ia * 3 + 2],
-          ]);
-          crossLats.push(latPerVertex[ia]);
-          crossEdgeKeys.push(`v_${ia}`);
         }
       }
 
@@ -366,10 +363,7 @@ export function computeGeodesics(
         let lonDiff = Math.abs(mLon - theta);
         if (lonDiff > Math.PI) lonDiff = 2 * Math.PI - lonDiff;
 
-        // Near the pole, use a tighter longitude filter to reduce spurious segments
-        const midLat = (crossLats[0] + crossLats[1]) / 2;
-        const lonThreshold = midLat > POLE_LAT_THRESHOLD ? Math.PI / 3 : Math.PI / 2;
-        if (lonDiff < lonThreshold) {
+        if (lonDiff < Math.PI / 2) {
           // This segment is on the correct half-plane
           segments.push({
             p1: crossings[0],
@@ -454,20 +448,11 @@ export function computeGeodesics(
       chains.push(chain);
     }
 
-    // Pick the best chain: the one whose endpoint is closest to the pole
+    // Pick the best chain: the longest one (most segments = fullest pole-to-rim coverage)
     let bestChain = chains[0];
-    let bestDist = Infinity;
     for (const chain of chains) {
-      for (const endIdx of [0, chain.length - 1]) {
-        const seg = segments[chain[endIdx]];
-        for (const pt of [seg.p1, seg.p2]) {
-          const dx = pt[0] - polePx, dy = pt[1] - polePy, dz = pt[2] - polePz;
-          const d2 = dx * dx + dy * dy + dz * dz;
-          if (d2 < bestDist) {
-            bestDist = d2;
-            bestChain = chain;
-          }
-        }
+      if (chain.length > bestChain.length) {
+        bestChain = chain;
       }
     }
 
