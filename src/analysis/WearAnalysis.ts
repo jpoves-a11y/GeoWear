@@ -754,20 +754,35 @@ export class WearAnalysisPipeline {
     this.state.dsDistToPole = distToPolePre;
     this.state.dsRimVertices = rimVertsPre;
 
-    // ── RANSAC points: always use the full untrimmed inner mesh ───────────────
-    // rimTrimPercent in double-sphere mode controls only the rim PLANE position
-    // (for volume calculation), NOT which vertices are fed to RANSAC.
-    // Using the geodesic-trimmed workingMesh caused silent failure at high
-    // rimTrimPercent: the trimmed mesh loses so many vertices that
-    // filtered.length < 20 on every bootstrap iteration → cells empty →
-    // bestCell = null → no results.
+    // ── RANSAC points: innerMesh vertices on the pole side of the rim plane ──
+    // The rim plane sits at rimTrimPercent% of the rim→pole distance.
+    // normalVec points INTO the cup (toward the pole), so h = dot(p-planePoint, n)
+    //   h >= 0  → vertex is between rim plane and pole  (keep)
+    //   h <  0  → vertex is between rim plane and outside rim (discard)
+    // At 0 % the plane is at the rim centroid, so virtually all inner-surface
+    // vertices pass (no trimming). At 50 % only the deeper half is used, etc.
+    // We always start from the full innerMesh so the point cloud never becomes
+    // empty even at very high percentages — at worst a thin polar cap remains.
+    const planeOffset = (params.rimTrimPercent / 100) * distToPolePre;
+    const planePoint0 = rimCentroidPre.clone().add(normalVecPre.clone().multiplyScalar(planeOffset));
+    const p0x = planePoint0.x, p0y = planePoint0.y, p0z = planePoint0.z;
+
     const points: [number, number, number][] = [];
     for (let i = 0; i < innerMesh.vertexCount; i++) {
-      points.push([
-        innerMesh.positions[i * 3],
-        innerMesh.positions[i * 3 + 1],
-        innerMesh.positions[i * 3 + 2],
-      ]);
+      const h = (innerMesh.positions[i * 3]     - p0x) * nx0
+              + (innerMesh.positions[i * 3 + 1] - p0y) * ny0
+              + (innerMesh.positions[i * 3 + 2] - p0z) * nz0;
+      if (h >= 0) {
+        points.push([
+          innerMesh.positions[i * 3],
+          innerMesh.positions[i * 3 + 1],
+          innerMesh.positions[i * 3 + 2],
+        ]);
+      }
+    }
+    console.log(`[DS RANSAC] rimTrim=${params.rimTrimPercent}%, points used for fitting: ${points.length} / ${innerMesh.vertexCount}`);
+    if (points.length < 20) {
+      throw new Error(`Not enough vertices above rim plane for sphere fitting (${points.length}). Lower the Rim Trim % value.`);
     }
 
     const makeRange = (min: number, max: number, step: number): number[] => {
