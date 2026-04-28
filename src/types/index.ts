@@ -390,6 +390,6 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showMeshVolume: false,
   showSphereCapVolume: false,
   showWearVolume: false,
-  showOriginalMesh: false,
+  showOriginalMesh: true,
   yearsInVivo: 0,
 };

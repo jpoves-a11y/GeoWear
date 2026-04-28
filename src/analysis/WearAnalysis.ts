@@ -907,6 +907,91 @@ export class WearAnalysisPipeline {
     return this.state.results;
   }
 
+  /**
+   * Re-compute only the rim plane position and volumetric wear for
+   * double-sphere-metrics mode, using the already-computed RANSAC result.
+   * This is fast (no RANSAC) and suitable for live rim-trim-percent updates.
+   */
+  stepUpdateDoubleSphereRimPlane(rimTrimPercent: number): void {
+    if (!this.state.separation) return;
+    const results = this.state.results;
+    if (!results || results.analysisMode !== 'double-sphere-metrics') return;
+    const bestCell = results.doubleSphereMetrics?.bestCell;
+    if (!bestCell) return;
+
+    const innerMesh = this.state.separation.inner;
+
+    // --- Rim boundary vertices (same logic as stepDoubleSphereMetrics) ---
+    const innerFc = innerMesh.indices.length / 3;
+    const edgeMap = new Map<string, number>();
+    for (let f = 0; f < innerFc; f++) {
+      for (let e = 0; e < 3; e++) {
+        const a = innerMesh.indices[f * 3 + e];
+        const b = innerMesh.indices[f * 3 + ((e + 1) % 3)];
+        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+        edgeMap.set(key, (edgeMap.get(key) || 0) + 1);
+      }
+    }
+    const rimVertsSet = new Set<number>();
+    for (const [key, count] of edgeMap) {
+      if (count === 1) {
+        const parts = key.split('_');
+        rimVertsSet.add(Number(parts[0]));
+        rimVertsSet.add(Number(parts[1]));
+      }
+    }
+    const rimVerts = [...rimVertsSet];
+
+    let rimCx = 0, rimCy = 0, rimCz = 0;
+    for (const v of rimVerts) {
+      rimCx += innerMesh.positions[v * 3];
+      rimCy += innerMesh.positions[v * 3 + 1];
+      rimCz += innerMesh.positions[v * 3 + 2];
+    }
+    if (rimVerts.length > 0) {
+      rimCx /= rimVerts.length;
+      rimCy /= rimVerts.length;
+      rimCz /= rimVerts.length;
+    }
+
+    // PCA normal
+    let cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
+    for (const v of rimVerts) {
+      const dx = innerMesh.positions[v * 3]     - rimCx;
+      const dy = innerMesh.positions[v * 3 + 1] - rimCy;
+      const dz = innerMesh.positions[v * 3 + 2] - rimCz;
+      cxx += dx * dx; cxy += dx * dy; cxz += dx * dz;
+      cyy += dy * dy; cyz += dy * dz; czz += dz * dz;
+    }
+    const pn = smallestEigenvector3x3(cxx, cxy, cxz, cyy, cyz, czz);
+
+    const sphere1Center = new THREE.Vector3(
+      bestCell.center1Mean[0], bestCell.center1Mean[1], bestCell.center1Mean[2]);
+    const rimCentroid = new THREE.Vector3(rimCx, rimCy, rimCz);
+    const normalVec = new THREE.Vector3(pn[0], pn[1], pn[2]);
+    if (sphere1Center.clone().sub(rimCentroid).dot(normalVec) < 0) normalVec.negate();
+
+    const proxyPole = sphere1Center.clone().add(normalVec.clone().multiplyScalar(bestCell.radius1Mean));
+    const distToPole = proxyPole.clone().sub(rimCentroid).dot(normalVec);
+    const planeOffset = (rimTrimPercent / 100) * distToPole;
+    const planePoint = rimCentroid.clone().add(normalVec.clone().multiplyScalar(planeOffset));
+
+    const dsRimPlane: RimPlaneResult = { point: planePoint, normal: normalVec, rimVertices: rimVerts };
+    this.state.rimPlane = dsRimPlane;
+
+    const meshEnclosedVolume = computeMeshEnclosedVolume(innerMesh, planePoint, normalVec);
+    const sphereCapVolume = computeSphereCap(sphere1Center, bestCell.radius1Mean, planePoint, normalVec);
+    const wearVolume = Math.max(0, meshEnclosedVolume - sphereCapVolume);
+    const dsWearVolumeResult: WearVolumeResult = { meshEnclosedVolume, sphereCapVolume, wearVolume };
+    this.state.wearVolume = dsWearVolumeResult;
+
+    results.rimPlane = dsRimPlane;
+    results.wearVolumeResult = dsWearVolumeResult;
+    results.totalWearVolume = wearVolume;
+
+    console.log(`[DS RimPlane Live] rimTrim=${rimTrimPercent}%, mesh=${meshEnclosedVolume.toFixed(4)}, cap=${sphereCapVolume.toFixed(4)}, wear=${wearVolume.toFixed(4)}mm³`);
+  }
+
   // ======== Sphere BestFit pipeline steps ========
 
   /**

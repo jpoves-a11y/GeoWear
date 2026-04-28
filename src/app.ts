@@ -871,6 +871,7 @@ export class App {
       newParams.colorRangeMax !== this.params.colorRangeMax ||
       newParams.colorMapName !== this.params.colorMapName
     );
+    const rimTrimChanged = newParams.rimTrimPercent !== this.params.rimTrimPercent;
     this.params = { ...newParams };
 
     this.applyVisibilityFromParams();
@@ -885,6 +886,38 @@ export class App {
       );
       this.meshViewer.applyVertexColors(colors);
       this.heatMap.updateLegend(this.params.colorRangeMin, this.params.colorRangeMax, this.params.colorMapName);
+      this.scene.requestRender();
+    }
+
+    // If rim trim changed and double-sphere analysis is active, recompute rim plane + volume live
+    if (rimTrimChanged &&
+        this.pipeline?.state.results?.analysisMode === 'double-sphere-metrics') {
+      const p = this.pipeline;
+      p.stepUpdateDoubleSphereRimPlane(this.params.rimTrimPercent);
+      const results = p.state.results!;
+      const zs = results.zoneSpheres ?? p.state.zoneSpheres;
+      if (results.rimPlane && zs) {
+        this.meshViewer.displayRimPlane(
+          results.rimPlane.point,
+          results.rimPlane.normal,
+          zs.unwornSphere.radius,
+          this.params.showRimPlane
+        );
+      }
+      if (results.rimPlane && zs && p.state.separation) {
+        this.meshViewer.displayVolumePreview(
+          p.state.separation.inner,
+          zs.unwornSphere.center,
+          zs.unwornSphere.radius,
+          results.rimPlane.point,
+          results.rimPlane.normal,
+          this.params.showMeshVolume || this.params.showSphereCapVolume || this.params.showWearVolume,
+          this.params.repairInnerFace
+        );
+      }
+      this.currentResults = results;
+      this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
+      this.resultsPanel.show(results);
       this.scene.requestRender();
     }
   }
