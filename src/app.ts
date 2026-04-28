@@ -628,6 +628,14 @@ export class App {
           results.commercialSphere.commercialRadius,
           this.params.showRimPlane
         );
+      } else if (results.rimPlane && results.analysisMode === 'double-sphere-metrics' && zs) {
+        // Double-sphere: use unworn sphere radius for plane display scale
+        this.meshViewer.displayRimPlane(
+          results.rimPlane.point,
+          results.rimPlane.normal,
+          zs.unwornSphere.radius,
+          this.params.showRimPlane
+        );
       }
       if (results.wearPlane && results.commercialSphere) {
         // Center the plane midway between pole and rim, projected onto the wear plane
@@ -648,6 +656,17 @@ export class App {
           p.state.separation.inner,
           results.commercialSphere.center,
           results.commercialSphere.commercialRadius,
+          results.rimPlane.point,
+          results.rimPlane.normal,
+          this.params.showMeshVolume || this.params.showSphereCapVolume || this.params.showWearVolume,
+          this.params.repairInnerFace
+        );
+      } else if (results.rimPlane && results.analysisMode === 'double-sphere-metrics' && zs && p.state.separation) {
+        // Double-sphere: volume preview uses unworn sphere (sphere 1) as reference
+        this.meshViewer.displayVolumePreview(
+          p.state.separation.inner,
+          zs.unwornSphere.center,
+          zs.unwornSphere.radius,
           results.rimPlane.point,
           results.rimPlane.normal,
           this.params.showMeshVolume || this.params.showSphereCapVolume || this.params.showWearVolume,

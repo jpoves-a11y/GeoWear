@@ -85,6 +85,9 @@ export class ResultsPanel {
       }
     } else if (results.analysisMode === 'double-sphere-metrics') {
       this.addDoubleSphereSection(results);
+      if (results.wearVolumeResult) {
+        this.addWearVolumeSection(results);
+      }
     } else {
       // --- Pure Geodesic mode sections ---
       if (results.ellipsoidFit) {
@@ -156,6 +159,15 @@ export class ResultsPanel {
         this.addMetric(section, 'Best Distance Std', (best.centerDistanceStd * 1000).toFixed(1), 'μm');
         this.addMetric(section, 'Best Thresh1', best.thresh1.toFixed(3));
         this.addMetric(section, 'Best Thresh2', best.thresh2.toFixed(3));
+      }
+      if (results.wearVolumeResult) {
+        this.addMetric(section, 'Wear Volume', results.wearVolumeResult.wearVolume.toFixed(4), 'mm³',
+          results.wearVolumeResult.wearVolume > 0.1 ? 'danger' : 'success', true);
+        if (this.yearsInVivo > 0) {
+          const volRate = results.wearVolumeResult.wearVolume / this.yearsInVivo;
+          this.addRateMetric(section, 'Vol. Wear Rate', volRate.toFixed(4), 'mm³/year',
+            volRate > 0.01 ? 'danger' : 'success');
+        }
       }
     } else {
       this.addMetric(section, 'Anomaly Points', results.totalAnomalyPoints.toLocaleString(),

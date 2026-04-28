@@ -802,6 +802,85 @@ export class WearAnalysisPipeline {
       };
     }
 
+    // --- Rim plane + volumetric wear (sphere 1 = unworn reference) ---
+    let dsRimPlane: RimPlaneResult | undefined;
+    let dsWearVolumeResult: WearVolumeResult | undefined;
+
+    if (bestCell && this.state.separation) {
+      const innerMesh = this.state.separation.inner;
+
+      // Find rim boundary vertices (edges shared by exactly one triangle)
+      const innerFc = innerMesh.indices.length / 3;
+      const edgeFaceMapDS = new Map<string, number>();
+      for (let f = 0; f < innerFc; f++) {
+        for (let e = 0; e < 3; e++) {
+          const a = innerMesh.indices[f * 3 + e];
+          const b = innerMesh.indices[f * 3 + ((e + 1) % 3)];
+          const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+          edgeFaceMapDS.set(key, (edgeFaceMapDS.get(key) || 0) + 1);
+        }
+      }
+      const rimVertsSet = new Set<number>();
+      for (const [key, count] of edgeFaceMapDS) {
+        if (count === 1) {
+          const parts = key.split('_');
+          rimVertsSet.add(Number(parts[0]));
+          rimVertsSet.add(Number(parts[1]));
+        }
+      }
+      const rimVerts = [...rimVertsSet];
+
+      // Rim centroid
+      let rimCxDS = 0, rimCyDS = 0, rimCzDS = 0;
+      for (const v of rimVerts) {
+        rimCxDS += innerMesh.positions[v * 3];
+        rimCyDS += innerMesh.positions[v * 3 + 1];
+        rimCzDS += innerMesh.positions[v * 3 + 2];
+      }
+      if (rimVerts.length > 0) {
+        rimCxDS /= rimVerts.length;
+        rimCyDS /= rimVerts.length;
+        rimCzDS /= rimVerts.length;
+      }
+
+      // PCA: smallest eigenvector = rim plane normal
+      let cxx2 = 0, cxy2 = 0, cxz2 = 0, cyy2 = 0, cyz2 = 0, czz2 = 0;
+      for (const v of rimVerts) {
+        const dx = innerMesh.positions[v * 3]     - rimCxDS;
+        const dy = innerMesh.positions[v * 3 + 1] - rimCyDS;
+        const dz = innerMesh.positions[v * 3 + 2] - rimCzDS;
+        cxx2 += dx * dx; cxy2 += dx * dy; cxz2 += dx * dz;
+        cyy2 += dy * dy; cyz2 += dy * dz; czz2 += dz * dz;
+      }
+      const pn2 = smallestEigenvector3x3(cxx2, cxy2, cxz2, cyy2, cyz2, czz2);
+
+      // Orient normal toward sphere 1 center (inward into cup)
+      const sphere1Center = new THREE.Vector3(
+        bestCell.center1Mean[0], bestCell.center1Mean[1], bestCell.center1Mean[2]);
+      const rimCentroid = new THREE.Vector3(rimCxDS, rimCyDS, rimCzDS);
+      const normalVec = new THREE.Vector3(pn2[0], pn2[1], pn2[2]);
+      if (sphere1Center.clone().sub(rimCentroid).dot(normalVec) < 0) normalVec.negate();
+
+      // Offset inward by rimTrimPercent% toward proxy pole (deepest point of sphere 1)
+      const proxyPole = sphere1Center.clone().add(normalVec.clone().multiplyScalar(bestCell.radius1Mean));
+      const distToPole = proxyPole.clone().sub(rimCentroid).dot(normalVec);
+      const planeOffset = (params.rimTrimPercent / 100) * distToPole;
+      const planePoint = rimCentroid.clone().add(normalVec.clone().multiplyScalar(planeOffset));
+
+      dsRimPlane = { point: planePoint, normal: normalVec, rimVertices: rimVerts };
+      this.state.rimPlane = dsRimPlane;
+
+      // Volumetric wear: mesh enclosed volume − sphere 1 cap, both cut by rim plane
+      const meshEnclosedVolume = computeMeshEnclosedVolume(innerMesh, planePoint, normalVec);
+      const sphereCapVolume = computeSphereCap(sphere1Center, bestCell.radius1Mean, planePoint, normalVec);
+      const wearVolume = Math.max(0, meshEnclosedVolume - sphereCapVolume);
+
+      dsWearVolumeResult = { meshEnclosedVolume, sphereCapVolume, wearVolume };
+      this.state.wearVolume = dsWearVolumeResult;
+
+      console.log(`[DS Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, cap=${sphereCapVolume.toFixed(4)}mm³, wear=${wearVolume.toFixed(4)}mm³`);
+    }
+
     this.state.results = {
       analysisMode: 'double-sphere-metrics',
       sphereFit: this.state.sphereFit,
@@ -814,9 +893,11 @@ export class WearAnalysisPipeline {
       primaryWearZone: null,
       totalBumpVolume: 0,
       totalDipVolume: 0,
-      totalWearVolume: bestCell?.centerDistanceMean ?? 0,
+      totalWearVolume: dsWearVolumeResult?.wearVolume ?? bestCell?.centerDistanceMean ?? 0,
       wearVector: null,
       zoneSpheres: this.state.zoneSpheres ?? undefined,
+      rimPlane: dsRimPlane,
+      wearVolumeResult: dsWearVolumeResult,
       doubleSphereMetrics,
       processingTimeMs: 0,
       vertexCount: mesh.vertexCount,
