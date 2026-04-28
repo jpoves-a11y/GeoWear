@@ -336,6 +336,7 @@ export class App {
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
       this.currentResults = results;
       this.applyVisualization();
+      this.applyVisibilityFromParams(); // re-apply toggle states (contextOpaque, wireframe, etc.) to freshly created meshes
       this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(results);
       this.status.setStatus(`Analysis complete in ${(results.processingTimeMs / 1000).toFixed(1)}s`);

@@ -173,13 +173,19 @@ export class WearAnalysisPipeline {
     this.progress('smoothing', 0.15, `Smoothing mesh (${params.smoothingIterations} iterations)...`);
     this.stepSmooth(params.smoothingIterations);
 
-    // Step 3: Build graph and compute geodesics (before sphere fit)
-    this.progress('geodesics', 0.2, `Computing ${params.geodesicCount} geodesics...`);
-    await this.stepComputeGeodesicsAsync(params.geodesicCount);
+    if (params.analysisMode === 'double-sphere-metrics') {
+      // Double-sphere does not need geodesics — fit sphere directly with all vertices
+      this.progress('fitting', 0.8, 'Fitting reference sphere (all vertices)...');
+      this.stepFitSphere();
+    } else {
+      // Step 3: Build graph and compute geodesics (before sphere fit)
+      this.progress('geodesics', 0.2, `Computing ${params.geodesicCount} geodesics...`);
+      await this.stepComputeGeodesicsAsync(params.geodesicCount);
 
-    // Step 4: Fit sphere (using only regular geodesic vertices)
-    this.progress('fitting', 0.8, 'Fitting reference sphere (regular geodesics only)...');
-    this.stepFitSphere();
+      // Step 4: Fit sphere (using only regular geodesic vertices)
+      this.progress('fitting', 0.8, 'Fitting reference sphere (regular geodesics only)...');
+      this.stepFitSphere();
+    }
 
     if (params.analysisMode === 'sphere-bestfit') {
       // --- Sphere BestFit pipeline ---
