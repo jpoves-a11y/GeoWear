@@ -57,6 +57,8 @@ export class ControlPanel {
   private pureGeodesicStepControllers: any[] = [];
   private bestfitVisControllers: any[] = [];
   private doubleSphereControllers: any[] = [];
+  // Controllers visible in BOTH sphere-bestfit AND double-sphere-metrics
+  private dualModeVisControllers: any[] = [];
   // Commercial radius proxy for dropdown
   private commercialRadiusProxy = { value: 'Auto' };
   private colorRangeMaxController: any = null;
@@ -307,17 +309,17 @@ export class ControlPanel {
     const wsc = folder.add(this.params, 'showWornSphere')
       .name('Worn Sphere (Red)')
       .onChange((v: boolean) => this.callbacks.onToggleWornSphere(v));
-    this.bestfitVisControllers.push(wsc);
+    this.dualModeVisControllers.push(wsc);
 
     const usc = folder.add(this.params, 'showUnwornSphere')
       .name('Unworn Sphere (Green)')
       .onChange((v: boolean) => this.callbacks.onToggleUnwornSphere(v));
-    this.bestfitVisControllers.push(usc);
+    this.dualModeVisControllers.push(usc);
 
     const rpc = folder.add(this.params, 'showRimPlane')
       .name('Rim Plane')
       .onChange((v: boolean) => this.callbacks.onToggleRimPlane(v));
-    this.bestfitVisControllers.push(rpc);
+    this.dualModeVisControllers.push(rpc);
 
     const wpc = folder.add(this.params, 'showWearPlane')
       .name('Wear Section Plane')
@@ -327,22 +329,22 @@ export class ControlPanel {
     const mvc = folder.add(this.params, 'showMeshVolume')
       .name('Mesh Volume (Blue)')
       .onChange((v: boolean) => this.callbacks.onToggleMeshVolume(v));
-    this.bestfitVisControllers.push(mvc);
+    this.dualModeVisControllers.push(mvc);
 
     const scc = folder.add(this.params, 'showSphereCapVolume')
       .name('Sphere Cap (Green)')
       .onChange((v: boolean) => this.callbacks.onToggleSphereCapVolume(v));
-    this.bestfitVisControllers.push(scc);
+    this.dualModeVisControllers.push(scc);
 
     const wvc = folder.add(this.params, 'showWearVolume')
       .name('Wear Volume (Red)')
       .onChange((v: boolean) => this.callbacks.onToggleWearVolume(v));
-    this.bestfitVisControllers.push(wvc);
+    this.dualModeVisControllers.push(wvc);
 
     const omc = folder.add(this.params, 'showOriginalMesh')
       .name('Full STL Sample')
       .onChange((v: boolean) => this.callbacks.onToggleOriginalMesh(v));
-    this.bestfitVisControllers.push(omc);
+    this.dualModeVisControllers.push(omc);
 
     const resultsBtn = { 'Show Results Panel': () => this.callbacks.onShowResults() };
     folder.add(resultsBtn, 'Show Results Panel');
@@ -402,6 +404,9 @@ export class ControlPanel {
     }
     for (const ctrl of this.bestfitVisControllers) {
       isBestFit ? ctrl.show() : ctrl.hide();
+    }
+    for (const ctrl of this.dualModeVisControllers) {
+      (isBestFit || isDoubleSphere || isCompareMode) ? ctrl.show() : ctrl.hide();
     }
     for (const ctrl of this.doubleSphereControllers) {
       (isDoubleSphere || isCompareMode) ? ctrl.show() : ctrl.hide();
