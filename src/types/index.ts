@@ -385,7 +385,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showCommercialSphere: false,
   showWornSphere: true,
   showUnwornSphere: true,
-  showRimPlane: false,
+  showRimPlane: true,
   showWearPlane: false,
   showMeshVolume: false,
   showSphereCapVolume: false,
