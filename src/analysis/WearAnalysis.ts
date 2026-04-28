@@ -648,13 +648,12 @@ export class WearAnalysisPipeline {
     if (!this.state.sphereFit) throw new Error('Run sphere fit first');
 
     // ── Pre-RANSAC: cup rim geometry from the full untrimmed inner surface ──────
-    // Using the untrimmed inner mesh gives the actual cup rim boundary (not the
-    // artificial boundary left by geodesic trimRim). normalVec is oriented toward
-    // the inner mesh centroid which reliably points INTO the cup regardless of
-    // orientation. distToPole is the true max extent along that axis.
+    // The rim plane is computed here so its direction is independent of RANSAC.
+    // normalVec is oriented toward the inner mesh centroid (always INTO the cup).
+    // distToPole is the true max extent, so 100% trim puts the plane at the pole.
     const innerMesh = this.state.separation.inner;
 
-    // Boundary edges (shared by exactly 1 triangle) → cup rim vertices
+    // Boundary edges (shared by exactly 1 triangle) → build adjacency for loops
     const innerFcPre = innerMesh.indices.length / 3;
     const edgeMapPre = new Map<string, number>();
     for (let f = 0; f < innerFcPre; f++) {
@@ -665,14 +664,37 @@ export class WearAnalysisPipeline {
         edgeMapPre.set(key, (edgeMapPre.get(key) || 0) + 1);
       }
     }
-    const rimVertsSetPre = new Set<number>();
+    // Build adjacency among boundary vertices
+    const boundaryAdjPre = new Map<number, Set<number>>();
     for (const [key, count] of edgeMapPre) {
       if (count === 1) {
         const parts = key.split('_');
-        rimVertsSetPre.add(Number(parts[0]));
-        rimVertsSetPre.add(Number(parts[1]));
+        const va = Number(parts[0]), vb = Number(parts[1]);
+        if (!boundaryAdjPre.has(va)) boundaryAdjPre.set(va, new Set());
+        if (!boundaryAdjPre.has(vb)) boundaryAdjPre.set(vb, new Set());
+        boundaryAdjPre.get(va)!.add(vb);
+        boundaryAdjPre.get(vb)!.add(va);
       }
     }
+    // Group into connected loops and take the LARGEST (= actual cup rim)
+    const visitedPre = new Set<number>();
+    const loopsPre: Set<number>[] = [];
+    for (const startV of boundaryAdjPre.keys()) {
+      if (visitedPre.has(startV)) continue;
+      const loop = new Set<number>();
+      const queue = [startV];
+      visitedPre.add(startV);
+      while (queue.length > 0) {
+        const v = queue.pop()!;
+        loop.add(v);
+        for (const nb of boundaryAdjPre.get(v)!) {
+          if (!visitedPre.has(nb)) { visitedPre.add(nb); queue.push(nb); }
+        }
+      }
+      loopsPre.push(loop);
+    }
+    loopsPre.sort((a, b) => b.size - a.size);
+    const rimVertsSetPre = loopsPre[0] ?? new Set<number>();
     const rimVertsPre = [...rimVertsSetPre];
 
     // Rim centroid
@@ -688,7 +710,7 @@ export class WearAnalysisPipeline {
       rimCzPre /= rimVertsPre.length;
     }
 
-    // PCA: smallest eigenvector = rim plane normal
+    // PCA on largest loop: smallest eigenvector = rim plane normal
     let cxxP = 0, cxyP = 0, cxzP = 0, cyyP = 0, cyzP = 0, czzP = 0;
     for (const v of rimVertsPre) {
       const dx = innerMesh.positions[v * 3]     - rimCxPre;
@@ -715,7 +737,7 @@ export class WearAnalysisPipeline {
     const normalVecPre = new THREE.Vector3(pnPre[0], pnPre[1], pnPre[2]);
     if (meshCentroid.clone().sub(rimCentroidPre).dot(normalVecPre) < 0) normalVecPre.negate();
 
-    // distToPole = max projection of any vertex onto normalVec from rimCentroid
+    // distToPole = max projection of any inner vertex along normalVec from rim centroid
     const nx0 = normalVecPre.x, ny0 = normalVecPre.y, nz0 = normalVecPre.z;
     let maxProj = -Infinity;
     for (let i = 0; i < innerMesh.vertexCount; i++) {
@@ -732,21 +754,17 @@ export class WearAnalysisPipeline {
     this.state.dsDistToPole = distToPolePre;
     this.state.dsRimVertices = rimVertsPre;
 
-    // Rim plane at current rimTrimPercent → filters which vertices enter RANSAC
-    // "desde el rim plane al polo": include only vertices on the pole side
-    const planePreOffset = (params.rimTrimPercent / 100) * distToPolePre;
-    const planePre = rimCentroidPre.clone().add(normalVecPre.clone().multiplyScalar(planePreOffset));
-    const ppx = planePre.x, ppy = planePre.y, ppz = planePre.z;
-
-    // ── RANSAC points: only vertices on the pole side of the rim plane ─────────
+    // ── RANSAC points: use the geodesic-trimmed mesh (already correct by stepTrimRim) ─
+    // stepTrimRim(rimTrimPercent) was called before this function and removes the rim
+    // area via geodesic distance — more trimPercent → deeper pole-only surface.
+    const mesh = this.state.smoothedMesh || this.state.workingMesh!;
     const points: [number, number, number][] = [];
-    for (let i = 0; i < innerMesh.vertexCount; i++) {
-      const h = (innerMesh.positions[i * 3]     - ppx) * nx0
-              + (innerMesh.positions[i * 3 + 1] - ppy) * ny0
-              + (innerMesh.positions[i * 3 + 2] - ppz) * nz0;
-      if (h >= 0) {
-        points.push([innerMesh.positions[i * 3], innerMesh.positions[i * 3 + 1], innerMesh.positions[i * 3 + 2]]);
-      }
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      points.push([
+        mesh.positions[i * 3],
+        mesh.positions[i * 3 + 1],
+        mesh.positions[i * 3 + 2],
+      ]);
     }
 
     const makeRange = (min: number, max: number, step: number): number[] => {
