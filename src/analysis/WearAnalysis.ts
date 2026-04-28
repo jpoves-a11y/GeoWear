@@ -754,16 +754,19 @@ export class WearAnalysisPipeline {
     this.state.dsDistToPole = distToPolePre;
     this.state.dsRimVertices = rimVertsPre;
 
-    // ── RANSAC points: use the geodesic-trimmed mesh (already correct by stepTrimRim) ─
-    // stepTrimRim(rimTrimPercent) was called before this function and removes the rim
-    // area via geodesic distance — more trimPercent → deeper pole-only surface.
-    const mesh = this.state.smoothedMesh || this.state.workingMesh!;
+    // ── RANSAC points: always use the full untrimmed inner mesh ───────────────
+    // rimTrimPercent in double-sphere mode controls only the rim PLANE position
+    // (for volume calculation), NOT which vertices are fed to RANSAC.
+    // Using the geodesic-trimmed workingMesh caused silent failure at high
+    // rimTrimPercent: the trimmed mesh loses so many vertices that
+    // filtered.length < 20 on every bootstrap iteration → cells empty →
+    // bestCell = null → no results.
     const points: [number, number, number][] = [];
-    for (let i = 0; i < mesh.vertexCount; i++) {
+    for (let i = 0; i < innerMesh.vertexCount; i++) {
       points.push([
-        mesh.positions[i * 3],
-        mesh.positions[i * 3 + 1],
-        mesh.positions[i * 3 + 2],
+        innerMesh.positions[i * 3],
+        innerMesh.positions[i * 3 + 1],
+        innerMesh.positions[i * 3 + 2],
       ]);
     }
 
