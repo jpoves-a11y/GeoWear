@@ -850,6 +850,7 @@ export class WearAnalysisPipeline {
     const thresh2Values = makeRange(params.doubleSphereThresh2Min, params.doubleSphereThresh2Max, params.doubleSphereSweepStep);
 
     const cells: DoubleSphereSweepCellResult[] = [];
+    let _debugLogged = false;
     for (const thresh1 of thresh1Values) {
       for (const thresh2 of thresh2Values) {
         const radii1: number[] = [];
@@ -862,13 +863,37 @@ export class WearAnalysisPipeline {
           const sample1 = bootstrap(points);
           const sphere1 = fitWithThreshold(sample1, thresh1);
 
-          const filtered = points.filter((p) => {
-            const dx = p[0] - sphere1.center.x;
-            const dy = p[1] - sphere1.center.y;
-            const dz = p[2] - sphere1.center.z;
-            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            return dist > sphere1.radius * params.doubleSphereFactor;
-          });
+          // Adaptive factor: start at params.doubleSphereFactor and back down to
+          // 1.001 so we always find a worn region even with minimal wear.
+          const factorCandidates = [params.doubleSphereFactor, 1.01, 1.005, 1.001];
+          let filtered: [number, number, number][] = [];
+          for (const fc of factorCandidates) {
+            filtered = points.filter((p) => {
+              const dx = p[0] - sphere1.center.x;
+              const dy = p[1] - sphere1.center.y;
+              const dz = p[2] - sphere1.center.z;
+              return Math.sqrt(dx * dx + dy * dy + dz * dz) > sphere1.radius * fc;
+            });
+            if (filtered.length >= 20) break;
+          }
+
+          // Diagnostic log on very first iteration to aid debugging
+          if (!_debugLogged) {
+            _debugLogged = true;
+            const aboveR = points.filter((p) => {
+              const dx = p[0] - sphere1.center.x;
+              const dy = p[1] - sphere1.center.y;
+              const dz = p[2] - sphere1.center.z;
+              return Math.sqrt(dx * dx + dy * dy + dz * dz) > sphere1.radius;
+            }).length;
+            console.log(
+              `[DS debug] sphere1 R=${sphere1.radius.toFixed(3)}mm ` +
+              `center=(${sphere1.center.x.toFixed(2)},${sphere1.center.y.toFixed(2)},${sphere1.center.z.toFixed(2)}) ` +
+              `points>${sphere1.radius.toFixed(2)}mm: ${aboveR} ` +
+              `points>*${params.doubleSphereFactor}: ${filtered.length}`
+            );
+          }
+
           if (filtered.length < 20) continue;
 
           const sphere2 = fitWithThreshold(bootstrap(filtered), thresh2);
