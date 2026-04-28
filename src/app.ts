@@ -4,7 +4,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import type { MeshData, AnalysisParams, AnalysisResults, DoubleGeodesic } from './types';
+import type { MeshData, AnalysisParams, AnalysisResults, AnalysisRunResult, DoubleGeodesic } from './types';
 import { DEFAULT_PARAMS } from './types';
 import { SceneManager } from './viewer/SceneManager';
 import { MeshViewer } from './viewer/MeshViewer';
@@ -42,7 +42,7 @@ export class App {
   // State
   private pipeline: WearAnalysisPipeline | null = null;
   private currentMeshData: MeshData | null = null;
-  private currentResults: AnalysisResults | null = null;
+  private currentResults: AnalysisRunResult | null = null;
   private fileName: string = '';
   private isRunning = false;
   private stlWorker: Worker | null = null;
@@ -598,7 +598,7 @@ export class App {
     }
 
     // --- BestFit mode visualization ---
-    if (results.analysisMode === 'sphere-bestfit') {
+    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'double-sphere-metrics') {
       if (results.commercialSphere) {
         this.meshViewer.displayCommercialSphere(
           results.commercialSphere.center,
@@ -606,15 +606,17 @@ export class App {
           this.params.showCommercialSphere
         );
       }
-      if (results.zoneSpheres) {
+      // Show zone spheres for both sphere-bestfit and double-sphere-metrics
+      const zs = results.zoneSpheres ?? p.state.zoneSpheres;
+      if (zs) {
         this.meshViewer.displayWornSphere(
-          results.zoneSpheres.wornSphere.center,
-          results.zoneSpheres.wornSphere.radius,
+          zs.wornSphere.center,
+          zs.wornSphere.radius,
           this.params.showWornSphere
         );
         this.meshViewer.displayUnwornSphere(
-          results.zoneSpheres.unwornSphere.center,
-          results.zoneSpheres.unwornSphere.radius,
+          zs.unwornSphere.center,
+          zs.unwornSphere.radius,
           this.params.showUnwornSphere
         );
       }
@@ -895,8 +897,9 @@ export class App {
   }
 
   private exportCSV(): void {
-    if (!this.currentResults) { this.status.setStatus('Run analysis first'); return; }
-    this.exporter.exportCSV(this.currentResults, this.fileName, this.params.yearsInVivo);
+    const exportable = this.getExportableResults();
+    if (!exportable) { this.status.setStatus('Run analysis first'); return; }
+    this.exporter.exportCSV(exportable, this.fileName, this.params.yearsInVivo);
     this.status.setStatus('CSV exported');
   }
 
@@ -913,9 +916,19 @@ export class App {
   }
 
   private async exportPDF(): Promise<void> {
-    if (!this.currentResults) { this.status.setStatus('Run analysis first'); return; }
-    await this.exporter.exportPDF(this.currentResults, this.fileName, this.params.yearsInVivo);
+    const exportable = this.getExportableResults();
+    if (!exportable) { this.status.setStatus('Run analysis first'); return; }
+    await this.exporter.exportPDF(exportable, this.fileName, this.params.yearsInVivo);
     this.status.setStatus('PDF report exported');
+  }
+
+  private getExportableResults(): AnalysisResults | null {
+    if (!this.currentResults) return null;
+    if (this.currentResults.analysisMode === 'compare-all-modes') {
+      this.status.setStatus('Compare mode export uses Sphere BestFit results by default');
+      return this.currentResults.sphereBestfit;
+    }
+    return this.currentResults;
   }
 
   // ---- Section Profile Mode ----

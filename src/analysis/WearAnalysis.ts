@@ -9,7 +9,8 @@ import type {
   EllipsoidFitResult, Geodesic, AnalysisResults, AnomalyCluster,
   AnalysisParams, CommercialSphereInfo, WearClassification,
   ZoneSphereResult, RimPlaneResult, WearVolumeResult, WearPlaneResult,
-  LinearWearFilter
+  LinearWearFilter, AnalysisRunResult, DoubleSphereMetricsResult,
+  DoubleSphereSweepCellResult
 } from '../types';
 import { COMMERCIAL_RADII } from '../types';
 import { separateFaces, trimRim } from './MeshProcessor';
@@ -146,7 +147,11 @@ export class WearAnalysisPipeline {
    * Run the complete analysis pipeline.
    * Branches after sphere fit based on analysisMode.
    */
-  async runFullAnalysis(meshData: MeshData, params: AnalysisParams): Promise<AnalysisResults> {
+  async runFullAnalysis(meshData: MeshData, params: AnalysisParams): Promise<AnalysisRunResult> {
+    if (params.analysisMode === 'compare-all-modes') {
+      return this.runAllModesIndependent(meshData, params);
+    }
+
     const startTime = performance.now();
 
     // Step 1: Separate faces
@@ -195,7 +200,7 @@ export class WearAnalysisPipeline {
 
       this.progress('wear-plane', 0.97, 'Computing wear plane...');
       this.stepComputeWearPlane();
-    } else {
+    } else if (params.analysisMode === 'pure-geodesic') {
       // --- Pure Geodesic pipeline ---
       this.progress('fitting', 0.85, 'Fitting ellipsoid...');
       this.stepFitEllipsoid();
@@ -205,6 +210,10 @@ export class WearAnalysisPipeline {
 
       this.progress('volumes', 0.92, 'Computing defect volumes...');
       this.stepComputeVolumes(params.thresholdMicrons, params.density);
+    } else {
+      // --- Double Sphere Metrics pipeline ---
+      this.progress('double-sphere', 0.85, 'Running double-sphere sweep...');
+      this.stepDoubleSphereMetrics(params);
     }
 
     const endTime = performance.now();
@@ -212,6 +221,54 @@ export class WearAnalysisPipeline {
 
     this.progress('complete', 1.0, 'Analysis complete!');
     return this.state.results!;
+  }
+
+  private async runAllModesIndependent(meshData: MeshData, params: AnalysisParams): Promise<AnalysisRunResult> {
+    const startTime = performance.now();
+
+    const buildModeParams = (mode: AnalysisParams['analysisMode']): AnalysisParams => ({
+      ...params,
+      analysisMode: mode,
+    });
+
+    const runOne = async (
+      mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics',
+      offset: number,
+      label: string,
+    ): Promise<{ result: AnalysisResults; pipeline: WearAnalysisPipeline }> => {
+      const subPipeline = new WearAnalysisPipeline((stage, progress, message) => {
+        const scaled = Math.min(0.999, offset + progress / 3);
+        this.progress(stage, scaled, `[${label}] ${message}`);
+      });
+      const subResult = await subPipeline.runFullAnalysis(meshData, buildModeParams(mode));
+      return { result: subResult as AnalysisResults, pipeline: subPipeline };
+    };
+
+    const pureRun = await runOne('pure-geodesic', 0, 'Pure Geodesic');
+    const bestfitRun = await runOne('sphere-bestfit', 1 / 3, 'Sphere BestFit');
+    const doubleRun = await runOne('double-sphere-metrics', 2 / 3, 'Double Sphere');
+    const pure = pureRun.result;
+    const bestfit = bestfitRun.result;
+    const doubleMetrics = doubleRun.result;
+
+    // Keep bestfit state for 3D visualization after compare mode execution.
+    this.state = bestfitRun.pipeline.state;
+
+    const processingTimeMs = performance.now() - startTime;
+    this.progress('complete', 1.0, 'All analysis modes complete');
+
+    return {
+      analysisMode: 'compare-all-modes',
+      pureGeodesic: pure,
+      sphereBestfit: bestfit,
+      doubleSphereMetrics: doubleMetrics,
+      summary: {
+        pureGeodesicWearVolumeMm3: pure.totalWearVolume,
+        sphereBestfitWearVolumeMm3: bestfit.wearVolumeResult?.wearVolume ?? bestfit.totalWearVolume,
+        doubleSphereLinearWearMm: doubleMetrics.doubleSphereMetrics?.bestCell?.centerDistanceMean ?? 0,
+      },
+      processingTimeMs,
+    };
   }
 
   // ---- Individual steps ----
@@ -569,6 +626,198 @@ export class WearAnalysisPipeline {
         cupAxisVec
       );
     }
+  }
+
+  private stepDoubleSphereMetrics(params: AnalysisParams): AnalysisResults {
+    if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.sphereFit) throw new Error('Run sphere fit first');
+
+    const mesh = this.state.smoothedMesh || this.state.workingMesh;
+    const points: [number, number, number][] = [];
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      points.push([
+        mesh.positions[i * 3],
+        mesh.positions[i * 3 + 1],
+        mesh.positions[i * 3 + 2],
+      ]);
+    }
+
+    const makeRange = (min: number, max: number, step: number): number[] => {
+      const out: number[] = [];
+      const safeStep = Math.max(1e-4, step);
+      let v = min;
+      while (v <= max + 1e-9) {
+        out.push(Number(v.toFixed(6)));
+        v += safeStep;
+      }
+      return out;
+    };
+    const mean = (arr: number[]): number => arr.reduce((a, b) => a + b, 0) / Math.max(1, arr.length);
+    const std = (arr: number[]): number => {
+      if (arr.length <= 1) return 0;
+      const m = mean(arr);
+      return Math.sqrt(arr.reduce((acc, v) => acc + (v - m) * (v - m), 0) / arr.length);
+    };
+    const meanVec = (arr: [number, number, number][]): [number, number, number] => {
+      if (arr.length === 0) return [0, 0, 0];
+      let x = 0, y = 0, z = 0;
+      for (const p of arr) {
+        x += p[0];
+        y += p[1];
+        z += p[2];
+      }
+      return [x / arr.length, y / arr.length, z / arr.length];
+    };
+
+    const toFloatArray = (pts: [number, number, number][]): Float32Array => {
+      const arr = new Float32Array(pts.length * 3);
+      for (let i = 0; i < pts.length; i++) {
+        arr[i * 3] = pts[i][0];
+        arr[i * 3 + 1] = pts[i][1];
+        arr[i * 3 + 2] = pts[i][2];
+      }
+      return arr;
+    };
+
+    const bootstrap = (pts: [number, number, number][], fraction = 0.85): [number, number, number][] => {
+      const n = Math.max(20, Math.floor(pts.length * fraction));
+      const out: [number, number, number][] = [];
+      for (let i = 0; i < n; i++) {
+        out.push(pts[Math.floor(Math.random() * pts.length)]);
+      }
+      return out;
+    };
+
+    const fitWithThreshold = (pts: [number, number, number][], thresh: number): SphereFitResult => {
+      const base = fitSphereRobust(toFloatArray(pts), pts.length);
+      const inliers: [number, number, number][] = [];
+      const residualLimit = Math.max(1e-4, thresh);
+      for (let i = 0; i < pts.length; i++) {
+        if (Math.abs(base.residuals[i]) <= residualLimit) {
+          inliers.push(pts[i]);
+        }
+      }
+      if (inliers.length >= 20) {
+        return fitSphereRobust(toFloatArray(inliers), inliers.length);
+      }
+      return base;
+    };
+
+    const thresh1Values = makeRange(params.doubleSphereThresh1Min, params.doubleSphereThresh1Max, params.doubleSphereSweepStep);
+    const thresh2Values = makeRange(params.doubleSphereThresh2Min, params.doubleSphereThresh2Max, params.doubleSphereSweepStep);
+
+    const cells: DoubleSphereSweepCellResult[] = [];
+    for (const thresh1 of thresh1Values) {
+      for (const thresh2 of thresh2Values) {
+        const radii1: number[] = [];
+        const radii2: number[] = [];
+        const center1: [number, number, number][] = [];
+        const center2: [number, number, number][] = [];
+        const centerDistances: number[] = [];
+
+        for (let iter = 0; iter < Math.max(1, params.doubleSphereIterations); iter++) {
+          const sample1 = bootstrap(points);
+          const sphere1 = fitWithThreshold(sample1, thresh1);
+
+          const filtered = points.filter((p) => {
+            const dx = p[0] - sphere1.center.x;
+            const dy = p[1] - sphere1.center.y;
+            const dz = p[2] - sphere1.center.z;
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            return dist > sphere1.radius * params.doubleSphereFactor;
+          });
+          if (filtered.length < 20) continue;
+
+          const sphere2 = fitWithThreshold(bootstrap(filtered), thresh2);
+          const distance = sphere1.center.distanceTo(sphere2.center);
+
+          radii1.push(sphere1.radius);
+          radii2.push(sphere2.radius);
+          center1.push([sphere1.center.x, sphere1.center.y, sphere1.center.z]);
+          center2.push([sphere2.center.x, sphere2.center.y, sphere2.center.z]);
+          centerDistances.push(distance);
+        }
+
+        if (centerDistances.length === 0) continue;
+
+        cells.push({
+          thresh1,
+          thresh2,
+          runs: centerDistances.length,
+          radius1Mean: mean(radii1),
+          radius1Std: std(radii1),
+          radius2Mean: mean(radii2),
+          radius2Std: std(radii2),
+          center1Mean: meanVec(center1),
+          center2Mean: meanVec(center2),
+          centerDistanceMean: mean(centerDistances),
+          centerDistanceStd: std(centerDistances),
+        });
+      }
+    }
+
+    let bestCell: DoubleSphereSweepCellResult | null = null;
+    for (const cell of cells) {
+      if (!bestCell) {
+        bestCell = cell;
+        continue;
+      }
+      if (cell.centerDistanceStd < bestCell.centerDistanceStd - 1e-12) {
+        bestCell = cell;
+      } else if (
+        Math.abs(cell.centerDistanceStd - bestCell.centerDistanceStd) <= 1e-12 &&
+        cell.centerDistanceMean < bestCell.centerDistanceMean
+      ) {
+        bestCell = cell;
+      }
+    }
+
+    const doubleSphereMetrics: DoubleSphereMetricsResult = {
+      factor: params.doubleSphereFactor,
+      iterations: params.doubleSphereIterations,
+      thresh1Values,
+      thresh2Values,
+      cells,
+      bestCell,
+    };
+
+    if (bestCell) {
+      this.state.zoneSpheres = {
+        wornSphere: {
+          center: new THREE.Vector3(bestCell.center2Mean[0], bestCell.center2Mean[1], bestCell.center2Mean[2]),
+          radius: bestCell.radius2Mean,
+          rmsError: bestCell.radius2Std,
+        },
+        unwornSphere: {
+          center: new THREE.Vector3(bestCell.center1Mean[0], bestCell.center1Mean[1], bestCell.center1Mean[2]),
+          radius: bestCell.radius1Mean,
+          rmsError: bestCell.radius1Std,
+        },
+      };
+    }
+
+    this.state.results = {
+      analysisMode: 'double-sphere-metrics',
+      sphereFit: this.state.sphereFit,
+      ellipsoidFit: null,
+      geodesics: this.state.geodesics,
+      geodesicCount: this.state.geodesics.length,
+      totalAnomalyPoints: 0,
+      bumpClusters: [],
+      dipClusters: [],
+      primaryWearZone: null,
+      totalBumpVolume: 0,
+      totalDipVolume: 0,
+      totalWearVolume: bestCell?.centerDistanceMean ?? 0,
+      wearVector: null,
+      zoneSpheres: this.state.zoneSpheres ?? undefined,
+      doubleSphereMetrics,
+      processingTimeMs: 0,
+      vertexCount: mesh.vertexCount,
+      faceCount: mesh.faceCount,
+    };
+
+    return this.state.results;
   }
 
   // ======== Sphere BestFit pipeline steps ========

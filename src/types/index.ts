@@ -173,9 +173,38 @@ export interface WearPlaneResult {
 }
 
 /** Complete analysis results */
+export type AnalysisMode =
+  | 'pure-geodesic'
+  | 'sphere-bestfit'
+  | 'double-sphere-metrics'
+  | 'compare-all-modes';
+
+export interface DoubleSphereSweepCellResult {
+  thresh1: number;
+  thresh2: number;
+  runs: number;
+  radius1Mean: number;
+  radius1Std: number;
+  radius2Mean: number;
+  radius2Std: number;
+  center1Mean: [number, number, number];
+  center2Mean: [number, number, number];
+  centerDistanceMean: number;
+  centerDistanceStd: number;
+}
+
+export interface DoubleSphereMetricsResult {
+  factor: number;
+  iterations: number;
+  thresh1Values: number[];
+  thresh2Values: number[];
+  cells: DoubleSphereSweepCellResult[];
+  bestCell: DoubleSphereSweepCellResult | null;
+}
+
 export interface AnalysisResults {
   // Analysis mode
-  analysisMode: 'pure-geodesic' | 'sphere-bestfit';
+  analysisMode: Exclude<AnalysisMode, 'compare-all-modes'>;
 
   // Geometry
   sphereFit: SphereFitResult;
@@ -209,12 +238,28 @@ export interface AnalysisResults {
   rimPlane?: RimPlaneResult;
   wearVolumeResult?: WearVolumeResult;
   wearPlane?: WearPlaneResult;
+  doubleSphereMetrics?: DoubleSphereMetricsResult;
   
   // Processing info
   processingTimeMs: number;
   vertexCount: number;
   faceCount: number;
 }
+
+export interface MultiModeComparisonResults {
+  analysisMode: 'compare-all-modes';
+  pureGeodesic: AnalysisResults;
+  sphereBestfit: AnalysisResults;
+  doubleSphereMetrics: AnalysisResults;
+  summary: {
+    pureGeodesicWearVolumeMm3: number;
+    sphereBestfitWearVolumeMm3: number;
+    doubleSphereLinearWearMm: number;
+  };
+  processingTimeMs: number;
+}
+
+export type AnalysisRunResult = AnalysisResults | MultiModeComparisonResults;
 
 /** Worker message types */
 export type WorkerMessageType =
@@ -266,7 +311,7 @@ export interface AppState {
   originalMesh: MeshData | null;
   innerMesh: MeshData | null;
   trimmedMesh: MeshData | null;
-  results: AnalysisResults | null;
+  results: AnalysisRunResult | null;
   params: AnalysisParams;
 }
 
@@ -287,10 +332,17 @@ export interface AnalysisParams {
   showReferenceShape: boolean;
   contextOpaque: boolean;       // false = translucent (default), true = opaque
   density: number;             // UHMWPE density g/cm³, default 0.935
-  analysisMode: 'pure-geodesic' | 'sphere-bestfit'; // wear calculation model
+  analysisMode: AnalysisMode; // wear calculation model
   commercialRadius: number;    // 0 = auto-detect, or 14|16|18|20 mm
   linearWearFilter: LinearWearFilter; // filtering strategy for linear wear
   minWornCoveragePct: number;          // minimum % of worn vertices to consider linear wear reliable
+  doubleSphereFactor: number;          // factor to filter non-worn points after sphere1 fit
+  doubleSphereIterations: number;      // runs per (thresh1, thresh2) cell
+  doubleSphereThresh1Min: number;
+  doubleSphereThresh1Max: number;
+  doubleSphereThresh2Min: number;
+  doubleSphereThresh2Max: number;
+  doubleSphereSweepStep: number;
   showCommercialSphere: boolean;
   showWornSphere: boolean;
   showUnwornSphere: boolean;
@@ -323,6 +375,13 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   commercialRadius: 0,
   linearWearFilter: 'combined',
   minWornCoveragePct: 1.0,
+  doubleSphereFactor: 1.02,
+  doubleSphereIterations: 6,
+  doubleSphereThresh1Min: 0.08,
+  doubleSphereThresh1Max: 0.2,
+  doubleSphereThresh2Min: 0.08,
+  doubleSphereThresh2Max: 0.2,
+  doubleSphereSweepStep: 0.02,
   showCommercialSphere: false,
   showWornSphere: true,
   showUnwornSphere: true,

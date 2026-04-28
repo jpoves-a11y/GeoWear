@@ -3,7 +3,7 @@
 // Analysis results display and interactive table
 // ============================================================
 
-import type { AnalysisResults, Geodesic } from '../types';
+import type { AnalysisResults, AnalysisRunResult, Geodesic, MultiModeComparisonResults } from '../types';
 
 export class ResultsPanel {
   private container: HTMLElement;
@@ -35,9 +35,30 @@ export class ResultsPanel {
   /**
    * Show results panel with full analysis data.
    */
-  show(results: AnalysisResults): void {
+  show(results: AnalysisRunResult): void {
     this.sidebar.classList.remove('hidden');
     this.container.innerHTML = '';
+
+    if (results.analysisMode === 'compare-all-modes') {
+      this.addCompareSummarySection(results);
+      this.renderSingleResult(results.pureGeodesic, 'Pure Geodesic');
+      this.renderSingleResult(results.sphereBestfit, 'Sphere BestFit');
+      this.renderSingleResult(results.doubleSphereMetrics, 'Double Sphere Metrics');
+      window.dispatchEvent(new Event('resize'));
+      return;
+    }
+
+    this.renderSingleResult(results);
+
+    // Trigger layout resize
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  private renderSingleResult(results: AnalysisResults, titlePrefix?: string): void {
+    if (titlePrefix) {
+      const header = this.createSection(`Mode Detail: ${titlePrefix}`);
+      this.container.appendChild(header);
+    }
 
     // Summary section
     this.addSummarySection(results);
@@ -62,6 +83,8 @@ export class ResultsPanel {
       if (results.wearPlane) {
         this.addWearPlaneSection(results);
       }
+    } else if (results.analysisMode === 'double-sphere-metrics') {
+      this.addDoubleSphereSection(results);
     } else {
       // --- Pure Geodesic mode sections ---
       if (results.ellipsoidFit) {
@@ -76,9 +99,6 @@ export class ResultsPanel {
 
     // Geodesic table section
     this.addGeodesicTable(results.geodesics);
-
-    // Trigger layout resize
-    window.dispatchEvent(new Event('resize'));
   }
 
   hide(): void {
@@ -89,7 +109,13 @@ export class ResultsPanel {
   private addSummarySection(results: AnalysisResults): void {
     const section = this.createSection('Summary');
 
-    this.addMetric(section, 'Mode', results.analysisMode === 'sphere-bestfit' ? 'Sphere BestFit' : 'Pure Geodesic');
+    const modeLabel =
+      results.analysisMode === 'sphere-bestfit'
+        ? 'Sphere BestFit'
+        : results.analysisMode === 'double-sphere-metrics'
+          ? 'Double Sphere Metrics'
+          : 'Pure Geodesic';
+    this.addMetric(section, 'Mode', modeLabel);
     this.addMetric(section, 'Vertices', results.vertexCount.toLocaleString());
     this.addMetric(section, 'Faces', results.faceCount.toLocaleString());
     this.addMetric(section, 'Geodesics', results.geodesicCount.toString());
@@ -122,6 +148,15 @@ export class ResultsPanel {
           this.addMetric(section, 'Warning', results.zoneSpheres.unreliableReason, undefined, 'warning');
         }
       }
+    } else if (results.analysisMode === 'double-sphere-metrics') {
+      const best = results.doubleSphereMetrics?.bestCell;
+      this.addMetric(section, 'Sweep Cells', (results.doubleSphereMetrics?.cells.length ?? 0).toString());
+      if (best) {
+        this.addMetric(section, 'Best Linear Wear', (best.centerDistanceMean * 1000).toFixed(1), 'μm', 'warning');
+        this.addMetric(section, 'Best Distance Std', (best.centerDistanceStd * 1000).toFixed(1), 'μm');
+        this.addMetric(section, 'Best Thresh1', best.thresh1.toFixed(3));
+        this.addMetric(section, 'Best Thresh2', best.thresh2.toFixed(3));
+      }
     } else {
       this.addMetric(section, 'Anomaly Points', results.totalAnomalyPoints.toLocaleString(),
         undefined, results.totalAnomalyPoints > 0 ? 'warning' : 'success');
@@ -132,6 +167,52 @@ export class ResultsPanel {
       `${(results.processingTimeMs / 1000).toFixed(1)}`, 's');
 
     this.container.appendChild(section);
+  }
+
+  private addCompareSummarySection(results: MultiModeComparisonResults): void {
+    const section = this.createSection('Comparison Summary');
+    this.addMetric(section, 'Mode', 'Compare All Modes');
+    this.addMetric(section, 'Pure Geodesic Wear Vol', results.summary.pureGeodesicWearVolumeMm3.toFixed(4), 'mm³');
+    this.addMetric(section, 'Sphere BestFit Wear Vol', results.summary.sphereBestfitWearVolumeMm3.toFixed(4), 'mm³');
+    this.addMetric(section, 'Double Sphere Linear Wear', (results.summary.doubleSphereLinearWearMm * 1000).toFixed(1), 'μm');
+    this.addMetric(section, 'Processing Time', `${(results.processingTimeMs / 1000).toFixed(1)}`, 's');
+    this.container.appendChild(section);
+  }
+
+  private addDoubleSphereSection(results: AnalysisResults): void {
+    const section = this.createSection('Double Sphere Metrics');
+    const ds = results.doubleSphereMetrics;
+    if (!ds) {
+      this.addMetric(section, 'Status', 'No sweep results available', undefined, 'warning');
+      this.container.appendChild(section);
+      return;
+    }
+
+    this.addMetric(section, 'Factor', ds.factor.toFixed(3));
+    this.addMetric(section, 'Iterations', ds.iterations.toString());
+    this.addMetric(section, 'Thresh1 Values', ds.thresh1Values.length.toString());
+    this.addMetric(section, 'Thresh2 Values', ds.thresh2Values.length.toString());
+    this.addMetric(section, 'Computed Cells', ds.cells.length.toString());
+    if (ds.bestCell) {
+      this.addMetric(section, 'Best Thresh1', ds.bestCell.thresh1.toFixed(3));
+      this.addMetric(section, 'Best Thresh2', ds.bestCell.thresh2.toFixed(3));
+      this.addMetric(section, 'Best Center Dist Mean', ds.bestCell.centerDistanceMean.toFixed(4), 'mm', 'warning');
+      this.addMetric(section, 'Best Center Dist Std', ds.bestCell.centerDistanceStd.toFixed(4), 'mm');
+      this.addMetric(section, 'Best Radius1 Mean', ds.bestCell.radius1Mean.toFixed(4), 'mm');
+      this.addMetric(section, 'Best Radius2 Mean', ds.bestCell.radius2Mean.toFixed(4), 'mm');
+    }
+
+    this.container.appendChild(section);
+
+    const table = this.createSection('Double Sphere Sweep Table');
+    for (const cell of ds.cells) {
+      this.addMetric(
+        table,
+        `t1=${cell.thresh1.toFixed(3)} | t2=${cell.thresh2.toFixed(3)}`,
+        `${(cell.centerDistanceMean * 1000).toFixed(1)} ± ${(cell.centerDistanceStd * 1000).toFixed(1)} μm`
+      );
+    }
+    this.container.appendChild(table);
   }
 
   private addSphereFitSection(results: AnalysisResults): void {

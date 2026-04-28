@@ -56,6 +56,7 @@ export class ControlPanel {
   private bestfitStepControllers: any[] = [];
   private pureGeodesicStepControllers: any[] = [];
   private bestfitVisControllers: any[] = [];
+  private doubleSphereControllers: any[] = [];
   // Commercial radius proxy for dropdown
   private commercialRadiusProxy = { value: 'Auto' };
   private colorRangeMaxController: any = null;
@@ -63,10 +64,14 @@ export class ControlPanel {
   private readonly modeLabelMap: Record<string, string> = {
     'Pure Geodesic': 'pure-geodesic',
     'Sphere BestFit': 'sphere-bestfit',
+    'Double Sphere Metrics': 'double-sphere-metrics',
+    'Compare All Modes': 'compare-all-modes',
   };
   private readonly modeReverseMap: Record<string, string> = {
     'pure-geodesic': 'Pure Geodesic',
     'sphere-bestfit': 'Sphere BestFit',
+    'double-sphere-metrics': 'Double Sphere Metrics',
+    'compare-all-modes': 'Compare All Modes',
   };
   private analysisModelProxy = { mode: 'Sphere BestFit' };
 
@@ -150,7 +155,7 @@ export class ControlPanel {
 
     // --- Wear Model sub-section ---
     const wearModel = folder.addFolder('Wear Model');
-    wearModel.add(this.analysisModelProxy, 'mode', ['Pure Geodesic', 'Sphere BestFit'])
+    wearModel.add(this.analysisModelProxy, 'mode', ['Pure Geodesic', 'Sphere BestFit', 'Double Sphere Metrics', 'Compare All Modes'])
       .name('Analysis Mode')
       .onChange((v: string) => {
         this.params.analysisMode = this.modeLabelMap[v] as AnalysisParams['analysisMode'];
@@ -190,7 +195,44 @@ export class ControlPanel {
       .onChange(() => this.callbacks.onParamsChange(this.params));
     this.bestfitVisControllers.push(minCovCtrl);
 
+    const dsFolder = folder.addFolder('Double Sphere Sweep');
+    const dsFactor = dsFolder.add(this.params, 'doubleSphereFactor', 0.9, 1.5, 0.005)
+      .name('Factor')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.doubleSphereControllers.push(dsFactor);
+
+    const dsIter = dsFolder.add(this.params, 'doubleSphereIterations', 1, 30, 1)
+      .name('Iterations')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.doubleSphereControllers.push(dsIter);
+
+    const dsT1Min = dsFolder.add(this.params, 'doubleSphereThresh1Min', 0.01, 1.0, 0.01)
+      .name('Thresh1 Min')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.doubleSphereControllers.push(dsT1Min);
+
+    const dsT1Max = dsFolder.add(this.params, 'doubleSphereThresh1Max', 0.01, 1.5, 0.01)
+      .name('Thresh1 Max')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.doubleSphereControllers.push(dsT1Max);
+
+    const dsT2Min = dsFolder.add(this.params, 'doubleSphereThresh2Min', 0.01, 1.0, 0.01)
+      .name('Thresh2 Min')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.doubleSphereControllers.push(dsT2Min);
+
+    const dsT2Max = dsFolder.add(this.params, 'doubleSphereThresh2Max', 0.01, 1.5, 0.01)
+      .name('Thresh2 Max')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.doubleSphereControllers.push(dsT2Max);
+
+    const dsStep = dsFolder.add(this.params, 'doubleSphereSweepStep', 0.005, 0.25, 0.005)
+      .name('Sweep Step')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.doubleSphereControllers.push(dsStep);
+
     wearModel.open();
+    dsFolder.open();
 
     const yivCtrl = folder.add(this.params, 'yearsInVivo', 0, 40, 0.1)
       .name('⏱ Years In Vivo')
@@ -348,15 +390,21 @@ export class ControlPanel {
    */
   private updateStepVisibility(): void {
     const isBestFit = this.params.analysisMode === 'sphere-bestfit';
+    const isDoubleSphere = this.params.analysisMode === 'double-sphere-metrics';
+    const isCompareMode = this.params.analysisMode === 'compare-all-modes';
+    const isPureOnly = this.params.analysisMode === 'pure-geodesic';
 
     for (const ctrl of this.bestfitStepControllers) {
       isBestFit ? ctrl.show() : ctrl.hide();
     }
     for (const ctrl of this.pureGeodesicStepControllers) {
-      isBestFit ? ctrl.hide() : ctrl.show();
+      isPureOnly ? ctrl.show() : ctrl.hide();
     }
     for (const ctrl of this.bestfitVisControllers) {
       isBestFit ? ctrl.show() : ctrl.hide();
+    }
+    for (const ctrl of this.doubleSphereControllers) {
+      (isDoubleSphere || isCompareMode) ? ctrl.show() : ctrl.hide();
     }
   }
 
