@@ -255,11 +255,11 @@ export class ControlPanel {
       .name('Rim Trim %')
       .onChange(() => this.callbacks.onParamsChange(this.params));
 
-    folder.add(this.params, 'rimInclinationAngle', 0, 45, 0.5)
+    folder.add(this.params, 'rimInclinationAngle', -180, 180, 0.5)
       .name('Rim Inclination (°)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
 
-    folder.add(this.params, 'rimInclinationAzimuth', 0, 360, 1)
+    folder.add(this.params, 'rimInclinationAzimuth', -180, 180, 1)
       .name('Rim Azimuth (°)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
 
