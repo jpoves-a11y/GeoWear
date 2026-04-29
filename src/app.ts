@@ -344,6 +344,8 @@ export class App {
     try {
       this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
+      // Init lasso manager so the user can draw exclusions after full analysis too
+      this.ensureLassoManager();
       this.currentResults = results;
       this.applyVisualization();
       this.applyVisibilityFromParams(); // re-apply toggle states (contextOpaque, wireframe, etc.) to freshly created meshes
@@ -389,19 +391,7 @@ export class App {
       this.applyVisibilityFromParams();
       this.scene.requestRender();
       // Init lasso manager after we have a separation
-      if (!this.lassoManager) {
-        this.lassoManager = new LassoSelectionManager(this.scene.renderer.domElement);
-        this.lassoManager.setCallbacks({
-          onSelectionComplete: (newSet: Set<number>) => {
-            for (const vi of newSet) this.excludedInnerMeshVertices.add(vi);
-            this.scene.controls.enabled = true;
-            const separation = this.pipeline?.state.separation;
-            if (separation) this.meshViewer.setExcludedVerticesHighlight(this.excludedInnerMeshVertices, separation.inner);
-            this.controls.updateExclusionCount(this.excludedInnerMeshVertices.size);
-            this.scene.requestRender();
-          },
-        });
-      }
+      this.ensureLassoManager();
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -447,12 +437,30 @@ export class App {
 
   // ---- Exclusion zone methods ----
 
+  /** Create lassoManager if not yet created (works after both stepSeparate and runFullAnalysis). */
+  private ensureLassoManager(): void {
+    if (this.lassoManager) return;
+    this.lassoManager = new LassoSelectionManager(this.scene.renderer.domElement);
+    this.lassoManager.setCallbacks({
+      onSelectionComplete: (newSet: Set<number>) => {
+        for (const vi of newSet) this.excludedInnerMeshVertices.add(vi);
+        this.scene.controls.enabled = true;
+        const separation = this.pipeline?.state.separation;
+        if (separation) this.meshViewer.setExcludedVerticesHighlight(this.excludedInnerMeshVertices, separation.inner);
+        this.controls.updateExclusionCount(this.excludedInnerMeshVertices.size);
+        this.status.setStatus(`Exclusion updated: ${this.excludedInnerMeshVertices.size.toLocaleString()} vertices excluded. Re-run analysis to apply.`);
+        this.scene.requestRender();
+      },
+    });
+  }
+
   private enableLassoMode(): void {
     const sep = this.pipeline?.state.separation;
     if (!sep) { this.status.setStatus('Run face separation first'); return; }
+    this.ensureLassoManager();
     this.scene.controls.enabled = false;
     const offset = this.meshViewer.getGroupOffset();
-    this.lassoManager?.enable(sep.inner, this.scene.camera, offset);
+    this.lassoManager!.enable(sep.inner, this.scene.camera, offset);
     this.status.setStatus('Lasso active — click to add points, click near start or Enter to close, Esc to cancel');
   }
 
