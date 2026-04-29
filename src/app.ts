@@ -372,7 +372,10 @@ export class App {
       this.ensureLassoManager();
       this.currentResults = results;
       this.applyVisualization();
-      this.applyVisibilityFromParams(); // re-apply toggle states (contextOpaque, wireframe, etc.) to freshly created meshes
+      this.applyVisibilityFromParams();
+      // Restore rim plane disc to user-configured position (applyVisualization may
+      // have drawn the algorithm-computed rimPlane — we always want the user params).
+      this.updateRimPreview();
       this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(results);
       this.status.setStatus(`Analysis complete in ${(results.processingTimeMs / 1000).toFixed(1)}s`);
@@ -775,20 +778,11 @@ export class App {
         );
       }
       if (results.rimPlane && results.commercialSphere) {
-        this.meshViewer.displayRimPlane(
-          results.rimPlane.point,
-          results.rimPlane.normal,
-          results.commercialSphere.commercialRadius,
-          this.params.showRimPlane
-        );
+        // Rim plane disc is shown via updateRimPreview() after applyVisualization,
+        // so the user-configured inclination/azimuth is always respected.
+        // We skip re-drawing it here to avoid overwriting with the algorithm plane.
       } else if (results.rimPlane && results.analysisMode === 'double-sphere-metrics' && zs) {
-        // Double-sphere: use unworn sphere radius for plane display scale
-        this.meshViewer.displayRimPlane(
-          results.rimPlane.point,
-          results.rimPlane.normal,
-          zs.unwornSphere.radius,
-          this.params.showRimPlane
-        );
+        // same: drawn by updateRimPreview
       }
       if (results.wearPlane && results.commercialSphere) {
         // Center the plane midway between pole and rim, projected onto the wear plane

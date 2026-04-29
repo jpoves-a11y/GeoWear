@@ -320,7 +320,7 @@ export interface AppState {
 /** User-configurable parameters */
 export interface AnalysisParams {
   geodesicCount: number;       // default 360
-  rimTrimPercent: number;      // default 6
+  rimTrimPercent: number;      // default 16
   repairInnerFace: boolean;    // optional inner-face cleanup before trimming/analysis
   smoothingIterations: number; // Taubin smoothing iterations, default 3
   thresholdMicrons: number;    // default 1.0
@@ -362,7 +362,7 @@ export interface AnalysisParams {
 
 export const DEFAULT_PARAMS: AnalysisParams = {
   geodesicCount: 360,
-  rimTrimPercent: 6,
+  rimTrimPercent: 16,
   repairInnerFace: false,
   smoothingIterations: 3,
   thresholdMicrons: 1.0,
