@@ -253,13 +253,7 @@ export class MeshViewer {
       mat.depthWrite = depthWrite;
       mat.needsUpdate = true;
     }
-    if (this.ghostMeshObject) {
-      const mat = this.ghostMeshObject.material as THREE.MeshStandardMaterial;
-      mat.opacity = opacity;
-      mat.transparent = transparent;
-      mat.depthWrite = depthWrite;
-      mat.needsUpdate = true;
-    }
+    // Ghost mesh (trimmed rim part) always stays translucent — never goes opaque
   }
 
   public setWireframe(visible: boolean): void {

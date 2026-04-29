@@ -364,6 +364,9 @@ export class App {
     try {
       this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
       this.pipeline.setRimPlaneNormal(rimNormal);
+      // Also store angles so the pipeline can re-derive the normal from its OWN
+      // freshly-computed cupAxis — this is the robust fallback.
+      this.pipeline.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
       // Init lasso manager so the user can draw exclusions after full analysis too
       this.ensureLassoManager();
@@ -424,6 +427,7 @@ export class App {
       this.status.setStatus('Trimming rim...');
       p.setExclusionMask(this.excludedInnerMeshVertices);
       p.setRimPlaneNormal(this.computeCurrentRimNormal());
+      p.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
       const trim = p.stepTrimRim(this.params.rimTrimPercent);
       this.meshViewer.displayInnerMesh(trim.mesh);
       this.meshViewer.displayGhostMesh(trim.rimMesh);

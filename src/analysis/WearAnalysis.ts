@@ -15,6 +15,7 @@ import type {
 import { COMMERCIAL_RADII } from '../types';
 import { separateFaces, trimRim } from './MeshProcessor';
 import { smoothMesh, repairInnerFaceMesh } from './MeshSmoother';
+import { computeTiltedRimNormal } from '../utils/geometry';
 import { fitSphereRobust, fitSphereFixedRadius, fitSphereFixedRadiusRobust } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
 import { MeshGraph } from '../math/MeshGraph';
@@ -111,6 +112,10 @@ export interface PipelineState {
   excludedInnerMeshVertices: Set<number>;
   // User-defined rim plane normal (overrides cup axis when set)
   rimPlaneNormal?: [number, number, number];
+  // Rim inclination angles (stored so the normal can be re-derived after
+  // stepSeparateFaces uses the fresh cupAxis, avoiding stale-separation bugs)
+  rimInclinationAngleDeg: number;
+  rimInclinationAzimuthDeg: number;
 }
 
 export class WearAnalysisPipeline {
@@ -144,6 +149,8 @@ export class WearAnalysisPipeline {
     dsRimVertices: null,
     excludedInnerMeshVertices: new Set<number>(),
     rimPlaneNormal: undefined,
+    rimInclinationAngleDeg: 0,
+    rimInclinationAzimuthDeg: 0,
   };
 
   private onProgress?: (stage: string, progress: number, message: string) => void;
@@ -168,6 +175,13 @@ export class WearAnalysisPipeline {
    *  When set, trimRim uses a fast plane-based approach instead of geodesic distance. */
   public setRimPlaneNormal(normal: [number, number, number] | undefined): void {
     this.state.rimPlaneNormal = normal;
+  }
+
+  /** Store rim inclination angles so stepTrimRim can compute the plane normal from the
+   *  freshly computed cupAxis after separation, avoiding stale-pipeline bugs. */
+  public setRimInclination(angleDeg: number, azimuthDeg: number): void {
+    this.state.rimInclinationAngleDeg = angleDeg;
+    this.state.rimInclinationAzimuthDeg = azimuthDeg;
   }
 
   /**
@@ -276,6 +290,7 @@ export class WearAnalysisPipeline {
       // Propagate user-configured rim plane and exclusion mask to each sub-pipeline
       subPipeline.setRimPlaneNormal(this.state.rimPlaneNormal);
       subPipeline.setExclusionMask(this.state.excludedInnerMeshVertices);
+      subPipeline.setRimInclination(this.state.rimInclinationAngleDeg, this.state.rimInclinationAzimuthDeg);
       const subResult = await subPipeline.runFullAnalysis(meshData, buildModeParams(mode));
       return { result: subResult as AnalysisResults, pipeline: subPipeline };
     };
@@ -330,12 +345,29 @@ export class WearAnalysisPipeline {
   stepTrimRim(rimPercent: number = 5): TrimResult {
     if (!this.state.separation) throw new Error('Run face separation first');
 
+    // Re-derive the rim plane normal from the freshly computed cupAxis + stored angles.
+    // This is the authoritative calculation: it uses the cupAxis from THIS pipeline's
+    // separation, so it is never stale regardless of when setRimInclination was called.
+    let rimPlaneNormal = this.state.rimPlaneNormal;
+    if (this.state.rimInclinationAngleDeg !== 0 || this.state.rimInclinationAzimuthDeg !== 0) {
+      const v = computeTiltedRimNormal(
+        this.state.separation.cupAxis,
+        this.state.rimInclinationAngleDeg,
+        this.state.rimInclinationAzimuthDeg,
+      );
+      rimPlaneNormal = [v.x, v.y, v.z];
+    } else if (rimPlaneNormal === undefined) {
+      // inclination = 0 → use cup axis directly (plane-based, perpendicular to axis)
+      // Only when a planeNormal was explicitly requested (not for pure geodesic fallback)
+      // Leave as undefined → geodesic path
+    }
+
     this.state.trimResult = trimRim(
       this.state.separation.inner,
       this.state.separation.cupAxis,
       rimPercent,
       this.state.excludedInnerMeshVertices.size > 0 ? this.state.excludedInnerMeshVertices : undefined,
-      this.state.rimPlaneNormal,
+      rimPlaneNormal,
     );
     this.state.workingMesh = this.state.trimResult.mesh;
     this.state.smoothedMesh = null; // invalidate
