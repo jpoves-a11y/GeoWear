@@ -355,21 +355,41 @@ function computeCupAxis(
     axisX = 0; axisY = 1; axisZ = 0;
   }
 
-  // Ensure axis points from rim toward pole (into the cup)
-  // The pole should be in the direction where vertices are most sparse
-  // For inner surface, the pole is the point farthest along the negative axis
-  // Check: if most vertices are on the positive side, flip
-  let positiveSide = 0;
-  for (let i = 0; i < positions.length; i += 3) {
-    const dx = positions[i] - cx;
-    const dy = positions[i + 1] - cy;
-    const dz = positions[i + 2] - cz;
-    const dot = dx * axisX + dy * axisY + dz * axisZ;
-    if (dot > 0) positiveSide++;
+  // Ensure axis points from rim toward pole.
+  // Physical reasoning: the pole is a single convergence point (small radial spread),
+  // the rim opening is a wide ring (large radial spread).
+  // Compute mean radial distance from the axis at both ends of the height distribution.
+  const projections = new Float32Array(n);
+  let minProj = Infinity, maxProj = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const dx = positions[i * 3] - cx;
+    const dy = positions[i * 3 + 1] - cy;
+    const dz = positions[i * 3 + 2] - cz;
+    const p = dx * axisX + dy * axisY + dz * axisZ;
+    projections[i] = p;
+    if (p < minProj) minProj = p;
+    if (p > maxProj) maxProj = p;
   }
-  // If more vertices on positive side, the opening is positive, pole is negative
-  // Flip axis to point toward pole
-  if (positiveSide > n / 2) {
+  // Sample top and bottom 10% of vertices by projection
+  const range = maxProj - minProj;
+  const topThresh = maxProj - 0.1 * range;
+  const botThresh = minProj + 0.1 * range;
+  let topRadSum = 0, topCnt = 0, botRadSum = 0, botCnt = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = positions[i * 3] - cx;
+    const dy = positions[i * 3 + 1] - cy;
+    const dz = positions[i * 3 + 2] - cz;
+    const p = projections[i];
+    const rx = dx - p * axisX, ry = dy - p * axisY, rz = dz - p * axisZ;
+    const r = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (p >= topThresh) { topRadSum += r; topCnt++; }
+    if (p <= botThresh) { botRadSum += r; botCnt++; }
+  }
+  const topMeanRad = topCnt > 0 ? topRadSum / topCnt : 0;
+  const botMeanRad = botCnt > 0 ? botRadSum / botCnt : 0;
+  // The rim (ring) has LARGER mean radius than the pole (point).
+  // If the top end has the larger radius → rim is at the top → flip so axis points toward pole.
+  if (topMeanRad > botMeanRad) {
     axisX = -axisX; axisY = -axisY; axisZ = -axisZ;
   }
 
@@ -416,15 +436,53 @@ function trimRimByPlane(
   }
 
   const heightRange = maxH - minH;
-  // Keep faces whose vertices are all below the threshold (away from rim)
-  const threshold = maxH - (percent / 100) * heightRange;
+
+  // Validate which end is the rim by finding actual boundary vertices.
+  // The rim boundary has the largest mean height; if it's actually at the LOW end
+  // (i.e. the plane normal points toward the pole, not the opening), cut from minH upward.
+  let rimAtHighEnd = true; // default: cut from maxH downward
+  {
+    const edgeCnt = new Map<string, number>();
+    for (let f = 0; f < faceCount; f++) {
+      for (let e = 0; e < 3; e++) {
+        const a = indices[f * 3 + e], b = indices[f * 3 + ((e + 1) % 3)];
+        const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+        edgeCnt.set(k, (edgeCnt.get(k) || 0) + 1);
+      }
+    }
+    let boundaryHSum = 0, boundaryHCnt = 0;
+    const seen = new Set<number>();
+    for (const [k, cnt] of edgeCnt) {
+      if (cnt === 1) {
+        const [a, b] = k.split('_').map(Number);
+        if (!seen.has(a)) { boundaryHSum += height[a]; boundaryHCnt++; seen.add(a); }
+        if (!seen.has(b)) { boundaryHSum += height[b]; boundaryHCnt++; seen.add(b); }
+      }
+    }
+    if (boundaryHCnt > 0) {
+      const boundaryMeanH = boundaryHSum / boundaryHCnt;
+      // If boundary is closer to minH, the rim is at the low end → need to invert
+      rimAtHighEnd = (Math.abs(boundaryMeanH - maxH) <= Math.abs(boundaryMeanH - minH));
+      if (!rimAtHighEnd) {
+        console.log(`[trimRimByPlane] Rim detected at LOW end (boundary meanH=${boundaryMeanH.toFixed(2)}, minH=${minH.toFixed(2)}, maxH=${maxH.toFixed(2)}) — inverting cut direction.`);
+      }
+    }
+  }
+
+  // Compute threshold and keep criterion based on rim orientation
+  const threshold = rimAtHighEnd
+    ? maxH - (percent / 100) * heightRange  // keep height <= threshold
+    : minH + (percent / 100) * heightRange; // keep height >= threshold
 
   const keptFaces: number[] = [];
   for (let f = 0; f < faceCount; f++) {
     const i0 = indices[f * 3];
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
-    if (height[i0] <= threshold && height[i1] <= threshold && height[i2] <= threshold) {
+    const keep = rimAtHighEnd
+      ? (height[i0] <= threshold && height[i1] <= threshold && height[i2] <= threshold)
+      : (height[i0] >= threshold && height[i1] >= threshold && height[i2] >= threshold);
+    if (keep) {
       if (excludedVertices && (excludedVertices.has(i0) || excludedVertices.has(i1) || excludedVertices.has(i2))) {
         continue;
       }
@@ -518,12 +576,43 @@ export function trimRim(
     boundaryLoops.push(loop);
   }
 
-  // Use only the largest boundary loop (the actual rim) as seed
+  // Select the rim boundary loop: the rim of an acetabular cup is the OUTERMOST
+  // boundary ring (largest mean radial distance from the cup axis).
+  // This is more robust than picking the largest loop, because some models have a
+  // small hole at the pole (scanning artifact) whose boundary loop might be larger
+  // in vertex count than the true rim opening.
+  const [axX, axY, axZ] = cupAxis;
+  // We need the mesh centroid for radial distance; compute it now (reused later).
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < vertexCount; i++) {
+    cx += positions[i * 3]; cy += positions[i * 3 + 1]; cz += positions[i * 3 + 2];
+  }
+  cx /= vertexCount; cy /= vertexCount; cz /= vertexCount;
+
   let boundaryVerts = new Set<number>();
   if (boundaryLoops.length > 0) {
-    boundaryLoops.sort((a, b) => b.size - a.size);
-    boundaryVerts = boundaryLoops[0];
-    console.log(`[trimRim] Found ${boundaryLoops.length} boundary loops. Largest (rim): ${boundaryVerts.size} verts. Others: ${boundaryLoops.slice(1).map(l => l.size).join(', ') || 'none'}`);
+    let bestLoop = boundaryLoops[0];
+    let bestMeanRad = -Infinity;
+    for (const loop of boundaryLoops) {
+      let sumR = 0;
+      for (const v of loop) {
+        const dx = positions[v * 3] - cx;
+        const dy = positions[v * 3 + 1] - cy;
+        const dz = positions[v * 3 + 2] - cz;
+        const axComp = dx * axX + dy * axY + dz * axZ;
+        const rx = dx - axComp * axX;
+        const ry = dy - axComp * axY;
+        const rz = dz - axComp * axZ;
+        sumR += Math.sqrt(rx * rx + ry * ry + rz * rz);
+      }
+      const meanRad = sumR / loop.size;
+      if (meanRad > bestMeanRad) {
+        bestMeanRad = meanRad;
+        bestLoop = loop;
+      }
+    }
+    boundaryVerts = bestLoop;
+    console.log(`[trimRim] ${boundaryLoops.length} boundary loops. Rim loop: ${bestLoop.size} verts (mean rad ${bestMeanRad.toFixed(2)} mm). Other loops: ${boundaryLoops.filter(l => l !== bestLoop).map(l => l.size).join(', ') || 'none'}`);
   }
 
   // --- Build adjacency for BFS geodesic distance ---
@@ -612,12 +701,7 @@ export function trimRim(
   // Threshold: remove vertices within percent% of max geodesic distance from rim
   const distThreshold = (percent / 100) * maxDist;
 
-  // Also compute heights for TrimResult metadata
-  let cx = 0, cy = 0, cz = 0;
-  for (let i = 0; i < positions.length; i += 3) {
-    cx += positions[i]; cy += positions[i + 1]; cz += positions[i + 2];
-  }
-  cx /= vertexCount; cy /= vertexCount; cz /= vertexCount;
+  // Also compute heights for TrimResult metadata (cx/cy/cz already computed above)
   let minHeight = Infinity, maxHeight = -Infinity;
   for (let i = 0; i < vertexCount; i++) {
     const h = (positions[i*3]-cx)*cupAxis[0] + (positions[i*3+1]-cy)*cupAxis[1] + (positions[i*3+2]-cz)*cupAxis[2];
