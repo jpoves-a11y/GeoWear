@@ -273,6 +273,9 @@ export class WearAnalysisPipeline {
         const scaled = Math.min(0.999, offset + progress / 3);
         this.progress(stage, scaled, `[${label}] ${message}`);
       });
+      // Propagate user-configured rim plane and exclusion mask to each sub-pipeline
+      subPipeline.setRimPlaneNormal(this.state.rimPlaneNormal);
+      subPipeline.setExclusionMask(this.state.excludedInnerMeshVertices);
       const subResult = await subPipeline.runFullAnalysis(meshData, buildModeParams(mode));
       return { result: subResult as AnalysisResults, pipeline: subPipeline };
     };
