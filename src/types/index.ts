@@ -30,6 +30,7 @@ export interface TrimResult {
   rimMesh: MeshData;              // removed rim part (transparent reference)
   rimPercentRemoved: number;
   heightRange: [number, number];
+  rimAtHighEnd: boolean;          // true = rim at maxH end (normal points toward rim)
 }
 
 /** Sphere fit result */

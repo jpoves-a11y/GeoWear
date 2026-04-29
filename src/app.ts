@@ -494,7 +494,12 @@ export class App {
     // Position the plane disc at the height threshold in local mesh space
     const [nx, ny, nz] = planeNormal;
     const [minH, maxH] = trimResult.heightRange;
-    const threshold = maxH - (this.params.rimTrimPercent / 100) * (maxH - minH);
+    const rimAtHighEnd = trimResult.rimAtHighEnd;
+    const heightRange = maxH - minH;
+    // Use the same formula as trimRimByPlane so the disc matches the actual cut
+    const threshold = rimAtHighEnd
+      ? maxH - (this.params.rimTrimPercent / 100) * heightRange
+      : minH + (this.params.rimTrimPercent / 100) * heightRange;
 
     // Centroid of inner mesh in local space
     const pos = inner.positions;
@@ -506,6 +511,7 @@ export class App {
     cx /= n; cy /= n; cz /= n;
 
     // Move from centroid along the plane normal to the threshold point
+    // (heights are centroid-relative, so planePt = centroid + normal * threshold)
     const planePt = new THREE.Vector3(
       cx + nx * threshold,
       cy + ny * threshold,

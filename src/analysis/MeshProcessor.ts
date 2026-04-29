@@ -502,6 +502,7 @@ function trimRimByPlane(
     rimMesh: buildMeshFromFaces(positions, normals, indices, removedFaces),
     rimPercentRemoved: percent,
     heightRange: [minH, maxH],
+    rimAtHighEnd,
   };
 }
 
@@ -809,5 +810,6 @@ export function trimRim(
     },
     rimPercentRemoved: percent,
     heightRange: [minHeight, maxHeight],
+    rimAtHighEnd: true,  // geodesic path: rim seeds from boundary at maxH
   };
 }
