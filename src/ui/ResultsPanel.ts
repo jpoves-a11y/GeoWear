@@ -155,7 +155,12 @@ export class ResultsPanel {
       const best = results.doubleSphereMetrics?.bestCell;
       this.addMetric(section, 'Sweep Cells', (results.doubleSphereMetrics?.cells.length ?? 0).toString());
       if (best) {
-        this.addMetric(section, 'Best Linear Wear', (best.centerDistanceMean * 1000).toFixed(1), 'μm', 'warning');
+        this.addMetric(section, 'Best Linear Wear', (best.centerDistanceMean * 1000).toFixed(1), 'μm', 'warning', true);
+        if (this.yearsInVivo > 0) {
+          const linearRate = best.centerDistanceMean / this.yearsInVivo;
+          this.addRateMetric(section, 'Linear Wear Rate', linearRate.toFixed(4), 'mm/year',
+            linearRate > 0.01 ? 'danger' : 'success');
+        }
         this.addMetric(section, 'Best Distance Std', (best.centerDistanceStd * 1000).toFixed(1), 'μm');
         this.addMetric(section, 'Best Thresh1', best.thresh1.toFixed(3));
         this.addMetric(section, 'Best Thresh2', best.thresh2.toFixed(3));
@@ -208,8 +213,13 @@ export class ResultsPanel {
     if (ds.bestCell) {
       this.addMetric(section, 'Best Thresh1', ds.bestCell.thresh1.toFixed(3));
       this.addMetric(section, 'Best Thresh2', ds.bestCell.thresh2.toFixed(3));
-      this.addMetric(section, 'Best Center Dist Mean', ds.bestCell.centerDistanceMean.toFixed(4), 'mm', 'warning');
+      this.addMetric(section, 'Best Center Dist Mean', ds.bestCell.centerDistanceMean.toFixed(4), 'mm', 'warning', true);
       this.addMetric(section, 'Best Center Dist Std', ds.bestCell.centerDistanceStd.toFixed(4), 'mm');
+      if (this.yearsInVivo > 0) {
+        const linearRate = ds.bestCell.centerDistanceMean / this.yearsInVivo;
+        this.addRateMetric(section, 'Linear Wear Rate', linearRate.toFixed(4), 'mm/year',
+          linearRate > 0.01 ? 'danger' : 'success');
+      }
       this.addMetric(section, 'Best Radius1 Mean', ds.bestCell.radius1Mean.toFixed(4), 'mm');
       this.addMetric(section, 'Best Radius2 Mean', ds.bestCell.radius2Mean.toFixed(4), 'mm');
     }
