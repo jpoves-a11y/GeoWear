@@ -42,6 +42,10 @@ export interface ControlCallbacks {
   onExportPDF: () => void;
   onShowResults: () => void;
   onParamsChange: (params: AnalysisParams) => void;
+  // Exclusion zone
+  onEnableLassoMode: () => void;
+  onClearExclusions: () => void;
+  onToggleExcludedHighlight: (v: boolean) => void;
 }
 
 export class ControlPanel {
@@ -89,6 +93,7 @@ export class ControlPanel {
     this.buildProcessingSection();
     this.buildParametersSection();
     this.buildVisualizationSection();
+    this.buildExclusionSection();
     this.buildExportSection();
   }
 
@@ -350,6 +355,37 @@ export class ControlPanel {
     folder.add(resultsBtn, 'Show Results Panel');
 
     folder.open();
+  }
+
+  private buildExclusionSection(): void {
+    const folder = this.gui.addFolder('✂ Exclusion Zone');
+
+    const actions = {
+      'Draw Lasso': () => this.callbacks.onEnableLassoMode(),
+      'Clear All': () => this.callbacks.onClearExclusions(),
+    };
+    folder.add(actions, 'Draw Lasso');
+    folder.add(actions, 'Clear All');
+
+    folder.add(this.params, 'showExcludedVertices')
+      .name('Highlight Excluded')
+      .onChange((v: boolean) => this.callbacks.onToggleExcludedHighlight(v));
+
+    // Exclusion zone count label (updated externally via updateExclusionCount)
+    this.exclusionCountProxy = { info: 'No vertices excluded' };
+    this.exclusionCountController = folder.add(this.exclusionCountProxy, 'info').name('Status').disable();
+
+    folder.close();
+  }
+
+  // Proxy objects for the exclusion folder
+  private exclusionCountProxy: { info: string } = { info: 'No vertices excluded' };
+  private exclusionCountController: any = null;
+
+  /** Update the exclusion count label in the UI */
+  public updateExclusionCount(count: number): void {
+    this.exclusionCountProxy.info = count === 0 ? 'No vertices excluded' : `${count.toLocaleString()} vertices excluded`;
+    if (this.exclusionCountController) this.exclusionCountController.updateDisplay();
   }
 
   private buildExportSection(): void {

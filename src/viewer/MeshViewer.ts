@@ -1106,12 +1106,46 @@ export class MeshViewer {
     return geo;
   }
 
+  /**
+   * Highlight excluded vertices as red dots in the scene.
+   * Pass null (or an empty Set) to remove the highlight.
+   */
+  public setExcludedVerticesHighlight(excluded: Set<number> | null, innerMesh: { positions: Float32Array } | null): void {
+    this.removeNamedObject('excluded-highlight');
+
+    if (!excluded || excluded.size === 0 || !innerMesh) return;
+
+    const pts = new Float32Array(excluded.size * 3);
+    let idx = 0;
+    // Group offset is already applied to the scene — we place dots relative
+    // to the group so they automatically follow the model position.
+    for (const vi of excluded) {
+      pts[idx++] = innerMesh.positions[vi * 3];
+      pts[idx++] = innerMesh.positions[vi * 3 + 1];
+      pts[idx++] = innerMesh.positions[vi * 3 + 2];
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+
+    const mat = new THREE.PointsMaterial({
+      color: 0xff2222,
+      size: 3,
+      sizeAttenuation: false,
+      depthTest: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.name = 'excluded-highlight';
+    points.renderOrder = 20;
+    this.originalGroup.add(points);
+  }
+
   /** Remove a named object from the group */
   private removeNamedObject(name: string): void {
     const obj = this.originalGroup.getObjectByName(name);
     if (obj) {
       this.originalGroup.remove(obj);
-      if (obj instanceof THREE.Mesh) {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Points) {
         obj.geometry.dispose();
         if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
         else obj.material.dispose();
@@ -1376,7 +1410,7 @@ export class MeshViewer {
     while (this.originalGroup.children.length > 0) {
       const child = this.originalGroup.children[0];
       this.originalGroup.remove(child);
-      if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+      if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments || child instanceof THREE.Points) {
         child.geometry.dispose();
         if (Array.isArray(child.material)) {
           child.material.forEach(m => m.dispose());

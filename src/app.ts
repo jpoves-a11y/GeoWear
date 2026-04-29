@@ -18,6 +18,7 @@ import { ExportManager } from './ui/ExportManager';
 import { StatusBar } from './ui/StatusBar';
 import { ProfileWindowManager } from './ui/ProfileWindowManager';
 import { WearAnalysisPipeline } from './analysis/WearAnalysis';
+import { LassoSelectionManager } from './viewer/LassoSelectionManager';
 
 export class App {
   // Core viewer
@@ -49,6 +50,10 @@ export class App {
 
   // Parameters (copy from defaults)
   private params: AnalysisParams = { ...DEFAULT_PARAMS };
+
+  // Exclusion zone
+  private excludedInnerMeshVertices: Set<number> = new Set();
+  private lassoManager: LassoSelectionManager | null = null;
 
   init(): void {
     // SceneManager finds DOM elements by ID internally
@@ -140,6 +145,10 @@ export class App {
           this.resultsPanel.show(this.currentResults);
         }
       },
+      // --- Exclusion zone ---
+      onEnableLassoMode: () => this.enableLassoMode(),
+      onClearExclusions: () => this.clearExclusions(),
+      onToggleExcludedHighlight: (v: boolean) => this.toggleExcludedHighlight(v),
     };
     this.controls = new ControlPanel(callbacks);
 
@@ -333,6 +342,7 @@ export class App {
     });
 
     try {
+      this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
       this.currentResults = results;
       this.applyVisualization();
@@ -378,6 +388,20 @@ export class App {
       this.controls.markStepCompleted('separate');
       this.applyVisibilityFromParams();
       this.scene.requestRender();
+      // Init lasso manager after we have a separation
+      if (!this.lassoManager) {
+        this.lassoManager = new LassoSelectionManager(this.scene.renderer.domElement);
+        this.lassoManager.setCallbacks({
+          onSelectionComplete: (newSet: Set<number>) => {
+            for (const vi of newSet) this.excludedInnerMeshVertices.add(vi);
+            this.scene.controls.enabled = true;
+            const separation = this.pipeline?.state.separation;
+            if (separation) this.meshViewer.setExcludedVerticesHighlight(this.excludedInnerMeshVertices, separation.inner);
+            this.controls.updateExclusionCount(this.excludedInnerMeshVertices.size);
+            this.scene.requestRender();
+          },
+        });
+      }
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -387,6 +411,7 @@ export class App {
     const p = this.ensurePipeline();
     try {
       this.status.setStatus('Trimming rim...');
+      p.setExclusionMask(this.excludedInnerMeshVertices);
       const trim = p.stepTrimRim(this.params.rimTrimPercent);
       this.meshViewer.displayInnerMesh(trim.mesh);
       this.meshViewer.displayGhostMesh(trim.rimMesh);
@@ -418,6 +443,34 @@ export class App {
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
+  }
+
+  // ---- Exclusion zone methods ----
+
+  private enableLassoMode(): void {
+    const sep = this.pipeline?.state.separation;
+    if (!sep) { this.status.setStatus('Run face separation first'); return; }
+    this.scene.controls.enabled = false;
+    const offset = this.meshViewer.getGroupOffset();
+    this.lassoManager?.enable(sep.inner, this.scene.camera, offset);
+    this.status.setStatus('Lasso active — click to add points, click near start or Enter to close, Esc to cancel');
+  }
+
+  private clearExclusions(): void {
+    this.excludedInnerMeshVertices.clear();
+    this.meshViewer.setExcludedVerticesHighlight(null, null);
+    this.controls.updateExclusionCount(0);
+    this.scene.requestRender();
+  }
+
+  private toggleExcludedHighlight(visible: boolean): void {
+    const sep = this.pipeline?.state.separation;
+    if (visible && sep) {
+      this.meshViewer.setExcludedVerticesHighlight(this.excludedInnerMeshVertices, sep.inner);
+    } else {
+      this.meshViewer.setExcludedVerticesHighlight(null, null);
+    }
+    this.scene.requestRender();
   }
 
   private async stepGeodesics(): Promise<void> {

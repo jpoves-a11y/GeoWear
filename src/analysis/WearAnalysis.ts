@@ -107,6 +107,8 @@ export interface PipelineState {
   dsRimNormal: THREE.Vector3 | null;
   dsDistToPole: number | null;
   dsRimVertices: number[] | null;
+  // User-defined vertex exclusion mask (indices into separation.inner)
+  excludedInnerMeshVertices: Set<number>;
 }
 
 export class WearAnalysisPipeline {
@@ -138,6 +140,7 @@ export class WearAnalysisPipeline {
     dsRimNormal: null,
     dsDistToPole: null,
     dsRimVertices: null,
+    excludedInnerMeshVertices: new Set<number>(),
   };
 
   private onProgress?: (stage: string, progress: number, message: string) => void;
@@ -150,6 +153,12 @@ export class WearAnalysisPipeline {
     if (this.onProgress) {
       this.onProgress(stage, progress, message);
     }
+  }
+
+  /** Set the vertex exclusion mask. Vertices in this set (indices into separation.inner)
+   *  will be removed from trimRim output and from the double-sphere RANSAC point cloud. */
+  public setExclusionMask(excluded: Set<number>): void {
+    this.state.excludedInnerMeshVertices = excluded;
   }
 
   /**
@@ -312,7 +321,8 @@ export class WearAnalysisPipeline {
     this.state.trimResult = trimRim(
       this.state.separation.inner,
       this.state.separation.cupAxis,
-      rimPercent
+      rimPercent,
+      this.state.excludedInnerMeshVertices.size > 0 ? this.state.excludedInnerMeshVertices : undefined,
     );
     this.state.workingMesh = this.state.trimResult.mesh;
     this.state.smoothedMesh = null; // invalidate
@@ -772,7 +782,7 @@ export class WearAnalysisPipeline {
       const h = (innerMesh.positions[i * 3]     - p0x) * nx0
               + (innerMesh.positions[i * 3 + 1] - p0y) * ny0
               + (innerMesh.positions[i * 3 + 2] - p0z) * nz0;
-      if (h >= 0) {
+      if (h >= 0 && !this.state.excludedInnerMeshVertices.has(i)) {
         points.push([
           innerMesh.positions[i * 3],
           innerMesh.positions[i * 3 + 1],

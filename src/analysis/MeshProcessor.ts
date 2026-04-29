@@ -380,7 +380,7 @@ function computeCupAxis(
  * Trim the top 'percent' of the mesh near the rim of the cup.
  * Height is measured along the cup axis.
  */
-export function trimRim(meshData: MeshData, cupAxis: [number, number, number], percent: number): TrimResult {
+export function trimRim(meshData: MeshData, cupAxis: [number, number, number], percent: number, excludedVertices?: Set<number>): TrimResult {
   const { positions, normals, indices } = meshData;
   const vertexCount = meshData.vertexCount;
   const faceCount = meshData.faceCount;
@@ -544,12 +544,17 @@ export function trimRim(meshData: MeshData, cupAxis: [number, number, number], p
   }
 
   // Filter: keep faces where ALL vertices are beyond threshold (away from rim)
+  // AND none of the vertices are in the user-defined exclusion mask.
   const keptFaces: number[] = [];
   for (let f = 0; f < faceCount; f++) {
     const i0 = indices[f * 3];
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
     if (dist[i0] > distThreshold && dist[i1] > distThreshold && dist[i2] > distThreshold) {
+      // Exclude faces that touch any user-excluded vertex
+      if (excludedVertices && (excludedVertices.has(i0) || excludedVertices.has(i1) || excludedVertices.has(i2))) {
+        continue;
+      }
       keptFaces.push(f);
     }
   }
