@@ -514,7 +514,7 @@ export class App {
     }
     const radius = Math.sqrt(maxR2);
 
-    this.meshViewer.displayRimPlane(planePt, new THREE.Vector3(nx, ny, nz), radius, this.params.showRimPlane);
+    this.meshViewer.displayRimPlane(planePt, new THREE.Vector3(nx, ny, nz), radius, this.params.showRimPlane, new THREE.Vector3(...sep.cupAxis));
     this.scene.requestRender();
   }
 

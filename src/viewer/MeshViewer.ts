@@ -381,12 +381,18 @@ export class MeshViewer {
   /**
    * Display the rim plane as a semi-transparent disc.
    */
-  public displayRimPlane(center: THREE.Vector3, normal: THREE.Vector3, radius: number, visible: boolean = true): void {
+  public displayRimPlane(center: THREE.Vector3, normal: THREE.Vector3, radius: number, visible: boolean = true, cupAxis?: THREE.Vector3): void {
+    // Remove previous rim plane group (identified by name)
     this.removeNamedObject('rim-plane');
-    if (this.rimPlaneObject) {
-      this.originalGroup.remove(this.rimPlaneObject);
-      this.rimPlaneObject.geometry.dispose();
-    }
+    this.rimPlaneObject = null;
+
+    // Group so disc + tilt indicator move/orient together
+    const group = new THREE.Group();
+    group.position.copy(center);
+    group.name = 'rim-plane';
+    group.visible = visible;
+    group.renderOrder = 6;
+
     const geo = new THREE.CircleGeometry(radius * 1.3, 64);
     const mat = new THREE.MeshStandardMaterial({
       color: 0x4488ff,
@@ -395,16 +401,55 @@ export class MeshViewer {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    this.rimPlaneObject = new THREE.Mesh(geo, mat);
-    this.rimPlaneObject.position.copy(center);
+    const disc = new THREE.Mesh(geo, mat);
     // Orient disc so its normal aligns with the plane normal
     const up = new THREE.Vector3(0, 0, 1);
-    const quat = new THREE.Quaternion().setFromUnitVectors(up, normal.clone().normalize());
-    this.rimPlaneObject.quaternion.copy(quat);
-    this.rimPlaneObject.name = 'rim-plane';
-    this.rimPlaneObject.visible = visible;
-    this.rimPlaneObject.renderOrder = 6;
-    this.originalGroup.add(this.rimPlaneObject);
+    const n = normal.clone().normalize();
+    const quat = new THREE.Quaternion().setFromUnitVectors(up, n);
+    disc.quaternion.copy(quat);
+    disc.renderOrder = 6;
+    group.add(disc);
+
+    // Tilt direction indicator: a colored line from center toward the "uphill" edge of
+    // the tilted plane (projection of the cup axis onto the disc plane).
+    // This makes azimuthal rotation immediately visible.
+    if (cupAxis) {
+      const a = cupAxis.clone().normalize();
+      const dot = a.dot(n);
+      // rising = component of cup axis in the plane; zero when disc is perpendicular to axis
+      const rising = a.clone().addScaledVector(n, -dot);
+      const risingLen = rising.length();
+      if (risingLen > 0.01) {
+        rising.normalize();
+        // Draw a line from center to +rising*radius and -rising*radius (a full diameter)
+        const linePts = [
+          rising.clone().multiplyScalar(-radius * 1.3),
+          rising.clone().multiplyScalar(radius * 1.3),
+        ];
+        const lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xff6600, linewidth: 2, depthWrite: false });
+        const indicator = new THREE.Line(lineGeo, lineMat);
+        indicator.renderOrder = 7;
+        group.add(indicator);
+
+        // Also draw a small arrowhead at the "uphill" end
+        const arrowLen = radius * 0.18;
+        const arrowPts = [
+          rising.clone().multiplyScalar(radius * 1.3),
+          rising.clone().multiplyScalar(radius * 1.3 - arrowLen).addScaledVector(new THREE.Vector3().crossVectors(n, rising).normalize(), arrowLen * 0.5),
+          rising.clone().multiplyScalar(radius * 1.3),
+          rising.clone().multiplyScalar(radius * 1.3 - arrowLen).addScaledVector(new THREE.Vector3().crossVectors(n, rising).normalize(), -arrowLen * 0.5),
+        ];
+        const arrowGeo = new THREE.BufferGeometry().setFromPoints(arrowPts);
+        const arrow = new THREE.Line(arrowGeo, lineMat);
+        arrow.renderOrder = 7;
+        group.add(arrow);
+      }
+    }
+
+    this.rimPlaneObject = disc; // keep reference for legacy compat
+    (this.rimPlaneObject as any).__group = group;
+    this.originalGroup.add(group);
   }
 
   public setCommercialSphereVisible(visible: boolean): void {
@@ -417,7 +462,10 @@ export class MeshViewer {
     if (this.unwornSphereObject) this.unwornSphereObject.visible = visible;
   }
   public setRimPlaneVisible(visible: boolean): void {
-    if (this.rimPlaneObject) this.rimPlaneObject.visible = visible;
+    if (this.rimPlaneObject) {
+      const g = (this.rimPlaneObject as any).__group;
+      (g || this.rimPlaneObject).visible = visible;
+    }
   }
 
   /**
