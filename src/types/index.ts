@@ -31,6 +31,7 @@ export interface TrimResult {
   rimPercentRemoved: number;
   heightRange: [number, number];
   rimAtHighEnd: boolean;          // true = rim at maxH end (normal points toward rim)
+  planeCenter?: [number, number, number]; // world-space anchor used for the cut plane
 }
 
 /** Sphere fit result */

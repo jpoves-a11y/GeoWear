@@ -491,17 +491,14 @@ export class App {
     this.meshViewer.displayInnerMesh(trimResult.mesh);
     this.meshViewer.displayGhostMesh(trimResult.rimMesh);
 
-    // Position the plane disc at the height threshold in local mesh space
+    // The plane center is the intersection of the cup axis with the trim plane —
+    // computed from cupAxis + percent inside trimRim, and returned via planeCenter.
+    // Using it directly ensures the disc never translates when the tilt changes.
     const [nx, ny, nz] = planeNormal;
-    const [minH, maxH] = trimResult.heightRange;
-    const rimAtHighEnd = trimResult.rimAtHighEnd;
-    const heightRange = maxH - minH;
-    // Use the same formula as trimRimByPlane so the disc matches the actual cut
-    const threshold = rimAtHighEnd
-      ? maxH - (this.params.rimTrimPercent / 100) * heightRange
-      : minH + (this.params.rimTrimPercent / 100) * heightRange;
+    const pc = trimResult.planeCenter!;
+    const planePt = new THREE.Vector3(pc[0], pc[1], pc[2]);
 
-    // Centroid of inner mesh in local space
+    // Estimate cup radius for disc size
     const pos = inner.positions;
     const n = inner.vertexCount;
     let cx = 0, cy = 0, cz = 0;
@@ -509,16 +506,6 @@ export class App {
       cx += pos[i * 3]; cy += pos[i * 3 + 1]; cz += pos[i * 3 + 2];
     }
     cx /= n; cy /= n; cz /= n;
-
-    // Move from centroid along the plane normal to the threshold point
-    // (heights are centroid-relative, so planePt = centroid + normal * threshold)
-    const planePt = new THREE.Vector3(
-      cx + nx * threshold,
-      cy + ny * threshold,
-      cz + nz * threshold,
-    );
-
-    // Estimate cup radius for disc size
     let maxR2 = 0;
     for (let i = 0; i < n; i++) {
       const dx = pos[i * 3] - cx, dy = pos[i * 3 + 1] - cy, dz = pos[i * 3 + 2] - cz;

@@ -405,42 +405,37 @@ function computeCupAxis(
  * Computes the signed height of each vertex along `planeNormal` from the mesh centroid.
  * Faces in the top `percent`% of the height range are classified as "rim" and removed.
  */
+// Plane-based trim: heights are measured relative to `planePoint` along `planeNormal`.
+// The cut is at threshold = 0, so the plane passes exactly through planePoint regardless
+// of the normal direction. This lets callers tilt the normal without translating the plane.
 function trimRimByPlane(
   meshData: MeshData,
+  planePoint: [number, number, number],
   planeNormal: [number, number, number],
-  percent: number,
   excludedVertices?: Set<number>,
 ): TrimResult {
   const { positions, normals, indices } = meshData;
   const vertexCount = meshData.vertexCount;
   const faceCount = meshData.faceCount;
   const [nx, ny, nz] = planeNormal;
+  const [px, py, pz] = planePoint;
 
-  // Compute mesh centroid
-  let cx = 0, cy = 0, cz = 0;
-  for (let i = 0; i < vertexCount; i++) {
-    cx += positions[i * 3]; cy += positions[i * 3 + 1]; cz += positions[i * 3 + 2];
-  }
-  cx /= vertexCount; cy /= vertexCount; cz /= vertexCount;
-
-  // Signed height of each vertex along plane normal (relative to centroid)
+  // Signed height of each vertex along plane normal, relative to planePoint.
+  // By construction: vertices on the rim side have h > 0 or h < 0 consistently.
   const height = new Float32Array(vertexCount);
   let minH = Infinity, maxH = -Infinity;
   for (let i = 0; i < vertexCount; i++) {
-    const h = (positions[i * 3] - cx) * nx
-            + (positions[i * 3 + 1] - cy) * ny
-            + (positions[i * 3 + 2] - cz) * nz;
+    const h = (positions[i * 3] - px) * nx
+            + (positions[i * 3 + 1] - py) * ny
+            + (positions[i * 3 + 2] - pz) * nz;
     height[i] = h;
     if (h < minH) minH = h;
     if (h > maxH) maxH = h;
   }
 
-  const heightRange = maxH - minH;
-
-  // Validate which end is the rim by finding actual boundary vertices.
-  // The rim boundary has the largest mean height; if it's actually at the LOW end
-  // (i.e. the plane normal points toward the pole, not the opening), cut from minH upward.
-  let rimAtHighEnd = true; // default: cut from maxH downward
+  // Validate which side of the plane (h>0 or h<0) is the rim by checking actual
+  // boundary vertices (edges shared by only one face).
+  let rimAtHighEnd = true; // default: rim at h>0 side
   {
     const edgeCnt = new Map<string, number>();
     for (let f = 0; f < faceCount; f++) {
@@ -460,28 +455,24 @@ function trimRimByPlane(
       }
     }
     if (boundaryHCnt > 0) {
-      const boundaryMeanH = boundaryHSum / boundaryHCnt;
-      // If boundary is closer to minH, the rim is at the low end → need to invert
-      rimAtHighEnd = (Math.abs(boundaryMeanH - maxH) <= Math.abs(boundaryMeanH - minH));
+      // planePoint is at h=0; boundary verts on the rim side have h with consistent sign.
+      rimAtHighEnd = (boundaryHSum / boundaryHCnt) > 0;
       if (!rimAtHighEnd) {
-        console.log(`[trimRimByPlane] Rim detected at LOW end (boundary meanH=${boundaryMeanH.toFixed(2)}, minH=${minH.toFixed(2)}, maxH=${maxH.toFixed(2)}) — inverting cut direction.`);
+        console.log(`[trimRimByPlane] Rim detected at h<0 side (boundary meanH=${(boundaryHSum/boundaryHCnt).toFixed(2)}) — keeping h≥0 side.`);
       }
     }
   }
 
-  // Compute threshold and keep criterion based on rim orientation
-  const threshold = rimAtHighEnd
-    ? maxH - (percent / 100) * heightRange  // keep height <= threshold
-    : minH + (percent / 100) * heightRange; // keep height >= threshold
-
+  // Cut: keep vertices on the pole side (opposite the rim side).
+  // Threshold = 0 because heights are measured from planePoint.
   const keptFaces: number[] = [];
   for (let f = 0; f < faceCount; f++) {
     const i0 = indices[f * 3];
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
     const keep = rimAtHighEnd
-      ? (height[i0] <= threshold && height[i1] <= threshold && height[i2] <= threshold)
-      : (height[i0] >= threshold && height[i1] >= threshold && height[i2] >= threshold);
+      ? (height[i0] <= 0 && height[i1] <= 0 && height[i2] <= 0)
+      : (height[i0] >= 0 && height[i1] >= 0 && height[i2] >= 0);
     if (keep) {
       if (excludedVertices && (excludedVertices.has(i0) || excludedVertices.has(i1) || excludedVertices.has(i2))) {
         continue;
@@ -500,9 +491,10 @@ function trimRimByPlane(
   return {
     mesh: buildMeshFromFaces(positions, normals, indices, keptFaces),
     rimMesh: buildMeshFromFaces(positions, normals, indices, removedFaces),
-    rimPercentRemoved: percent,
+    rimPercentRemoved: 0, // extent controlled by planePoint, not percent
     heightRange: [minH, maxH],
     rimAtHighEnd,
+    planeCenter: planePoint,
   };
 }
 
@@ -519,7 +511,62 @@ export function trimRim(
   // (percent%)-from-top threshold are classified as "rim" and removed.
   // ------------------------------------------------------------------
   if (rimPlaneNormal) {
-    return trimRimByPlane(meshData, rimPlaneNormal, percent, excludedVertices);
+    // Compute the anchor point: intersection of the cup axis with the trim plane.
+    // Determined solely by cupAxis + percent, independent of the tilt direction.
+    // This ensures tilting the normal pivots the plane around a fixed center.
+    const { positions: pos2, indices: idx2, vertexCount: vc2, faceCount: fc2 } = meshData;
+    const [ax, ay, az] = cupAxis;
+    let pcx = 0, pcy = 0, pcz = 0;
+    for (let i = 0; i < vc2; i++) {
+      pcx += pos2[i * 3]; pcy += pos2[i * 3 + 1]; pcz += pos2[i * 3 + 2];
+    }
+    pcx /= vc2; pcy /= vc2; pcz /= vc2;
+
+    // Project all vertices onto the cup axis
+    let minHA = Infinity, maxHA = -Infinity;
+    const heightsA = new Float32Array(vc2);
+    for (let i = 0; i < vc2; i++) {
+      const h = (pos2[i * 3] - pcx) * ax + (pos2[i * 3 + 1] - pcy) * ay + (pos2[i * 3 + 2] - pcz) * az;
+      heightsA[i] = h;
+      if (h < minHA) minHA = h;
+      if (h > maxHA) maxHA = h;
+    }
+
+    // Detect whether rim is at maxHA or minHA along the cup axis
+    const edgeCntA = new Map<string, number>();
+    for (let f = 0; f < fc2; f++) {
+      for (let e = 0; e < 3; e++) {
+        const a = idx2[f * 3 + e], b = idx2[f * 3 + ((e + 1) % 3)];
+        const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+        edgeCntA.set(k, (edgeCntA.get(k) || 0) + 1);
+      }
+    }
+    let bhSumA = 0, bhCntA = 0;
+    const seenA = new Set<number>();
+    for (const [k, cnt] of edgeCntA) {
+      if (cnt === 1) {
+        const [a, b] = k.split('_').map(Number);
+        if (!seenA.has(a)) { bhSumA += heightsA[a]; bhCntA++; seenA.add(a); }
+        if (!seenA.has(b)) { bhSumA += heightsA[b]; bhCntA++; seenA.add(b); }
+      }
+    }
+    let rimAtHighEndA = true;
+    if (bhCntA > 0) {
+      const bmhA = bhSumA / bhCntA;
+      rimAtHighEndA = Math.abs(bmhA - maxHA) <= Math.abs(bmhA - minHA);
+    }
+
+    // Compute anchor along cup axis at the trim threshold
+    const threshA = rimAtHighEndA
+      ? maxHA - (percent / 100) * (maxHA - minHA)
+      : minHA + (percent / 100) * (maxHA - minHA);
+    const planePoint: [number, number, number] = [
+      pcx + ax * threshA,
+      pcy + ay * threshA,
+      pcz + az * threshA,
+    ];
+
+    return trimRimByPlane(meshData, planePoint, rimPlaneNormal, excludedVertices);
   }
 
   const { positions, normals, indices } = meshData;
