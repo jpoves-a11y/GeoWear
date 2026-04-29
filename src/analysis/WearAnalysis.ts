@@ -184,6 +184,12 @@ export class WearAnalysisPipeline {
     this.state.rimInclinationAzimuthDeg = azimuthDeg;
   }
 
+  /** Inject a pre-computed separation result so runFullAnalysis skips stepSeparateFaces.
+   *  This ensures the cupAxis used for trim is identical to the one used in the preview. */
+  public setSeparation(sep: SeparationResult): void {
+    this.state.separation = sep;
+  }
+
   /**
    * Run the complete analysis pipeline.
    * Branches after sphere fit based on analysisMode.
@@ -195,10 +201,12 @@ export class WearAnalysisPipeline {
 
     const startTime = performance.now();
 
-    // Step 1: Separate faces
+    // Step 1: Separate faces (skipped if a separation was pre-injected via setSeparation)
     this.progress('separating', 0, 'Detecting inner surface...');
     this.state.originalMesh = meshData;
-    this.stepSeparateFaces(meshData);
+    if (!this.state.separation) {
+      this.stepSeparateFaces(meshData);
+    }
 
     // Optional: repair inner face scan defects before trimming/analysis
     if (params.repairInnerFace) {
@@ -291,6 +299,8 @@ export class WearAnalysisPipeline {
       subPipeline.setRimPlaneNormal(this.state.rimPlaneNormal);
       subPipeline.setExclusionMask(this.state.excludedInnerMeshVertices);
       subPipeline.setRimInclination(this.state.rimInclinationAngleDeg, this.state.rimInclinationAzimuthDeg);
+      // Inject the pre-computed separation so all sub-pipelines use the same cupAxis
+      if (this.state.separation) subPipeline.setSeparation(this.state.separation);
       const subResult = await subPipeline.runFullAnalysis(meshData, buildModeParams(mode));
       return { result: subResult as AnalysisResults, pipeline: subPipeline };
     };

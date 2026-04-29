@@ -351,10 +351,9 @@ export class App {
     this.showLoading('Running analysis...');
     this.clearVisualization();
 
-    // Compute the rim normal NOW, while the old pipeline still has its separation.
-    // After "this.pipeline = new WearAnalysisPipeline()" the separation is gone and
-    // computeCurrentRimNormal() would return undefined.
-    const rimNormal = this.computeCurrentRimNormal();
+    // Capture separation from previous pipeline so the new one uses the same cupAxis.
+    // This guarantees the trim plane is identical to what the preview showed.
+    const existingSeparation = this.pipeline?.state.separation ?? null;
 
     this.pipeline = new WearAnalysisPipeline((stage, progress, message) => {
       this.status.setProgress(progress);
@@ -363,10 +362,8 @@ export class App {
 
     try {
       this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
-      this.pipeline.setRimPlaneNormal(rimNormal);
-      // Also store angles so the pipeline can re-derive the normal from its OWN
-      // freshly-computed cupAxis — this is the robust fallback.
       this.pipeline.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
+      if (existingSeparation) this.pipeline.setSeparation(existingSeparation);
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
       // Init lasso manager so the user can draw exclusions after full analysis too
       this.ensureLassoManager();
