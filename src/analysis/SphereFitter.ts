@@ -3,7 +3,7 @@
 // Least-squares sphere fitting using algebraic method
 // ============================================================
 
-import { Matrix, solve, pseudoInverse } from 'ml-matrix';
+import { Matrix, solve } from 'ml-matrix';
 import type { SphereFitResult } from '../types';
 import * as THREE from 'three';
 
@@ -20,34 +20,59 @@ import * as THREE from 'three';
  * Where A[i] = [xi, yi, zi, 1] and B[i] = xi² + yi² + zi²
  */
 export function fitSphere(positions: Float32Array, vertexCount: number): SphereFitResult {
-  // Build the linear system
+  // Accumulate normal equations A^T A (4×4) and A^T B (4×1) directly.
+  // Row of A: [x, y, z, 1], B[i] = x²+y²+z².
+  // This avoids allocating a Matrix(n,4) which is extremely expensive for large n.
   const n = vertexCount;
-  const A = new Matrix(n, 4);
-  const B = new Matrix(n, 1);
+
+  // AᵀA symmetric 4×4 stored row-major (16 elements, but only 10 unique)
+  let s_xx = 0, s_xy = 0, s_xz = 0, s_x = 0;
+  let s_yy = 0, s_yz = 0, s_y = 0;
+  let s_zz = 0, s_z = 0;
+  let s_1 = 0;
+  // AᵀB 4×1
+  let sb_x = 0, sb_y = 0, sb_z = 0, sb_1 = 0;
 
   for (let i = 0; i < n; i++) {
     const x = positions[i * 3];
     const y = positions[i * 3 + 1];
     const z = positions[i * 3 + 2];
-    A.set(i, 0, x);
-    A.set(i, 1, y);
-    A.set(i, 2, z);
-    A.set(i, 3, 1);
-    B.set(i, 0, x * x + y * y + z * z);
+    const b = x * x + y * y + z * z;
+    s_xx += x * x; s_xy += x * y; s_xz += x * z; s_x += x;
+    s_yy += y * y; s_yz += y * z; s_y += y;
+    s_zz += z * z; s_z += z;
+    s_1 += 1;
+    sb_x += x * b; sb_y += y * b; sb_z += z * b; sb_1 += b;
   }
 
-  // Solve the normal equations: (A^T A) x = A^T B
-  const At = A.transpose();
-  const AtA = At.mmul(A);
-  const AtB = At.mmul(B);
+  // Build 4×4 symmetric AtA and 4×1 AtB as ml-matrix objects (tiny)
+  const AtA = new Matrix([
+    [s_xx, s_xy, s_xz, s_x],
+    [s_xy, s_yy, s_yz, s_y],
+    [s_xz, s_yz, s_zz, s_z],
+    [s_x,  s_y,  s_z,  s_1],
+  ]);
+  const AtB = new Matrix([[sb_x], [sb_y], [sb_z], [sb_1]]);
 
   let solution: Matrix;
   try {
     solution = solve(AtA, AtB);
   } catch {
-    // Fallback: use pseudo-inverse
-    const pseudoInv = pseudoInverse(A);
-    solution = pseudoInv.mmul(B);
+    // Fallback: Cramer / manual pseudo-inverse on 4×4 — use perturbed solve
+    try {
+      const reg = AtA.clone();
+      for (let k = 0; k < 4; k++) reg.set(k, k, reg.get(k, k) + 1e-8);
+      solution = solve(reg, AtB);
+    } catch {
+      // Degenerate case: return centroid with radius 0
+      return {
+        center: new THREE.Vector3(0, 0, 0),
+        radius: 0,
+        rmsError: Infinity,
+        maxError: Infinity,
+        residuals: new Float32Array(n),
+      };
+    }
   }
 
   const a = solution.get(0, 0);
@@ -118,26 +143,35 @@ export function fitSphereRobust(
       }
     }
 
-    // Weighted least squares
+    // Weighted least squares: accumulate normal equations directly (no Matrix(n,4))
     const n = vertexCount;
-    const A = new Matrix(n, 4);
-    const B = new Matrix(n, 1);
+    let ws_xx = 0, ws_xy = 0, ws_xz = 0, ws_x = 0;
+    let ws_yy = 0, ws_yz = 0, ws_y = 0;
+    let ws_zz = 0, ws_z = 0;
+    let ws_1 = 0;
+    let wsb_x = 0, wsb_y = 0, wsb_z = 0, wsb_1 = 0;
 
     for (let i = 0; i < n; i++) {
-      const w = Math.sqrt(weights[i]);
+      const wi = weights[i]; // already the squared Tukey weight
+      if (wi < 1e-12) continue;
       const x = positions[i * 3];
       const y = positions[i * 3 + 1];
       const z = positions[i * 3 + 2];
-      A.set(i, 0, x * w);
-      A.set(i, 1, y * w);
-      A.set(i, 2, z * w);
-      A.set(i, 3, w);
-      B.set(i, 0, (x * x + y * y + z * z) * w);
+      const b = x * x + y * y + z * z;
+      ws_xx += wi * x * x; ws_xy += wi * x * y; ws_xz += wi * x * z; ws_x += wi * x;
+      ws_yy += wi * y * y; ws_yz += wi * y * z; ws_y += wi * y;
+      ws_zz += wi * z * z; ws_z += wi * z;
+      ws_1 += wi;
+      wsb_x += wi * x * b; wsb_y += wi * y * b; wsb_z += wi * z * b; wsb_1 += wi * b;
     }
 
-    const At = A.transpose();
-    const AtA = At.mmul(A);
-    const AtB = At.mmul(B);
+    const AtA = new Matrix([
+      [ws_xx, ws_xy, ws_xz, ws_x],
+      [ws_xy, ws_yy, ws_yz, ws_y],
+      [ws_xz, ws_yz, ws_zz, ws_z],
+      [ws_x,  ws_y,  ws_z,  ws_1],
+    ]);
+    const AtB = new Matrix([[wsb_x], [wsb_y], [wsb_z], [wsb_1]]);
 
     let solution: Matrix;
     try {

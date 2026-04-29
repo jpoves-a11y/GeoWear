@@ -228,7 +228,7 @@ export class WearAnalysisPipeline {
     } else {
       // --- Double Sphere Metrics pipeline ---
       this.progress('double-sphere', 0.85, 'Running double-sphere sweep...');
-      this.stepDoubleSphereMetrics(params);
+      await this.stepDoubleSphereMetrics(params);
     }
 
     const endTime = performance.now();
@@ -643,7 +643,7 @@ export class WearAnalysisPipeline {
     }
   }
 
-  private stepDoubleSphereMetrics(params: AnalysisParams): AnalysisResults {
+  private async stepDoubleSphereMetrics(params: AnalysisParams): Promise<AnalysisResults> {
     if (!this.state.separation) throw new Error('Run face separation first');
     if (!this.state.sphereFit) throw new Error('Run sphere fit first');
 
@@ -785,6 +785,19 @@ export class WearAnalysisPipeline {
       throw new Error(`Not enough vertices above rim plane for sphere fitting (${points.length}). Lower the Rim Trim % value.`);
     }
 
+    // Spatial downsampling: sphere fitting only needs ~15 k well-distributed points
+    // (4 unknowns → system is massively overdetermined beyond that).
+    // A uniform stride keeps the spatial coverage equivalent to the full cloud.
+    const DS_MAX_FIT_POINTS = 15000;
+    if (points.length > DS_MAX_FIT_POINTS) {
+      const stride = Math.ceil(points.length / DS_MAX_FIT_POINTS);
+      const sampled: [number, number, number][] = [];
+      for (let i = 0; i < points.length; i += stride) sampled.push(points[i]);
+      points.length = 0;
+      for (const p of sampled) points.push(p);
+      console.log(`[DS RANSAC] downsampled to ${points.length} points (stride=${stride})`);
+    }
+
     const makeRange = (min: number, max: number, step: number): number[] => {
       const out: number[] = [];
       const safeStep = Math.max(1e-4, step);
@@ -849,9 +862,13 @@ export class WearAnalysisPipeline {
     const thresh1Values = makeRange(params.doubleSphereThresh1Min, params.doubleSphereThresh1Max, params.doubleSphereSweepStep);
     const thresh2Values = makeRange(params.doubleSphereThresh2Min, params.doubleSphereThresh2Max, params.doubleSphereSweepStep);
 
+    // Yields control to the browser event loop so the UI stays responsive.
+    const yieldToUI = (): Promise<void> => new Promise<void>(r => setTimeout(r, 0));
+
     const cells: DoubleSphereSweepCellResult[] = [];
     let _debugLogged = false;
-    for (const thresh1 of thresh1Values) {
+    for (let t1i = 0; t1i < thresh1Values.length; t1i++) {
+      const thresh1 = thresh1Values[t1i];
       for (const thresh2 of thresh2Values) {
         const radii1: number[] = [];
         const radii2: number[] = [];
@@ -922,6 +939,11 @@ export class WearAnalysisPipeline {
           centerDistanceStd: std(centerDistances),
         });
       }
+      // Yield to UI after each thresh1 row and report real progress
+      const sweepPct = 0.85 + 0.13 * ((t1i + 1) / thresh1Values.length);
+      this.progress('double-sphere', sweepPct,
+        `Double-sphere sweep: ${t1i + 1} / ${thresh1Values.length} rows done...`);
+      await yieldToUI();
     }
 
     let bestCell: DoubleSphereSweepCellResult | null = null;
