@@ -109,6 +109,8 @@ export interface PipelineState {
   dsRimVertices: number[] | null;
   // User-defined vertex exclusion mask (indices into separation.inner)
   excludedInnerMeshVertices: Set<number>;
+  // User-defined rim plane normal (overrides cup axis when set)
+  rimPlaneNormal?: [number, number, number];
 }
 
 export class WearAnalysisPipeline {
@@ -141,6 +143,7 @@ export class WearAnalysisPipeline {
     dsDistToPole: null,
     dsRimVertices: null,
     excludedInnerMeshVertices: new Set<number>(),
+    rimPlaneNormal: undefined,
   };
 
   private onProgress?: (stage: string, progress: number, message: string) => void;
@@ -159,6 +162,12 @@ export class WearAnalysisPipeline {
    *  will be removed from trimRim output and from the double-sphere RANSAC point cloud. */
   public setExclusionMask(excluded: Set<number>): void {
     this.state.excludedInnerMeshVertices = excluded;
+  }
+
+  /** Override the rim cut-plane normal (e.g. from a user-adjusted inclination angle).
+   *  When set, trimRim uses a fast plane-based approach instead of geodesic distance. */
+  public setRimPlaneNormal(normal: [number, number, number] | undefined): void {
+    this.state.rimPlaneNormal = normal;
   }
 
   /**
@@ -323,6 +332,7 @@ export class WearAnalysisPipeline {
       this.state.separation.cupAxis,
       rimPercent,
       this.state.excludedInnerMeshVertices.size > 0 ? this.state.excludedInnerMeshVertices : undefined,
+      this.state.rimPlaneNormal,
     );
     this.state.workingMesh = this.state.trimResult.mesh;
     this.state.smoothedMesh = null; // invalidate

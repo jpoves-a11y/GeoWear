@@ -19,6 +19,8 @@ import { StatusBar } from './ui/StatusBar';
 import { ProfileWindowManager } from './ui/ProfileWindowManager';
 import { WearAnalysisPipeline } from './analysis/WearAnalysis';
 import { LassoSelectionManager } from './viewer/LassoSelectionManager';
+import { trimRim } from './analysis/MeshProcessor';
+import { computeTiltedRimNormal } from './utils/geometry';
 
 export class App {
   // Core viewer
@@ -256,6 +258,19 @@ export class App {
       // Mark scene as large for adaptive quality
       this.scene.setLargeScene(meshData.faceCount > 500_000);
 
+      // Auto-separate to enable rim-plane live preview immediately
+      try {
+        const p = this.ensurePipeline();
+        p.stepSeparateFaces(meshData);
+        const sep = p.state.separation!;
+        this.meshViewer.displayInnerMesh(sep.inner);
+        this.meshViewer.displayOuterMesh(sep.outer);
+        this.meshViewer.hideOriginal();
+        this.updateRimPreview();
+      } catch (e) {
+        console.warn('[auto-separate] failed:', (e as Error).message);
+      }
+
       // Update status
       const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
       this.status.setFileInfo(`${file.name} (${sizeMB} MB)`);
@@ -343,6 +358,7 @@ export class App {
 
     try {
       this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
+      this.pipeline.setRimPlaneNormal(this.computeCurrentRimNormal());
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
       // Init lasso manager so the user can draw exclusions after full analysis too
       this.ensureLassoManager();
@@ -402,6 +418,7 @@ export class App {
     try {
       this.status.setStatus('Trimming rim...');
       p.setExclusionMask(this.excludedInnerMeshVertices);
+      p.setRimPlaneNormal(this.computeCurrentRimNormal());
       const trim = p.stepTrimRim(this.params.rimTrimPercent);
       this.meshViewer.displayInnerMesh(trim.mesh);
       this.meshViewer.displayGhostMesh(trim.rimMesh);
@@ -433,6 +450,79 @@ export class App {
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
+  }
+
+  // ---- Rim plane live preview ----
+
+  /**
+   * Compute the current tilted rim-plane normal from the cup axis + inclination params.
+   * Returns undefined when inclination = 0 (falls back to geodesic-based trim in analysis).
+   */
+  private computeCurrentRimNormal(): [number, number, number] | undefined {
+    const sep = this.pipeline?.state.separation;
+    if (!sep) return undefined;
+    const { rimInclinationAngle, rimInclinationAzimuth } = this.params;
+    // Always return a plane normal — this ensures consistent plane-based trim when previewing
+    const v = computeTiltedRimNormal(sep.cupAxis, rimInclinationAngle, rimInclinationAzimuth);
+    return [v.x, v.y, v.z];
+  }
+
+  /**
+   * Recompute the rim trim preview using the current plane parameters and display the
+   * ghost (rim) mesh + plane disc in the viewer. Called live as sliders change.
+   */
+  private updateRimPreview(): void {
+    const sep = this.pipeline?.state.separation;
+    if (!sep) return;
+
+    const inner = sep.inner;
+    const planeNormal = this.computeCurrentRimNormal();
+    if (!planeNormal) return;
+
+    // Fast plane-based trim to get kept + rim meshes
+    const trimResult = trimRim(
+      inner,
+      sep.cupAxis,
+      this.params.rimTrimPercent,
+      undefined,         // no exclusion mask for preview
+      planeNormal,
+    );
+
+    this.meshViewer.displayInnerMesh(trimResult.mesh);
+    this.meshViewer.displayGhostMesh(trimResult.rimMesh);
+
+    // Position the plane disc at the height threshold in local mesh space
+    const [nx, ny, nz] = planeNormal;
+    const [minH, maxH] = trimResult.heightRange;
+    const threshold = maxH - (this.params.rimTrimPercent / 100) * (maxH - minH);
+
+    // Centroid of inner mesh in local space
+    const pos = inner.positions;
+    const n = inner.vertexCount;
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < n; i++) {
+      cx += pos[i * 3]; cy += pos[i * 3 + 1]; cz += pos[i * 3 + 2];
+    }
+    cx /= n; cy /= n; cz /= n;
+
+    // Move from centroid along the plane normal to the threshold point
+    const planePt = new THREE.Vector3(
+      cx + nx * threshold,
+      cy + ny * threshold,
+      cz + nz * threshold,
+    );
+
+    // Estimate cup radius for disc size
+    let maxR2 = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = pos[i * 3] - cx, dy = pos[i * 3 + 1] - cy, dz = pos[i * 3 + 2] - cz;
+      const r2 = dx * dx + dy * dy + dz * dz;
+      if (r2 > maxR2) maxR2 = r2;
+    }
+    const radius = Math.sqrt(maxR2);
+
+    this.meshViewer.displayRimPlane(planePt, new THREE.Vector3(nx, ny, nz), radius, this.params.showRimPlane);
+    this.scene.requestRender();
   }
 
   // ---- Exclusion zone methods ----
@@ -933,9 +1023,18 @@ export class App {
       newParams.colorMapName !== this.params.colorMapName
     );
     const rimTrimChanged = newParams.rimTrimPercent !== this.params.rimTrimPercent;
+    const rimPlaneChanged =
+      rimTrimChanged ||
+      newParams.rimInclinationAngle !== this.params.rimInclinationAngle ||
+      newParams.rimInclinationAzimuth !== this.params.rimInclinationAzimuth;
     this.params = { ...newParams };
 
     this.applyVisibilityFromParams();
+
+    // If rim plane params changed, update live preview
+    if (rimPlaneChanged) {
+      this.updateRimPreview();
+    }
 
     // If color range changed, update heat map in real time
     if (colorChanged && this.pipeline?.state.vertexDeviations) {

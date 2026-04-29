@@ -380,7 +380,89 @@ function computeCupAxis(
  * Trim the top 'percent' of the mesh near the rim of the cup.
  * Height is measured along the cup axis.
  */
-export function trimRim(meshData: MeshData, cupAxis: [number, number, number], percent: number, excludedVertices?: Set<number>): TrimResult {
+/**
+ * Fast plane-based rim trim.
+ * Computes the signed height of each vertex along `planeNormal` from the mesh centroid.
+ * Faces in the top `percent`% of the height range are classified as "rim" and removed.
+ */
+function trimRimByPlane(
+  meshData: MeshData,
+  planeNormal: [number, number, number],
+  percent: number,
+  excludedVertices?: Set<number>,
+): TrimResult {
+  const { positions, normals, indices } = meshData;
+  const vertexCount = meshData.vertexCount;
+  const faceCount = meshData.faceCount;
+  const [nx, ny, nz] = planeNormal;
+
+  // Compute mesh centroid
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < vertexCount; i++) {
+    cx += positions[i * 3]; cy += positions[i * 3 + 1]; cz += positions[i * 3 + 2];
+  }
+  cx /= vertexCount; cy /= vertexCount; cz /= vertexCount;
+
+  // Signed height of each vertex along plane normal (relative to centroid)
+  const height = new Float32Array(vertexCount);
+  let minH = Infinity, maxH = -Infinity;
+  for (let i = 0; i < vertexCount; i++) {
+    const h = (positions[i * 3] - cx) * nx
+            + (positions[i * 3 + 1] - cy) * ny
+            + (positions[i * 3 + 2] - cz) * nz;
+    height[i] = h;
+    if (h < minH) minH = h;
+    if (h > maxH) maxH = h;
+  }
+
+  const heightRange = maxH - minH;
+  // Keep faces whose vertices are all below the threshold (away from rim)
+  const threshold = maxH - (percent / 100) * heightRange;
+
+  const keptFaces: number[] = [];
+  for (let f = 0; f < faceCount; f++) {
+    const i0 = indices[f * 3];
+    const i1 = indices[f * 3 + 1];
+    const i2 = indices[f * 3 + 2];
+    if (height[i0] <= threshold && height[i1] <= threshold && height[i2] <= threshold) {
+      if (excludedVertices && (excludedVertices.has(i0) || excludedVertices.has(i1) || excludedVertices.has(i2))) {
+        continue;
+      }
+      keptFaces.push(f);
+    }
+  }
+
+  // Build set of kept faces, derive removed faces
+  const keptSet = new Set<number>(keptFaces);
+  const removedFaces: number[] = [];
+  for (let f = 0; f < faceCount; f++) {
+    if (!keptSet.has(f)) removedFaces.push(f);
+  }
+
+  return {
+    mesh: buildMeshFromFaces(positions, normals, indices, keptFaces),
+    rimMesh: buildMeshFromFaces(positions, normals, indices, removedFaces),
+    rimPercentRemoved: percent,
+    heightRange: [minH, maxH],
+  };
+}
+
+export function trimRim(
+  meshData: MeshData,
+  cupAxis: [number, number, number],
+  percent: number,
+  excludedVertices?: Set<number>,
+  rimPlaneNormal?: [number, number, number],
+): TrimResult {
+  // ------------------------------------------------------------------
+  // FAST PATH: plane-based trim (used when rimPlaneNormal is provided)
+  // Vertices whose signed height along the plane normal is above the
+  // (percent%)-from-top threshold are classified as "rim" and removed.
+  // ------------------------------------------------------------------
+  if (rimPlaneNormal) {
+    return trimRimByPlane(meshData, rimPlaneNormal, percent, excludedVertices);
+  }
+
   const { positions, normals, indices } = meshData;
   const vertexCount = meshData.vertexCount;
   const faceCount = meshData.faceCount;

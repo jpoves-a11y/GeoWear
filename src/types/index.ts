@@ -354,6 +354,8 @@ export interface AnalysisParams {
   showOriginalMesh: boolean;
   yearsInVivo: number;         // 0 = unknown; if >0, wear rates (mm/year, mm³/year) are shown
   showExcludedVertices: boolean; // highlight excluded vertices in the viewer
+  rimInclinationAngle: number;  // degrees: tilt the rim cut-plane away from the cup axis (0 = auto)
+  rimInclinationAzimuth: number; // degrees: direction of tilt in the plane perpendicular to cup axis
 }
 
 export const DEFAULT_PARAMS: AnalysisParams = {
@@ -394,4 +396,6 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showOriginalMesh: true,
   yearsInVivo: 0,
   showExcludedVertices: true,
+  rimInclinationAngle: 0,
+  rimInclinationAzimuth: 0,
 };

@@ -52,6 +52,44 @@ export function faceNormal(
 }
 
 /**
+ * Compute a tilted rim-plane normal by rotating the cup axis around a perpendicular
+ * direction by `inclinationDeg` degrees, with the tilt pointing in the direction
+ * specified by `azimuthDeg` (measured in the plane perpendicular to the cup axis).
+ *
+ * inclinationDeg = 0  → normal equals the cup axis (no tilt)
+ * inclinationDeg = 30 → normal tilted 30° relative to the cup axis
+ */
+export function computeTiltedRimNormal(
+  cupAxis: [number, number, number],
+  inclinationDeg: number,
+  azimuthDeg: number,
+): THREE.Vector3 {
+  const ax = new THREE.Vector3(...cupAxis).normalize();
+
+  if (Math.abs(inclinationDeg) < 1e-6) return ax;
+
+  // Build two orthonormal vectors in the plane perpendicular to the cup axis
+  const tmp = Math.abs(ax.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const e1 = new THREE.Vector3().crossVectors(ax, tmp).normalize();
+  const e2 = new THREE.Vector3().crossVectors(ax, e1).normalize();
+
+  const azRad = azimuthDeg * (Math.PI / 180);
+  const incRad = inclinationDeg * (Math.PI / 180);
+
+  // Tilt direction in the perpendicular plane
+  const tiltDir = new THREE.Vector3()
+    .addScaledVector(e1, Math.cos(azRad))
+    .addScaledVector(e2, Math.sin(azRad));
+
+  // Rotate cup axis by inclinationDeg toward tiltDir
+  const result = new THREE.Vector3()
+    .addScaledVector(ax, Math.cos(incRad))
+    .addScaledVector(tiltDir, Math.sin(incRad));
+
+  return result.normalize();
+}
+
+/**
  * Compute the signed volume of a tetrahedron formed by a triangle and the origin.
  * Using the divergence theorem: V = (1/6) * v1 . (v2 x v3)
  */
