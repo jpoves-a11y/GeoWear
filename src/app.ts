@@ -104,6 +104,9 @@ export class App {
       recenterBtn.addEventListener('click', () => this.scene.resetView());
     }
 
+    // Setup resizable right sidebar
+    this.setupSidebarResize();
+
     const callbacks: ControlCallbacks = {
       onLoadSTL: () => this.openFileDialog(),
       onRunAnalysis: () => this.runAnalysis(),
@@ -1146,6 +1149,44 @@ export class App {
   private setupSectionModeButton(): void {
     this.sectionModeBtn.addEventListener('click', () => {
       this.toggleSectionMode();
+    });
+  }
+
+  private setupSidebarResize(): void {
+    const handle = document.getElementById('sidebar-right-resize-handle');
+    const sidebar = document.getElementById('sidebar-right');
+    if (!handle || !sidebar) return;
+
+    const MIN_W = 200;
+    const MAX_W = 640;
+    let startX = 0;
+    let startW = 0;
+
+    const onMouseMove = (e: MouseEvent) => {
+      // Handle is on the LEFT edge — dragging left increases width
+      const delta = startX - e.clientX;
+      const newW = Math.min(MAX_W, Math.max(MIN_W, startW + delta));
+      sidebar.style.width = `${newW}px`;
+      this.scene.requestRender();
+    };
+
+    const onMouseUp = () => {
+      handle.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    handle.addEventListener('mousedown', (e: MouseEvent) => {
+      e.preventDefault();
+      startX = e.clientX;
+      startW = sidebar.offsetWidth;
+      handle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
     });
   }
 

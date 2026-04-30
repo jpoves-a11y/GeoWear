@@ -376,7 +376,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showReferenceShape: false,
   contextOpaque: false,
   density: 0.935,
-  analysisMode: 'sphere-bestfit',
+  analysisMode: 'compare-all-modes',
   commercialRadius: 0,
   linearWearFilter: 'combined',
   minWornCoveragePct: 1.0,

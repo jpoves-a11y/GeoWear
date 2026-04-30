@@ -216,9 +216,34 @@ html, body {
   flex-shrink: 0;
 }
 
+/* Right sidebar overrides: flexible width, JS-controlled */
 #sidebar-right {
+  min-width: unset;
   border-right: none;
   border-left: 1px solid var(--border-color);
+  min-width: 200px;
+  max-width: 640px;
+  width: var(--sidebar-width);
+  position: relative;
+}
+
+/* Drag handle on the LEFT edge of the right sidebar */
+.sidebar-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.dragging {
+  background: var(--accent-primary);
+  opacity: 0.35;
 }
 
 .sidebar-header {
