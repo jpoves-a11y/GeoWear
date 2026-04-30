@@ -557,7 +557,13 @@ export class WearAnalysisPipeline {
     else { axX = 0; axY = 1; axZ = 0; }
 
     const cupAxis: [number, number, number] = [axX, axY, axZ];
-    this.state.separation!.cupAxis = cupAxis;
+    // Create a new separation object rather than mutating the existing one.
+    // Mutating the shared separation in-place would corrupt cupAxis for any
+    // other sub-pipeline that received the same separation reference via
+    // setSeparation() (e.g., the sphere-bestfit and double-sphere sub-pipelines
+    // in compare-all-modes), causing them to compute the tilted rim normal from
+    // a stale/wrong cup axis and effectively ignoring the user-configured azimuth.
+    this.state.separation = { ...this.state.separation!, cupAxis };
 
     // Reference center = rim centroid (≈ sphere center for hemispherical cup)
     const referenceCenter: [number, number, number] = [rimCx, rimCy, rimCz];
