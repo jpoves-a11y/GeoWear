@@ -372,6 +372,13 @@ export class MeshViewer {
     this.originalGroup.add(this.unwornSphereObject);
   }
 
+  /** Remove the rim-plane disc from the scene entirely. */
+  public clearRimPlane(): void {
+    this.removeNamedObject('rim-plane');
+    this.rimPlaneObject = null;
+    this.sceneManager.requestRender();
+  }
+
   /**
    * Display the rim plane as a semi-transparent disc.
    */

@@ -106,6 +106,22 @@ export class RimPlanePickManager {
     this.markers = [];
   }
 
+  /**
+   * Remove the most recently picked point and its marker.
+   * Same behaviour as a right-click — fires onPointRemoved callback.
+   */
+  public removeLastPoint(): void {
+    if (this.points.length === 0) return;
+    this.points.pop();
+    const last = this.markers.pop();
+    if (last) {
+      this.scene.remove(last);
+      last.geometry.dispose();
+      (last.material as THREE.Material).dispose();
+    }
+    this.callbacks?.onPointRemoved(this.points.slice());
+  }
+
   /** Get currently picked points (mesh-local coords). */
   public getPoints(): THREE.Vector3[] {
     return this.points.slice();

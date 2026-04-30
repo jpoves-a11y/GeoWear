@@ -46,6 +46,12 @@ export interface ControlCallbacks {
   onEnableLassoMode: () => void;
   onClearExclusions: () => void;
   onToggleExcludedHighlight: (v: boolean) => void;
+  // Manual rim plane pick
+  onRimPickUndo: () => void;
+  onRimPickFlipNormal: () => void;
+  onRimPickClearPoints: () => void;
+  onRimPickConfirm: () => void;
+  onRimPickRevertAuto: () => void;
 }
 
 export class ControlPanel {
@@ -68,6 +74,12 @@ export class ControlPanel {
   private colorRangeMaxController: any = null;
   private rimInclinationController: any = null;
   private rimAzimuthController: any = null;
+  // Rim plane pick mode controllers (enabled/disabled dynamically)
+  private rimPickStatusController: any = null;
+  private rimPickUndoController: any = null;
+  private rimPickFlipController: any = null;
+  private rimPickClearController: any = null;
+  private rimPickConfirmController: any = null;
   // Analysis mode display name mapping
   private readonly modeLabelMap: Record<string, string> = {
     'Pure Geodesic': 'pure-geodesic',
@@ -96,6 +108,7 @@ export class ControlPanel {
     this.buildParametersSection();
     this.buildVisualizationSection();
     this.buildExclusionSection();
+    this.buildRimPlaneSection();
     this.buildExportSection();
   }
 
@@ -416,6 +429,67 @@ export class ControlPanel {
   public refreshRimSliders(): void {
     this.rimInclinationController?.updateDisplay();
     this.rimAzimuthController?.updateDisplay();
+  }
+
+  private buildRimPlaneSection(): void {
+    const folder = this.gui.addFolder('📐 Rim Plane');
+    folder.domElement.classList.add('section-rimplane');
+
+    // Status line shows how many points are picked
+    const statusProxy = { info: 'Inactive — use toolbar button to start' };
+    this.rimPickStatusController = folder.add(statusProxy, 'info')
+      .name('Status')
+      .disable();
+
+    const actions = {
+      'Undo Last Point': () => this.callbacks.onRimPickUndo(),
+      'Flip Normal (Pole ↕)': () => this.callbacks.onRimPickFlipNormal(),
+      'Clear All Points': () => this.callbacks.onRimPickClearPoints(),
+      'Confirm Plane ✓': () => this.callbacks.onRimPickConfirm(),
+      'Revert to Auto ↺': () => this.callbacks.onRimPickRevertAuto(),
+    };
+    this.rimPickUndoController = folder.add(actions, 'Undo Last Point').disable();
+    this.rimPickFlipController = folder.add(actions, 'Flip Normal (Pole ↕)').disable();
+    this.rimPickClearController = folder.add(actions, 'Clear All Points').disable();
+    this.rimPickConfirmController = folder.add(actions, 'Confirm Plane ✓').disable();
+    // Revert to Auto is always available (once mesh is loaded)
+    folder.add(actions, 'Revert to Auto ↺');
+
+    folder.close();
+  }
+
+  /**
+   * Update the Rim Plane panel to reflect the current pick mode state.
+   * @param inPickMode  Whether pick mode is currently active.
+   * @param pointCount  Number of points currently accumulated.
+   */
+  public updateRimPickUI(inPickMode: boolean, pointCount: number): void {
+    // Update status text
+    const statusProxy = (this.rimPickStatusController as any)?.__li?.querySelector('.widget input');
+    let statusText: string;
+    if (!inPickMode) {
+      statusText = pointCount > 0
+        ? `${pointCount} pts confirmed — sliders fine-tune`
+        : 'Inactive — use toolbar button to start';
+    } else {
+      statusText = pointCount < 3
+        ? `Picking… ${pointCount}/3 pts (need ≥3)`
+        : `${pointCount} pts — plane live-updated`;
+    }
+    if (this.rimPickStatusController) {
+      this.rimPickStatusController.object.info = statusText;
+      this.rimPickStatusController.updateDisplay();
+    }
+
+    // Enable/disable buttons
+    const enable = (ctrl: any, on: boolean) => {
+      if (!ctrl) return;
+      if (on) ctrl.enable(); else ctrl.disable();
+    };
+    enable(this.rimPickUndoController,   inPickMode && pointCount > 0);
+    enable(this.rimPickFlipController,   inPickMode && pointCount >= 3);
+    enable(this.rimPickClearController,  inPickMode && pointCount > 0);
+    enable(this.rimPickConfirmController, inPickMode && pointCount >= 3);
   }
 
   private buildExportSection(): void {

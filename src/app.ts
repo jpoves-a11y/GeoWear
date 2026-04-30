@@ -169,6 +169,12 @@ export class App {
       onEnableLassoMode: () => this.enableLassoMode(),
       onClearExclusions: () => this.clearExclusions(),
       onToggleExcludedHighlight: (v: boolean) => this.toggleExcludedHighlight(v),
+      // --- Manual rim plane ---
+      onRimPickUndo: () => this.undoLastRimPoint(),
+      onRimPickFlipNormal: () => this.flipRimNormal(),
+      onRimPickClearPoints: () => this.clearRimPoints(),
+      onRimPickConfirm: () => this.confirmRimPlane(),
+      onRimPickRevertAuto: () => this.revertRimToAuto(),
     };
     this.controls = new ControlPanel(callbacks);
 
@@ -1206,13 +1212,22 @@ export class App {
 
   // ---- Manual Rim Plane Pick Mode ----
 
+  /** Raw best-fit normal from last pick (before flip). Updated each time pts change. */
+  private _manualRimNormal: THREE.Vector3 | null = null;
+  /** Whether the fitted normal has been flipped by the user. */
+  private _normalFlipped = false;
+  /** Saved inclination/azimuth so Revert can restore the state that existed before pick mode. */
+  private _prePickInclination = 0;
+  private _prePickAzimuth = 0;
+
   private setupRimPlanePickButton(): void {
     this.rimPickBtn.addEventListener('click', () => this.toggleRimPlanePick());
   }
 
   private toggleRimPlanePick(): void {
     if (this.rimPickActive) {
-      this.exitRimPickMode(false);
+      // Clicking the button while active → exit WITHOUT confirming (just stops adding points)
+      this.exitRimPickMode(false /* cancel=false, keep current params */);
     } else {
       this.enterRimPickMode();
     }
@@ -1225,6 +1240,17 @@ export class App {
       return;
     }
 
+    // Save current state so Revert can restore it
+    this._prePickInclination = this.params.rimInclinationAngle;
+    this._prePickAzimuth = this.params.rimInclinationAzimuth;
+    this._normalFlipped = false;
+    this._manualRimNormal = null;
+
+    // Hide the automatic rim disc while in pick mode
+    this.meshViewer.clearRimPlane();
+    // Cancel any pending mesh rebuild
+    if (this._rimMeshDebounce !== null) { clearTimeout(this._rimMeshDebounce); this._rimMeshDebounce = null; }
+
     // Initialise manager (lazy)
     if (!this.rimPickManager) {
       this.rimPickManager = new RimPlanePickManager(
@@ -1234,7 +1260,7 @@ export class App {
       this.rimPickManager.setCallbacks({
         onPointAdded: (pts) => this.onRimPointsChanged(pts),
         onPointRemoved: (pts) => this.onRimPointsChanged(pts),
-        onCancel: () => this.exitRimPickMode(true),
+        onCancel: () => this.cancelRimPickMode(),
       });
     } else {
       this.rimPickManager.clear();
@@ -1242,8 +1268,6 @@ export class App {
 
     this.rimPickActive = true;
     this.rimPickBtn.classList.add('active');
-
-    // Disable orbit so clicks land on mesh, not orbit
     this.scene.controls.enabled = false;
 
     this.rimPickManager.enable(
@@ -1252,66 +1276,194 @@ export class App {
       this.meshViewer.getGroupOffset(),
     );
 
-    const count = this.rimPickManager.getPoints().length;
-    this.status.setStatus(
-      `Rim pick mode: click points on the rim edge (${count} picked — need ≥3). Right-click removes last. Escape cancels.`,
-    );
+    this.controls.updateRimPickUI(true, 0);
+    this.status.setStatus('Rim pick: click points on the rim edge (need ≥3). Right-click = undo last. Escape = cancel.');
   }
 
-  private exitRimPickMode(cancelled: boolean): void {
+  /** Exit pick mode — keep whatever params are currently set (normal not reverted). */
+  private exitRimPickMode(cancel: boolean): void {
     if (!this.rimPickActive) return;
     this.rimPickActive = false;
     this.rimPickBtn.classList.remove('active');
     this.scene.controls.enabled = true;
     this.rimPickManager?.disable();
 
-    if (cancelled) {
+    const n = this.rimPickManager?.getPoints().length ?? 0;
+
+    if (cancel) {
+      // Escape pressed: revert everything
       this.rimPickManager?.clear();
-      this.status.setStatus('Rim pick mode cancelled.');
+      this._manualRimNormal = null;
+      this.params.rimInclinationAngle = this._prePickInclination;
+      this.params.rimInclinationAzimuth = this._prePickAzimuth;
+      this.controls.refreshRimSliders();
+      this._rimAnchorCache = null;
+      this.updateRimPreview();
+      this.controls.updateRimPickUI(false, 0);
+      this.status.setStatus('Rim pick cancelled — plane reverted to previous state.');
     } else {
-      // Keep markers visible briefly so the user sees the result
-      const n = this.rimPickManager?.getPoints().length ?? 0;
-      this.status.setStatus(
-        n >= 3
-          ? `Rim plane defined from ${n} points. Adjust inclination/azimuth sliders to fine-tune.`
-          : 'Rim pick mode exited (fewer than 3 points — plane not updated).',
-      );
-      if (n < 3) this.rimPickManager?.clear();
+      // Button clicked again to exit: keep current params, clear markers
+      this.rimPickManager?.clear();
+      this.controls.updateRimPickUI(false, n >= 3 ? n : 0);
+      if (n >= 3) {
+        // Trigger a full mesh rebuild now that we've exited (disc was already live)
+        this._rimAnchorCache = null;
+        this.updateRimPreview();
+        this.status.setStatus(`Rim plane set from ${n} points. Use sliders to fine-tune.`);
+      } else {
+        // Not enough points: revert to pre-pick state
+        this.params.rimInclinationAngle = this._prePickInclination;
+        this.params.rimInclinationAzimuth = this._prePickAzimuth;
+        this.controls.refreshRimSliders();
+        this._rimAnchorCache = null;
+        this.updateRimPreview();
+        this.status.setStatus('Rim pick exited (< 3 points) — plane reverted.');
+      }
     }
   }
 
+  /** Escape-key cancel (called by manager callback). */
+  private cancelRimPickMode(): void {
+    this.exitRimPickMode(true);
+  }
+
+  /** Confirm button in left panel: keep plane, clear markers, exit. */
+  private confirmRimPlane(): void {
+    if (!this.rimPickActive) return;
+    this.rimPickManager?.disable();
+    this.rimPickActive = false;
+    this.rimPickBtn.classList.remove('active');
+    this.scene.controls.enabled = true;
+
+    const n = this.rimPickManager?.getPoints().length ?? 0;
+    this.rimPickManager?.clear();
+    this.controls.updateRimPickUI(false, n);
+    this._rimAnchorCache = null;
+    this.updateRimPreview();
+    this.status.setStatus(`Rim plane confirmed from ${n} points. Sliders fine-tune further.`);
+  }
+
+  /** Undo last picked point (left panel button). */
+  private undoLastRimPoint(): void {
+    if (!this.rimPickActive || !this.rimPickManager) return;
+    this.rimPickManager.removeLastPoint();
+  }
+
+  /** Flip the plane normal (swap pole direction). */
+  private flipRimNormal(): void {
+    if (!this._manualRimNormal) return;
+    this._normalFlipped = !this._normalFlipped;
+    this._applyManualNormal();
+  }
+
+  /** Clear all picked points and reset the disc to current params. */
+  private clearRimPoints(): void {
+    if (!this.rimPickActive || !this.rimPickManager) return;
+    this.rimPickManager.clear();
+    this._manualRimNormal = null;
+    this._normalFlipped = false;
+    // Restore pre-pick plane
+    this.params.rimInclinationAngle = this._prePickInclination;
+    this.params.rimInclinationAzimuth = this._prePickAzimuth;
+    this.controls.refreshRimSliders();
+    this._rimAnchorCache = null;
+    this.updateRimDiscOnly();
+    this.controls.updateRimPickUI(true, 0);
+    this.status.setStatus('All rim points cleared. Click on the rim edge to restart.');
+  }
+
+  /** Revert to automatic rim plane (reset inclination+azimuth to 0). */
+  private revertRimToAuto(): void {
+    // Exit pick mode if active
+    if (this.rimPickActive) {
+      this.rimPickManager?.disable();
+      this.rimPickManager?.clear();
+      this.rimPickActive = false;
+      this.rimPickBtn.classList.remove('active');
+      this.scene.controls.enabled = true;
+    }
+    this._manualRimNormal = null;
+    this._normalFlipped = false;
+    this.params.rimInclinationAngle = 0;
+    this.params.rimInclinationAzimuth = 0;
+    this.controls.refreshRimSliders();
+    this.controls.updateRimPickUI(false, 0);
+    this._rimAnchorCache = null;
+    this.updateRimPreview();
+    this.status.setStatus('Rim plane reset to automatic (perpendicular to cup axis).');
+  }
+
   /**
-   * Called every time a point is added or removed.
-   * If ≥3 points are available, compute the best-fit plane, decompose it into
-   * inclination + azimuth, write into params, and trigger a live rim preview.
+   * Called every time a point is added or removed during pick mode.
+   * If ≥3 points, computes and shows the disc ONLY — no mesh rebuild until confirm/exit.
    */
   private onRimPointsChanged(pts: THREE.Vector3[]): void {
     const n = pts.length;
     const cupAxis = this.pipeline?.state.separation?.cupAxis;
 
-    this.status.setStatus(
-      n < 3
-        ? `Rim pick mode: ${n} point${n !== 1 ? 's' : ''} — need ≥3. Right-click removes last.`
-        : `Rim pick mode: ${n} points — plane live-updated. Click button again or press Escape to exit.`,
-    );
+    this.controls.updateRimPickUI(true, n);
 
-    if (n < 3 || !cupAxis) return;
+    if (n < 3 || !cupAxis) {
+      // Not enough points yet — hide disc, show pre-pick disc would confuse so just clear
+      if (n < 3) this.meshViewer.clearRimPlane();
+      this.status.setStatus(`Rim pick: ${n} point${n !== 1 ? 's' : ''} — need ≥3. Right-click = undo last.`);
+      return;
+    }
 
-    // Best-fit plane through the picked mesh-local points.
-    // orientHint: cup axis direction (so the normal faces the pole, not the outside).
+    // Fit plane and store raw normal
     const orientHint = new THREE.Vector3(...cupAxis);
     const { normal } = fitPlaneFromPoints(pts, orientHint);
+    this._manualRimNormal = normal;
 
-    // Decompose into inclination + azimuth
-    const { inclinationDeg, azimuthDeg } = decomposeNormalToInclination(normal, cupAxis);
+    this._applyManualNormal();
+    this.status.setStatus(`Rim pick: ${n} pts — disc live-updated. Flip Normal if wrong. Confirm ✓ to apply.`);
+  }
 
+  /** Apply the stored manual normal (with flip) to params and update disc only (no mesh rebuild). */
+  private _applyManualNormal(): void {
+    const cupAxis = this.pipeline?.state.separation?.cupAxis;
+    if (!this._manualRimNormal || !cupAxis) return;
+
+    const effectiveNormal = this._normalFlipped
+      ? this._manualRimNormal.clone().negate()
+      : this._manualRimNormal.clone();
+
+    const { inclinationDeg, azimuthDeg } = decomposeNormalToInclination(effectiveNormal, cupAxis);
     this.params.rimInclinationAngle = Math.round(inclinationDeg * 10) / 10;
     this.params.rimInclinationAzimuth = Math.round(azimuthDeg * 10) / 10;
     this.controls.refreshRimSliders();
 
-    // Invalidate anchor cache and trigger instant disc + debounced mesh rebuild
+    // During pick mode: only update the disc, never rebuild the mesh
     this._rimAnchorCache = null;
-    this.updateRimPreview();
+    this.updateRimDiscOnly();
+    this.scene.requestRender();
+  }
+
+  /**
+   * Phase 1 only: update the rim-plane disc geometry instantly.
+   * Does NOT trigger a mesh rebuild — used during pick mode to avoid
+   * disturbing the existing trimmed inner mesh.
+   */
+  private updateRimDiscOnly(): void {
+    const sep = this.pipeline?.state.separation;
+    if (!sep) return;
+    const planeNormal = this.computeCurrentRimNormal();
+    if (!planeNormal) return;
+
+    if (!this._rimAnchorCache) {
+      this._rimAnchorCache = computeRimAnchor(sep.inner, sep.cupAxis);
+    }
+    const anchor = this._rimAnchorCache;
+    const planeCenter = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
+    const planePt = new THREE.Vector3(planeCenter[0], planeCenter[1], planeCenter[2]);
+    const [nx, ny, nz] = planeNormal;
+    this.meshViewer.displayRimPlane(
+      planePt,
+      new THREE.Vector3(nx, ny, nz),
+      anchor.radius,
+      this.params.showRimPlane,
+      new THREE.Vector3(...sep.cupAxis),
+    );
     this.scene.requestRender();
   }
 
