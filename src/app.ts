@@ -175,6 +175,7 @@ export class App {
       onRimPickClearPoints: () => this.clearRimPoints(),
       onRimPickConfirm: () => this.confirmRimPlane(),
       onRimPickRevertAuto: () => this.revertRimToAuto(),
+      onRimPickDefinePole: () => this.definePole(),
     };
     this.controls = new ControlPanel(callbacks);
 
@@ -526,8 +527,21 @@ export class App {
       this._rimAnchorCache = computeRimAnchor(sep.inner, sep.cupAxis);
     }
     const anchor = this._rimAnchorCache;
-    const planeCenter = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
-    const planePt = new THREE.Vector3(planeCenter[0], planeCenter[1], planeCenter[2]);
+
+    // Use manual rim centroid as disc center when available (trim% shifts along cup axis)
+    let planePt: THREE.Vector3;
+    if (this._manualRimCenter) {
+      const [ax, ay, az] = sep.cupAxis;
+      const axVec = new THREE.Vector3(ax, ay, az);
+      const range = anchor.maxHA - anchor.minHA;
+      const sign = anchor.rimAtHighEnd ? -1 : 1;
+      planePt = this._manualRimCenter.clone()
+        .addScaledVector(axVec, sign * (this.params.rimTrimPercent / 100) * range);
+    } else {
+      const pc = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
+      planePt = new THREE.Vector3(pc[0], pc[1], pc[2]);
+    }
+
     const [nx, ny, nz] = planeNormal;
     this.meshViewer.displayRimPlane(planePt, new THREE.Vector3(nx, ny, nz), anchor.radius, this.params.showRimPlane, new THREE.Vector3(...sep.cupAxis));
     this.scene.requestRender();
@@ -555,6 +569,111 @@ export class App {
   }
 
   // ---- Exclusion zone methods ----
+
+  /**
+   * One-shot pole pick: next click on the inner mesh defines the approximate pole location.
+   * The rim-plane normal is auto-flipped so its positive side (rim side) faces away from the pole.
+   */
+  private definePole(): void {
+    const innerMesh = this.meshViewer.getInnerMesh();
+    if (!innerMesh) {
+      this.status.setStatus('No inner mesh — run face separation first.');
+      return;
+    }
+    if (this._polePickActive) return; // debounce double-click
+    this._polePickActive = true;
+
+    // In rim pick mode orbit is already disabled; outside it we must disable it
+    const orbitWasEnabled = this.scene.controls.enabled;
+    this.scene.controls.enabled = false;
+
+    const canvas = this.scene.renderer.domElement;
+    this._onPoleClick = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      canvas.removeEventListener('click', this._onPoleClick!, true);
+      this._onPoleClick = null;
+      this._polePickActive = false;
+      this.scene.controls.enabled = orbitWasEnabled && !this.rimPickActive;
+
+      const rect = canvas.getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.scene.camera);
+      const hits = raycaster.intersectObject(innerMesh, false);
+      if (hits.length === 0) {
+        this.status.setStatus('No surface hit — click directly on the inner cup surface.');
+        return;
+      }
+
+      // Mesh-local coordinates
+      const localPole = hits[0].point.clone().sub(this.meshViewer.getGroupOffset());
+      this._polePoint = localPole;
+      const markerR = (this._rimAnchorCache?.radius ?? 15) * 0.06;
+      this.meshViewer.displayPoleMarker(localPole, markerR);
+
+      // Auto-orient: rim normal positive side = rim/outside, so pole must be on negative side.
+      // Compute current effective normal from either the manual normal or the params.
+      const sep = this.pipeline?.state.separation;
+      if (!sep) return;
+      if (!this._rimAnchorCache) this._rimAnchorCache = computeRimAnchor(sep.inner, sep.cupAxis);
+      const anchor = this._rimAnchorCache;
+
+      let effNormal: THREE.Vector3;
+      if (this._manualRimNormal) {
+        // Still in (or recently exited) pick mode — work with the stored raw normal + flip flag
+        effNormal = this._normalFlipped
+          ? this._manualRimNormal.clone().negate()
+          : this._manualRimNormal.clone();
+      } else {
+        // Post-confirmation or no manual pick — derive from current params
+        const pn = this.computeCurrentRimNormal();
+        if (!pn) { this.status.setStatus('Pole defined. No rim plane to orient.'); return; }
+        effNormal = new THREE.Vector3(...pn);
+      }
+
+      // Plane center in mesh-local coords
+      const planePt = this._manualRimCenter
+        ? (() => {
+            const [ax, ay, az] = sep.cupAxis;
+            const axVec = new THREE.Vector3(ax, ay, az);
+            const range = anchor.maxHA - anchor.minHA;
+            const sign = anchor.rimAtHighEnd ? -1 : 1;
+            return this._manualRimCenter!.clone()
+              .addScaledVector(axVec, sign * (this.params.rimTrimPercent / 100) * range);
+          })()
+        : (() => {
+            const pc = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
+            return new THREE.Vector3(pc[0], pc[1], pc[2]);
+          })();
+
+      const towardPole = localPole.clone().sub(planePt);
+      if (towardPole.dot(effNormal) > 0) {
+        // Pole is on positive (rim) side — flip the normal
+        if (this._manualRimNormal) {
+          // In pick-mode context: toggle flip flag and re-apply
+          this._normalFlipped = !this._normalFlipped;
+          this._applyManualNormal();
+        } else {
+          // Post-confirm: flip via params (inc → 180-inc, az → az+180)
+          let newInc = 180 - this.params.rimInclinationAngle;
+          let newAz  = this.params.rimInclinationAzimuth + 180;
+          if (newAz > 180) newAz -= 360;
+          this.params.rimInclinationAngle  = Math.round(newInc * 10) / 10;
+          this.params.rimInclinationAzimuth = Math.round(newAz  * 10) / 10;
+          this.controls.refreshRimSliders();
+          this._rimAnchorCache = null;
+          this.updateRimPreview();
+        }
+        this.status.setStatus('Pole defined — normal auto-flipped so rim side is correct.');
+      } else {
+        this.status.setStatus('Pole defined — normal orientation already correct.');
+      }
+    };
+    canvas.addEventListener('click', this._onPoleClick, true);
+    this.status.setStatus('Pole pick: click the deepest interior of the cup. Escape cancels.');
+  }
 
   /** Create lassoManager if not yet created (works after both stepSeparate and runFullAnalysis). */
   private ensureLassoManager(): void {
@@ -1219,6 +1338,13 @@ export class App {
   /** Saved inclination/azimuth so Revert can restore the state that existed before pick mode. */
   private _prePickInclination = 0;
   private _prePickAzimuth = 0;
+  /** Centroid of the last set of picked rim points — used as disc center after confirmation. */
+  private _manualRimCenter: THREE.Vector3 | null = null;
+  /** User-defined pole point (mesh-local) — used to auto-orient the rim normal. */
+  private _polePoint: THREE.Vector3 | null = null;
+  /** True while waiting for a one-shot pole click. */
+  private _polePickActive = false;
+  private _onPoleClick: ((e: MouseEvent) => void) | null = null;
 
   private setupRimPlanePickButton(): void {
     this.rimPickBtn.addEventListener('click', () => this.toggleRimPlanePick());
@@ -1245,6 +1371,8 @@ export class App {
     this._prePickAzimuth = this.params.rimInclinationAzimuth;
     this._normalFlipped = false;
     this._manualRimNormal = null;
+    this._manualRimCenter = null;
+    this.meshViewer.clearRimNormalArrow();
 
     // Hide the automatic rim disc while in pick mode
     this.meshViewer.clearRimPlane();
@@ -1294,6 +1422,8 @@ export class App {
       // Escape pressed: revert everything
       this.rimPickManager?.clear();
       this._manualRimNormal = null;
+      this._manualRimCenter = null;
+      this.meshViewer.clearRimNormalArrow();
       this.params.rimInclinationAngle = this._prePickInclination;
       this.params.rimInclinationAzimuth = this._prePickAzimuth;
       this.controls.refreshRimSliders();
@@ -1304,14 +1434,18 @@ export class App {
     } else {
       // Button clicked again to exit: keep current params, clear markers
       this.rimPickManager?.clear();
-      this.controls.updateRimPickUI(false, n >= 3 ? n : 0);
+      this.meshViewer.clearRimNormalArrow();
+      const hasManual = this._manualRimCenter !== null;
+      this.controls.updateRimPickUI(false, n >= 3 ? n : 0, hasManual);
       if (n >= 3) {
         // Trigger a full mesh rebuild now that we've exited (disc was already live)
         this._rimAnchorCache = null;
         this.updateRimPreview();
+        this.controls.setPoleButtonEnabled(hasManual);
         this.status.setStatus(`Rim plane set from ${n} points. Use sliders to fine-tune.`);
       } else {
         // Not enough points: revert to pre-pick state
+        this._manualRimCenter = null;
         this.params.rimInclinationAngle = this._prePickInclination;
         this.params.rimInclinationAzimuth = this._prePickAzimuth;
         this.controls.refreshRimSliders();
@@ -1330,6 +1464,12 @@ export class App {
   /** Confirm button in left panel: keep plane, clear markers, exit. */
   private confirmRimPlane(): void {
     if (!this.rimPickActive) return;
+    // Cancel any pending pole click
+    if (this._onPoleClick) {
+      this.scene.renderer.domElement.removeEventListener('click', this._onPoleClick, true);
+      this._onPoleClick = null;
+      this._polePickActive = false;
+    }
     this.rimPickManager?.disable();
     this.rimPickActive = false;
     this.rimPickBtn.classList.remove('active');
@@ -1337,7 +1477,10 @@ export class App {
 
     const n = this.rimPickManager?.getPoints().length ?? 0;
     this.rimPickManager?.clear();
-    this.controls.updateRimPickUI(false, n);
+    this.meshViewer.clearRimNormalArrow();
+    const hasManual = this._manualRimCenter !== null;
+    this.controls.updateRimPickUI(false, n, hasManual);
+    this.controls.setPoleButtonEnabled(hasManual);
     this._rimAnchorCache = null;
     this.updateRimPreview();
     this.status.setStatus(`Rim plane confirmed from ${n} points. Sliders fine-tune further.`);
@@ -1361,7 +1504,9 @@ export class App {
     if (!this.rimPickActive || !this.rimPickManager) return;
     this.rimPickManager.clear();
     this._manualRimNormal = null;
+    this._manualRimCenter = null;
     this._normalFlipped = false;
+    this.meshViewer.clearRimNormalArrow();
     // Restore pre-pick plane
     this.params.rimInclinationAngle = this._prePickInclination;
     this.params.rimInclinationAzimuth = this._prePickAzimuth;
@@ -1374,6 +1519,12 @@ export class App {
 
   /** Revert to automatic rim plane (reset inclination+azimuth to 0). */
   private revertRimToAuto(): void {
+    // Cancel any pending pole click
+    if (this._onPoleClick) {
+      this.scene.renderer.domElement.removeEventListener('click', this._onPoleClick, true);
+      this._onPoleClick = null;
+      this._polePickActive = false;
+    }
     // Exit pick mode if active
     if (this.rimPickActive) {
       this.rimPickManager?.disable();
@@ -1383,11 +1534,16 @@ export class App {
       this.scene.controls.enabled = true;
     }
     this._manualRimNormal = null;
+    this._manualRimCenter = null;
+    this._polePoint = null;
     this._normalFlipped = false;
+    this.meshViewer.clearRimNormalArrow();
+    this.meshViewer.clearPoleMarker();
     this.params.rimInclinationAngle = 0;
     this.params.rimInclinationAzimuth = 0;
     this.controls.refreshRimSliders();
-    this.controls.updateRimPickUI(false, 0);
+    this.controls.updateRimPickUI(false, 0, false);
+    this.controls.setPoleButtonEnabled(false);
     this._rimAnchorCache = null;
     this.updateRimPreview();
     this.status.setStatus('Rim plane reset to automatic (perpendicular to cup axis).');
@@ -1406,20 +1562,22 @@ export class App {
     if (n < 3 || !cupAxis) {
       // Not enough points yet — hide disc, show pre-pick disc would confuse so just clear
       if (n < 3) this.meshViewer.clearRimPlane();
+      this.meshViewer.clearRimNormalArrow();
       this.status.setStatus(`Rim pick: ${n} point${n !== 1 ? 's' : ''} — need ≥3. Right-click = undo last.`);
       return;
     }
 
-    // Fit plane and store raw normal
+    // Fit plane and store raw normal + centroid
     const orientHint = new THREE.Vector3(...cupAxis);
-    const { normal } = fitPlaneFromPoints(pts, orientHint);
+    const { normal, center } = fitPlaneFromPoints(pts, orientHint);
     this._manualRimNormal = normal;
+    this._manualRimCenter = center;
 
     this._applyManualNormal();
-    this.status.setStatus(`Rim pick: ${n} pts — disc live-updated. Flip Normal if wrong. Confirm ✓ to apply.`);
+    this.status.setStatus(`Rim pick: ${n} pts — disc live-updated. Flip/Define Pole to orient. Confirm ✓ to apply.`);
   }
 
-  /** Apply the stored manual normal (with flip) to params and update disc only (no mesh rebuild). */
+  /** Apply the stored manual normal (with flip) to params and update disc + normal arrow. */
   private _applyManualNormal(): void {
     const cupAxis = this.pipeline?.state.separation?.cupAxis;
     if (!this._manualRimNormal || !cupAxis) return;
@@ -1436,13 +1594,24 @@ export class App {
     // During pick mode: only update the disc, never rebuild the mesh
     this._rimAnchorCache = null;
     this.updateRimDiscOnly();
+
+    // Update normal arrow at rim centroid
+    if (this._manualRimCenter) {
+      if (!this._rimAnchorCache) {
+        const sep = this.pipeline?.state.separation;
+        if (sep) this._rimAnchorCache = computeRimAnchor(sep.inner, sep.cupAxis);
+      }
+      const arrowLen = (this._rimAnchorCache?.radius ?? 15) * 0.65;
+      this.meshViewer.displayRimNormalArrow(this._manualRimCenter, effectiveNormal, arrowLen);
+    }
+
     this.scene.requestRender();
   }
 
   /**
    * Phase 1 only: update the rim-plane disc geometry instantly.
-   * Does NOT trigger a mesh rebuild — used during pick mode to avoid
-   * disturbing the existing trimmed inner mesh.
+   * Does NOT trigger a mesh rebuild — used during pick mode.
+   * Uses the manually picked rim centroid (_manualRimCenter) as disc center when available.
    */
   private updateRimDiscOnly(): void {
     const sep = this.pipeline?.state.separation;
@@ -1454,8 +1623,22 @@ export class App {
       this._rimAnchorCache = computeRimAnchor(sep.inner, sep.cupAxis);
     }
     const anchor = this._rimAnchorCache;
-    const planeCenter = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
-    const planePt = new THREE.Vector3(planeCenter[0], planeCenter[1], planeCenter[2]);
+
+    // Compute disc center: if a manual rim center is stored, offset from it along the cup axis;
+    // otherwise fall back to the standard cup-axis-based computation.
+    let planePt: THREE.Vector3;
+    if (this._manualRimCenter) {
+      const [ax, ay, az] = sep.cupAxis;
+      const axVec = new THREE.Vector3(ax, ay, az);
+      const range = anchor.maxHA - anchor.minHA;
+      const sign = anchor.rimAtHighEnd ? -1 : 1;
+      planePt = this._manualRimCenter.clone()
+        .addScaledVector(axVec, sign * (this.params.rimTrimPercent / 100) * range);
+    } else {
+      const pc = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
+      planePt = new THREE.Vector3(pc[0], pc[1], pc[2]);
+    }
+
     const [nx, ny, nz] = planeNormal;
     this.meshViewer.displayRimPlane(
       planePt,

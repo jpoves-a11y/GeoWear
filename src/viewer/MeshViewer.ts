@@ -26,6 +26,8 @@ export class MeshViewer {
   private unwornSphereObject: THREE.Mesh | null = null;
   private rimPlaneObject: THREE.Mesh | null = null;
   private wearPlaneObject: THREE.Mesh | null = null;
+  private rimNormalArrow: THREE.ArrowHelper | null = null;
+  private poleMarker: THREE.Mesh | null = null;
   private volumePreviewGroup: THREE.Group | null = null;
 
   // Display decimation state
@@ -370,6 +372,66 @@ export class MeshViewer {
     this.unwornSphereObject.visible = visible;
     this.unwornSphereObject.renderOrder = 5;
     this.originalGroup.add(this.unwornSphereObject);
+  }
+
+  // ---- Rim-plane normal arrow ----
+
+  /**
+   * Draw (or update) a cyan arrow showing the manual rim-plane normal direction.
+   * Placed at `origin` (mesh-local), pointing in `direction`, with the given `length`.
+   */
+  public displayRimNormalArrow(origin: THREE.Vector3, direction: THREE.Vector3, length: number): void {
+    this.clearRimNormalArrow();
+    const dir = direction.clone().normalize();
+    const headLength = length * 0.22;
+    const headWidth  = length * 0.12;
+    const arrow = new THREE.ArrowHelper(dir, origin, length, 0x00ffff, headLength, headWidth);
+    arrow.name = 'rim-normal-arrow';
+    (arrow.line.material as THREE.LineBasicMaterial).linewidth = 2;
+    arrow.renderOrder = 9;
+    this.originalGroup.add(arrow);
+    this.rimNormalArrow = arrow;
+    this.sceneManager.requestRender();
+  }
+
+  /** Remove the rim-plane normal arrow from the scene. */
+  public clearRimNormalArrow(): void {
+    if (this.rimNormalArrow) {
+      this.originalGroup.remove(this.rimNormalArrow);
+      this.rimNormalArrow.dispose();
+      this.rimNormalArrow = null;
+      this.sceneManager.requestRender();
+    }
+  }
+
+  // ---- Pole marker ----
+
+  /**
+   * Place a small orange sphere at `position` to mark the user-defined pole.
+   * `markerRadius` scales with the mesh (defaults to 1.2 mm).
+   */
+  public displayPoleMarker(position: THREE.Vector3, markerRadius = 1.2): void {
+    this.clearPoleMarker();
+    const geo = new THREE.SphereGeometry(markerRadius, 14, 10);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xff6600, roughness: 0.3, metalness: 0.2 });
+    const sphere = new THREE.Mesh(geo, mat);
+    sphere.position.copy(position);
+    sphere.name = 'pole-marker';
+    sphere.renderOrder = 9;
+    this.poleMarker = sphere;
+    this.originalGroup.add(sphere);
+    this.sceneManager.requestRender();
+  }
+
+  /** Remove the pole marker from the scene. */
+  public clearPoleMarker(): void {
+    if (this.poleMarker) {
+      this.originalGroup.remove(this.poleMarker);
+      this.poleMarker.geometry.dispose();
+      (this.poleMarker.material as THREE.Material).dispose();
+      this.poleMarker = null;
+      this.sceneManager.requestRender();
+    }
   }
 
   /** Remove the rim-plane disc from the scene entirely. */

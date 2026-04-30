@@ -52,6 +52,7 @@ export interface ControlCallbacks {
   onRimPickClearPoints: () => void;
   onRimPickConfirm: () => void;
   onRimPickRevertAuto: () => void;
+  onRimPickDefinePole: () => void;
 }
 
 export class ControlPanel {
@@ -80,6 +81,7 @@ export class ControlPanel {
   private rimPickFlipController: any = null;
   private rimPickClearController: any = null;
   private rimPickConfirmController: any = null;
+  private rimPickPoleController: any = null;
   // Analysis mode display name mapping
   private readonly modeLabelMap: Record<string, string> = {
     'Pure Geodesic': 'pure-geodesic',
@@ -443,14 +445,16 @@ export class ControlPanel {
 
     const actions = {
       'Undo Last Point': () => this.callbacks.onRimPickUndo(),
-      'Flip Normal (Pole ↕)': () => this.callbacks.onRimPickFlipNormal(),
+      'Flip Normal ↕': () => this.callbacks.onRimPickFlipNormal(),
+      'Define Pole 📍': () => this.callbacks.onRimPickDefinePole(),
       'Clear All Points': () => this.callbacks.onRimPickClearPoints(),
       'Confirm Plane ✓': () => this.callbacks.onRimPickConfirm(),
       'Revert to Auto ↺': () => this.callbacks.onRimPickRevertAuto(),
     };
-    this.rimPickUndoController = folder.add(actions, 'Undo Last Point').disable();
-    this.rimPickFlipController = folder.add(actions, 'Flip Normal (Pole ↕)').disable();
-    this.rimPickClearController = folder.add(actions, 'Clear All Points').disable();
+    this.rimPickUndoController    = folder.add(actions, 'Undo Last Point').disable();
+    this.rimPickFlipController    = folder.add(actions, 'Flip Normal ↕').disable();
+    this.rimPickPoleController    = folder.add(actions, 'Define Pole 📍').disable();
+    this.rimPickClearController   = folder.add(actions, 'Clear All Points').disable();
     this.rimPickConfirmController = folder.add(actions, 'Confirm Plane ✓').disable();
     // Revert to Auto is always available (once mesh is loaded)
     folder.add(actions, 'Revert to Auto ↺');
@@ -463,13 +467,18 @@ export class ControlPanel {
    * @param inPickMode  Whether pick mode is currently active.
    * @param pointCount  Number of points currently accumulated.
    */
-  public updateRimPickUI(inPickMode: boolean, pointCount: number): void {
+  /**
+   * Update the Rim Plane panel to reflect the current pick mode state.
+   * @param inPickMode     Whether pick mode is currently active.
+   * @param pointCount     Number of points currently accumulated.
+   * @param hasManualPlane True after a rim plane has been confirmed (normal exists).
+   */
+  public updateRimPickUI(inPickMode: boolean, pointCount: number, hasManualPlane = false): void {
     // Update status text
-    const statusProxy = (this.rimPickStatusController as any)?.__li?.querySelector('.widget input');
     let statusText: string;
     if (!inPickMode) {
-      statusText = pointCount > 0
-        ? `${pointCount} pts confirmed — sliders fine-tune`
+      statusText = hasManualPlane
+        ? `Manual plane confirmed — sliders fine-tune`
         : 'Inactive — use toolbar button to start';
     } else {
       statusText = pointCount < 3
@@ -486,10 +495,18 @@ export class ControlPanel {
       if (!ctrl) return;
       if (on) ctrl.enable(); else ctrl.disable();
     };
-    enable(this.rimPickUndoController,   inPickMode && pointCount > 0);
-    enable(this.rimPickFlipController,   inPickMode && pointCount >= 3);
-    enable(this.rimPickClearController,  inPickMode && pointCount > 0);
+    enable(this.rimPickUndoController,    inPickMode && pointCount > 0);
+    enable(this.rimPickFlipController,    inPickMode && pointCount >= 3);
+    enable(this.rimPickPoleController,   (inPickMode && pointCount >= 3) || (!inPickMode && hasManualPlane));
+    enable(this.rimPickClearController,   inPickMode && pointCount > 0);
     enable(this.rimPickConfirmController, inPickMode && pointCount >= 3);
+  }
+
+  /** Enable or disable the Define Pole button independently (e.g. after confirmation). */
+  public setPoleButtonEnabled(enabled: boolean): void {
+    if (!this.rimPickPoleController) return;
+    if (enabled) this.rimPickPoleController.enable();
+    else this.rimPickPoleController.disable();
   }
 
   private buildExportSection(): void {
