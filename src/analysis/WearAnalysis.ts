@@ -116,6 +116,11 @@ export interface PipelineState {
   // stepSeparateFaces uses the fresh cupAxis, avoiding stale-separation bugs)
   rimInclinationAngleDeg: number;
   rimInclinationAzimuthDeg: number;
+  // Cup axis refined during geodesic computation (rim-centroid → pole on trimmed mesh).
+  // Kept separate from separation.cupAxis so that the original PCA axis is never
+  // overwritten — updateRimPreview() reads separation.cupAxis and must see the same
+  // value before and after analysis for identical inclination/azimuth parameters.
+  geodesicCupAxis?: [number, number, number];
 }
 
 export class WearAnalysisPipeline {
@@ -151,6 +156,7 @@ export class WearAnalysisPipeline {
     rimPlaneNormal: undefined,
     rimInclinationAngleDeg: 0,
     rimInclinationAzimuthDeg: 0,
+    geodesicCupAxis: undefined,
   };
 
   private onProgress?: (stage: string, progress: number, message: string) => void;
@@ -557,13 +563,12 @@ export class WearAnalysisPipeline {
     else { axX = 0; axY = 1; axZ = 0; }
 
     const cupAxis: [number, number, number] = [axX, axY, axZ];
-    // Create a new separation object rather than mutating the existing one.
-    // Mutating the shared separation in-place would corrupt cupAxis for any
-    // other sub-pipeline that received the same separation reference via
-    // setSeparation() (e.g., the sphere-bestfit and double-sphere sub-pipelines
-    // in compare-all-modes), causing them to compute the tilted rim normal from
-    // a stale/wrong cup axis and effectively ignoring the user-configured azimuth.
-    this.state.separation = { ...this.state.separation!, cupAxis };
+    // Store the geodesic-derived axis in its own field so that separation.cupAxis
+    // (the original PCA axis from separateFaces) is NEVER overwritten.
+    // updateRimPreview() reads separation.cupAxis; keeping it unchanged guarantees
+    // the rim-plane preview is identical before and after running analysis with the
+    // same inclination/azimuth parameters.
+    this.state.geodesicCupAxis = cupAxis;
 
     // Reference center = rim centroid (≈ sphere center for hemispherical cup)
     const referenceCenter: [number, number, number] = [rimCx, rimCy, rimCz];
@@ -704,7 +709,7 @@ export class WearAnalysisPipeline {
 
     // Compute wear vector from bump clusters (positive deviation = outside sphere = wear)
     if (this.state.results.bumpClusters.length > 0 && this.state.polePosition && this.state.separation) {
-      const cupAxisVec = new THREE.Vector3(...this.state.separation.cupAxis);
+      const cupAxisVec = new THREE.Vector3(...(this.state.geodesicCupAxis ?? this.state.separation.cupAxis));
       this.state.results.wearVector = computeWearVector(
         this.state.results.bumpClusters,
         this.state.polePosition,
