@@ -373,9 +373,11 @@ export class WearAnalysisPipeline {
       );
       rimPlaneNormal = [v.x, v.y, v.z];
     } else if (rimPlaneNormal === undefined) {
-      // inclination = 0 → use cup axis directly (plane-based, perpendicular to axis)
-      // Only when a planeNormal was explicitly requested (not for pure geodesic fallback)
-      // Leave as undefined → geodesic path
+      // inclination = 0 → use cup axis as plane normal (plane perpendicular to cup axis).
+      // This keeps behaviour consistent with the live preview, which always uses the
+      // plane-based path. The old geodesic fallback produced a different cut at 0° only.
+      const [ax, ay, az] = this.state.separation.cupAxis;
+      rimPlaneNormal = [ax, ay, az];
     }
 
     this.state.trimResult = trimRim(
