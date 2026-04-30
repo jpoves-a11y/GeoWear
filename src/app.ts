@@ -19,7 +19,7 @@ import { StatusBar } from './ui/StatusBar';
 import { ProfileWindowManager } from './ui/ProfileWindowManager';
 import { WearAnalysisPipeline } from './analysis/WearAnalysis';
 import { LassoSelectionManager } from './viewer/LassoSelectionManager';
-import { trimRim } from './analysis/MeshProcessor';
+import { trimRim, computeRimAnchor, rimAnchorToPlanePoint, type RimAnchor } from './analysis/MeshProcessor';
 import { computeTiltedRimNormal } from './utils/geometry';
 
 export class App {
@@ -56,6 +56,11 @@ export class App {
   // Exclusion zone
   private excludedInnerMeshVertices: Set<number> = new Set();
   private lassoManager: LassoSelectionManager | null = null;
+
+  // Rim-plane preview performance: cache mesh geometry stats so the disc
+  // can be updated instantly (O(1)) without re-running the O(F) edge map.
+  private _rimAnchorCache: RimAnchor | null = null;
+  private _rimMeshDebounce: ReturnType<typeof setTimeout> | null = null;
 
   init(): void {
     // SceneManager finds DOM elements by ID internally
@@ -266,6 +271,7 @@ export class App {
         this.meshViewer.displayInnerMesh(sep.inner);
         this.meshViewer.displayOuterMesh(sep.outer);
         this.meshViewer.hideOriginal();
+        this._rimAnchorCache = null; // new mesh — invalidate cache
         this.updateRimPreview();
       } catch (e) {
         console.warn('[auto-separate] failed:', (e as Error).message);
@@ -372,6 +378,7 @@ export class App {
       this.applyVisibilityFromParams();
       // Restore rim plane disc to user-configured position (applyVisualization may
       // have drawn the algorithm-computed rimPlane — we always want the user params).
+      this._rimAnchorCache = null; // separation may have changed — invalidate cache
       this.updateRimPreview();
       this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(results);
@@ -410,6 +417,7 @@ export class App {
       this.meshViewer.displayInnerMesh(sep.inner);
       this.meshViewer.displayOuterMesh(sep.outer);
       this.meshViewer.hideOriginal();
+      this._rimAnchorCache = null; // new separation — invalidate cache
       this.status.setStatus(`Separated: ${sep.inner.faceCount} inner / ${sep.outer.faceCount} outer faces${this.params.repairInnerFace ? ' (inner repaired)' : ''}`);
       this.controls.markStepCompleted('separate');
       this.applyVisibilityFromParams();
@@ -479,52 +487,48 @@ export class App {
   /**
    * Recompute the rim trim preview using the current plane parameters and display the
    * ghost (rim) mesh + plane disc in the viewer. Called live as sliders change.
+   *
+   * Two-phase strategy for heavy meshes:
+   *   1. INSTANT  – update the rim plane disc using a cached RimAnchor (pure arithmetic).
+   *   2. DEBOUNCED – rebuild the trimmed inner/ghost mesh geometry after 300 ms of inactivity.
    */
   private updateRimPreview(): void {
     const sep = this.pipeline?.state.separation;
     if (!sep) return;
-
-    const inner = sep.inner;
     const planeNormal = this.computeCurrentRimNormal();
     if (!planeNormal) return;
 
-    // Fast plane-based trim to get kept + rim meshes
-    const trimResult = trimRim(
-      inner,
-      sep.cupAxis,
-      this.params.rimTrimPercent,
-      undefined,         // no exclusion mask for preview
-      planeNormal,
-    );
-
-    this.meshViewer.displayInnerMesh(trimResult.mesh);
-    this.meshViewer.displayGhostMesh(trimResult.rimMesh);
-
-    // The plane center is the intersection of the cup axis with the trim plane —
-    // computed from cupAxis + percent inside trimRim, and returned via planeCenter.
-    // Using it directly ensures the disc never translates when the tilt changes.
+    // --- Phase 1: instant disc update using cached geometry stats ---
+    if (!this._rimAnchorCache) {
+      this._rimAnchorCache = computeRimAnchor(sep.inner, sep.cupAxis);
+    }
+    const anchor = this._rimAnchorCache;
+    const planeCenter = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
+    const planePt = new THREE.Vector3(planeCenter[0], planeCenter[1], planeCenter[2]);
     const [nx, ny, nz] = planeNormal;
-    const pc = trimResult.planeCenter!;
-    const planePt = new THREE.Vector3(pc[0], pc[1], pc[2]);
-
-    // Estimate cup radius for disc size
-    const pos = inner.positions;
-    const n = inner.vertexCount;
-    let cx = 0, cy = 0, cz = 0;
-    for (let i = 0; i < n; i++) {
-      cx += pos[i * 3]; cy += pos[i * 3 + 1]; cz += pos[i * 3 + 2];
-    }
-    cx /= n; cy /= n; cz /= n;
-    let maxR2 = 0;
-    for (let i = 0; i < n; i++) {
-      const dx = pos[i * 3] - cx, dy = pos[i * 3 + 1] - cy, dz = pos[i * 3 + 2] - cz;
-      const r2 = dx * dx + dy * dy + dz * dz;
-      if (r2 > maxR2) maxR2 = r2;
-    }
-    const radius = Math.sqrt(maxR2);
-
-    this.meshViewer.displayRimPlane(planePt, new THREE.Vector3(nx, ny, nz), radius, this.params.showRimPlane, new THREE.Vector3(...sep.cupAxis));
+    this.meshViewer.displayRimPlane(planePt, new THREE.Vector3(nx, ny, nz), anchor.radius, this.params.showRimPlane, new THREE.Vector3(...sep.cupAxis));
     this.scene.requestRender();
+
+    // --- Phase 2: debounced mesh rebuild (300 ms after last slider change) ---
+    if (this._rimMeshDebounce !== null) clearTimeout(this._rimMeshDebounce);
+    this._rimMeshDebounce = setTimeout(() => {
+      this._rimMeshDebounce = null;
+      const sep2 = this.pipeline?.state.separation;
+      if (!sep2) return;
+      const pn = this.computeCurrentRimNormal();
+      if (!pn) return;
+      const trimResult = trimRim(
+        sep2.inner,
+        sep2.cupAxis,
+        this.params.rimTrimPercent,
+        undefined,   // no exclusion mask for preview
+        pn,
+        this._rimAnchorCache ?? undefined,
+      );
+      this.meshViewer.displayInnerMesh(trimResult.mesh);
+      this.meshViewer.displayGhostMesh(trimResult.rimMesh);
+      this.scene.requestRender();
+    }, 300);
   }
 
   // ---- Exclusion zone methods ----

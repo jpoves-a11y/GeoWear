@@ -413,6 +413,8 @@ function trimRimByPlane(
   planePoint: [number, number, number],
   planeNormal: [number, number, number],
   excludedVertices?: Set<number>,
+  /** Pre-computed rim side flag — pass to skip the O(F) edge-map boundary detection. */
+  rimAtHighEndHint?: boolean,
 ): TrimResult {
   const { positions, normals, indices } = meshData;
   const vertexCount = meshData.vertexCount;
@@ -435,8 +437,12 @@ function trimRimByPlane(
 
   // Validate which side of the plane (h>0 or h<0) is the rim by checking actual
   // boundary vertices (edges shared by only one face).
-  let rimAtHighEnd = true; // default: rim at h>0 side
-  {
+  // Skip this O(F) string-key edge-map when the caller already knows the rim side.
+  let rimAtHighEnd: boolean;
+  if (rimAtHighEndHint !== undefined) {
+    rimAtHighEnd = rimAtHighEndHint;
+  } else {
+    rimAtHighEnd = true; // default: rim at h>0 side
     const edgeCnt = new Map<string, number>();
     for (let f = 0; f < faceCount; f++) {
       for (let e = 0; e < 3; e++) {
@@ -455,7 +461,6 @@ function trimRimByPlane(
       }
     }
     if (boundaryHCnt > 0) {
-      // planePoint is at h=0; boundary verts on the rim side have h with consistent sign.
       rimAtHighEnd = (boundaryHSum / boundaryHCnt) > 0;
       if (!rimAtHighEnd) {
         console.log(`[trimRimByPlane] Rim detected at h<0 side (boundary meanH=${(boundaryHSum/boundaryHCnt).toFixed(2)}) — keeping h≥0 side.`);
@@ -498,12 +503,107 @@ function trimRimByPlane(
   };
 }
 
+/**
+ * Pre-computed mesh statistics used to quickly position the rim-plane disc
+ * without re-running the O(F) boundary edge map on every slider change.
+ * Compute once per mesh via computeRimAnchor() and cache in the caller.
+ */
+export interface RimAnchor {
+  /** Mesh centroid. */
+  cx: number; cy: number; cz: number;
+  /** Height range of all vertices projected onto the cup axis. */
+  minHA: number; maxHA: number;
+  /** True when the real rim boundary is at the maxHA end of the cup axis. */
+  rimAtHighEnd: boolean;
+  /** Approximate bounding radius of the mesh (for disc sizing). */
+  radius: number;
+}
+
+/**
+ * Compute the RimAnchor for a mesh + cup axis.
+ * This is the slow O(V + F) part (one-time edge map + height scan).
+ * Cache the result and pass it to trimRim() via the `anchor` parameter.
+ */
+export function computeRimAnchor(
+  meshData: MeshData,
+  cupAxis: [number, number, number],
+): RimAnchor {
+  const { positions, indices, vertexCount, faceCount } = meshData;
+  const [ax, ay, az] = cupAxis;
+
+  // Centroid
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < vertexCount; i++) {
+    cx += positions[i * 3]; cy += positions[i * 3 + 1]; cz += positions[i * 3 + 2];
+  }
+  cx /= vertexCount; cy /= vertexCount; cz /= vertexCount;
+
+  // Heights along cup axis + bounding radius
+  let minHA = Infinity, maxHA = -Infinity;
+  let maxR2 = 0;
+  const heights = new Float32Array(vertexCount);
+  for (let i = 0; i < vertexCount; i++) {
+    const dx = positions[i * 3] - cx, dy = positions[i * 3 + 1] - cy, dz = positions[i * 3 + 2] - cz;
+    const h = dx * ax + dy * ay + dz * az;
+    heights[i] = h;
+    if (h < minHA) minHA = h;
+    if (h > maxHA) maxHA = h;
+    const r2 = dx * dx + dy * dy + dz * dz;
+    if (r2 > maxR2) maxR2 = r2;
+  }
+
+  // Boundary edge detection to determine which end of the cup axis is the rim
+  const edgeCnt = new Map<string, number>();
+  for (let f = 0; f < faceCount; f++) {
+    for (let e = 0; e < 3; e++) {
+      const a = indices[f * 3 + e], b = indices[f * 3 + ((e + 1) % 3)];
+      const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+      edgeCnt.set(k, (edgeCnt.get(k) || 0) + 1);
+    }
+  }
+  let bhSum = 0, bhCnt = 0;
+  const seen = new Set<number>();
+  for (const [k, cnt] of edgeCnt) {
+    if (cnt === 1) {
+      const [a, b] = k.split('_').map(Number);
+      if (!seen.has(a)) { bhSum += heights[a]; bhCnt++; seen.add(a); }
+      if (!seen.has(b)) { bhSum += heights[b]; bhCnt++; seen.add(b); }
+    }
+  }
+  let rimAtHighEnd = true;
+  if (bhCnt > 0) {
+    const bm = bhSum / bhCnt;
+    rimAtHighEnd = Math.abs(bm - maxHA) <= Math.abs(bm - minHA);
+  }
+
+  return { cx, cy, cz, minHA, maxHA, rimAtHighEnd, radius: Math.sqrt(maxR2) };
+}
+
+/**
+ * From a cached RimAnchor, compute the plane anchor point for a given trim percent.
+ * Pure arithmetic — no iteration. Use this for instant disc updates.
+ */
+export function rimAnchorToPlanePoint(
+  anchor: RimAnchor,
+  cupAxis: [number, number, number],
+  percent: number,
+): [number, number, number] {
+  const { cx, cy, cz, minHA, maxHA, rimAtHighEnd } = anchor;
+  const [ax, ay, az] = cupAxis;
+  const threshA = rimAtHighEnd
+    ? maxHA - (percent / 100) * (maxHA - minHA)
+    : minHA + (percent / 100) * (maxHA - minHA);
+  return [cx + ax * threshA, cy + ay * threshA, cz + az * threshA];
+}
+
 export function trimRim(
   meshData: MeshData,
   cupAxis: [number, number, number],
   percent: number,
   excludedVertices?: Set<number>,
   rimPlaneNormal?: [number, number, number],
+  /** Pre-computed anchor — pass to skip the O(F) edge-map boundary detection. */
+  anchor?: RimAnchor,
 ): TrimResult {
   // ------------------------------------------------------------------
   // FAST PATH: plane-based trim (used when rimPlaneNormal is provided)
@@ -511,51 +611,63 @@ export function trimRim(
   // (percent%)-from-top threshold are classified as "rim" and removed.
   // ------------------------------------------------------------------
   if (rimPlaneNormal) {
-    // Compute the anchor point: intersection of the cup axis with the trim plane.
-    // Determined solely by cupAxis + percent, independent of the tilt direction.
-    // This ensures tilting the normal pivots the plane around a fixed center.
-    const { positions: pos2, indices: idx2, vertexCount: vc2, faceCount: fc2 } = meshData;
+    let pcx: number, pcy: number, pcz: number;
+    let minHA: number, maxHA: number;
+    let rimAtHighEndA: boolean;
+
+    if (anchor) {
+      // Use cached values — no O(V/F) work at all.
+      pcx = anchor.cx; pcy = anchor.cy; pcz = anchor.cz;
+      minHA = anchor.minHA; maxHA = anchor.maxHA;
+      rimAtHighEndA = anchor.rimAtHighEnd;
+    } else {
+      // Compute the anchor point: intersection of the cup axis with the trim plane.
+      // Determined solely by cupAxis + percent, independent of the tilt direction.
+      // This ensures tilting the normal pivots the plane around a fixed center.
+      const { positions: pos2, indices: idx2, vertexCount: vc2, faceCount: fc2 } = meshData;
+      const [ax, ay, az] = cupAxis;
+      let _cx = 0, _cy = 0, _cz = 0;
+      for (let i = 0; i < vc2; i++) {
+        _cx += pos2[i * 3]; _cy += pos2[i * 3 + 1]; _cz += pos2[i * 3 + 2];
+      }
+      pcx = _cx / vc2; pcy = _cy / vc2; pcz = _cz / vc2;
+
+      // Project all vertices onto the cup axis
+      minHA = Infinity; maxHA = -Infinity;
+      const heightsA = new Float32Array(vc2);
+      for (let i = 0; i < vc2; i++) {
+        const h = (pos2[i * 3] - pcx) * ax + (pos2[i * 3 + 1] - pcy) * ay + (pos2[i * 3 + 2] - pcz) * az;
+        heightsA[i] = h;
+        if (h < minHA) minHA = h;
+        if (h > maxHA) maxHA = h;
+      }
+
+      // Detect whether rim is at maxHA or minHA along the cup axis
+      const edgeCntA = new Map<string, number>();
+      for (let f = 0; f < fc2; f++) {
+        for (let e = 0; e < 3; e++) {
+          const a = idx2[f * 3 + e], b = idx2[f * 3 + ((e + 1) % 3)];
+          const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+          edgeCntA.set(k, (edgeCntA.get(k) || 0) + 1);
+        }
+      }
+      let bhSumA = 0, bhCntA = 0;
+      const seenA = new Set<number>();
+      for (const [k, cnt] of edgeCntA) {
+        if (cnt === 1) {
+          const [a, b] = k.split('_').map(Number);
+          if (!seenA.has(a)) { bhSumA += heightsA[a]; bhCntA++; seenA.add(a); }
+          if (!seenA.has(b)) { bhSumA += heightsA[b]; bhCntA++; seenA.add(b); }
+        }
+      }
+      rimAtHighEndA = true;
+      if (bhCntA > 0) {
+        const bmhA = bhSumA / bhCntA;
+        rimAtHighEndA = Math.abs(bmhA - maxHA) <= Math.abs(bmhA - minHA);
+      }
+    }
+
     const [ax, ay, az] = cupAxis;
-    let pcx = 0, pcy = 0, pcz = 0;
-    for (let i = 0; i < vc2; i++) {
-      pcx += pos2[i * 3]; pcy += pos2[i * 3 + 1]; pcz += pos2[i * 3 + 2];
-    }
-    pcx /= vc2; pcy /= vc2; pcz /= vc2;
-
-    // Project all vertices onto the cup axis
-    let minHA = Infinity, maxHA = -Infinity;
-    const heightsA = new Float32Array(vc2);
-    for (let i = 0; i < vc2; i++) {
-      const h = (pos2[i * 3] - pcx) * ax + (pos2[i * 3 + 1] - pcy) * ay + (pos2[i * 3 + 2] - pcz) * az;
-      heightsA[i] = h;
-      if (h < minHA) minHA = h;
-      if (h > maxHA) maxHA = h;
-    }
-
-    // Detect whether rim is at maxHA or minHA along the cup axis
-    const edgeCntA = new Map<string, number>();
-    for (let f = 0; f < fc2; f++) {
-      for (let e = 0; e < 3; e++) {
-        const a = idx2[f * 3 + e], b = idx2[f * 3 + ((e + 1) % 3)];
-        const k = a < b ? `${a}_${b}` : `${b}_${a}`;
-        edgeCntA.set(k, (edgeCntA.get(k) || 0) + 1);
-      }
-    }
-    let bhSumA = 0, bhCntA = 0;
-    const seenA = new Set<number>();
-    for (const [k, cnt] of edgeCntA) {
-      if (cnt === 1) {
-        const [a, b] = k.split('_').map(Number);
-        if (!seenA.has(a)) { bhSumA += heightsA[a]; bhCntA++; seenA.add(a); }
-        if (!seenA.has(b)) { bhSumA += heightsA[b]; bhCntA++; seenA.add(b); }
-      }
-    }
-    let rimAtHighEndA = true;
-    if (bhCntA > 0) {
-      const bmhA = bhSumA / bhCntA;
-      rimAtHighEndA = Math.abs(bmhA - maxHA) <= Math.abs(bmhA - minHA);
-    }
-
     // Compute anchor along cup axis at the trim threshold
     const threshA = rimAtHighEndA
       ? maxHA - (percent / 100) * (maxHA - minHA)
@@ -566,7 +678,8 @@ export function trimRim(
       pcz + az * threshA,
     ];
 
-    return trimRimByPlane(meshData, planePoint, rimPlaneNormal, excludedVertices);
+    // Pass rimAtHighEndA so trimRimByPlane can skip its own redundant edge-map detection.
+    return trimRimByPlane(meshData, planePoint, rimPlaneNormal, excludedVertices, rimAtHighEndA);
   }
 
   const { positions, normals, indices } = meshData;
