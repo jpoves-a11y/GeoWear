@@ -66,6 +66,8 @@ export class ControlPanel {
   // Commercial radius proxy for dropdown
   private commercialRadiusProxy = { value: 'Auto' };
   private colorRangeMaxController: any = null;
+  private rimInclinationController: any = null;
+  private rimAzimuthController: any = null;
   // Analysis mode display name mapping
   private readonly modeLabelMap: Record<string, string> = {
     'Pure Geodesic': 'pure-geodesic',
@@ -260,10 +262,10 @@ export class ControlPanel {
     geoFolder.add(this.params, 'rimTrimPercent', 0, 50, 0.5)
       .name('Rim Trim %')
       .onChange(() => this.callbacks.onParamsChange(this.params));
-    geoFolder.add(this.params, 'rimInclinationAngle', -180, 180, 0.5)
+    this.rimInclinationController = geoFolder.add(this.params, 'rimInclinationAngle', -180, 180, 0.5)
       .name('Rim Inclination (°)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
-    geoFolder.add(this.params, 'rimInclinationAzimuth', -180, 180, 1)
+    this.rimAzimuthController = geoFolder.add(this.params, 'rimInclinationAzimuth', -180, 180, 1)
       .name('Rim Azimuth (°)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
     geoFolder.add(this.params, 'smoothingIterations', 0, 10, 1)
@@ -404,6 +406,16 @@ export class ControlPanel {
   public updateExclusionCount(count: number): void {
     this.exclusionCountProxy.info = count === 0 ? 'No vertices excluded' : `${count.toLocaleString()} vertices excluded`;
     if (this.exclusionCountController) this.exclusionCountController.updateDisplay();
+  }
+
+  /**
+   * Refresh the Rim Inclination and Rim Azimuth slider display.
+   * Call this after programmatically writing new values into params
+   * (e.g. after the manual rim plane pick mode computes a new normal).
+   */
+  public refreshRimSliders(): void {
+    this.rimInclinationController?.updateDisplay();
+    this.rimAzimuthController?.updateDisplay();
   }
 
   private buildExportSection(): void {

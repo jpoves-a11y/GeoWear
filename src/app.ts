@@ -19,8 +19,9 @@ import { StatusBar } from './ui/StatusBar';
 import { ProfileWindowManager } from './ui/ProfileWindowManager';
 import { WearAnalysisPipeline } from './analysis/WearAnalysis';
 import { LassoSelectionManager } from './viewer/LassoSelectionManager';
+import { RimPlanePickManager } from './viewer/RimPlanePickManager';
 import { trimRim, computeRimAnchor, rimAnchorToPlanePoint, type RimAnchor } from './analysis/MeshProcessor';
-import { computeTiltedRimNormal } from './utils/geometry';
+import { computeTiltedRimNormal, fitPlaneFromPoints, decomposeNormalToInclination } from './utils/geometry';
 
 export class App {
   // Core viewer
@@ -41,6 +42,11 @@ export class App {
   // Section mode UI
   private sectionModeBtn!: HTMLButtonElement;
   private sectionModeActive: boolean = false;
+
+  // Manual rim plane pick mode
+  private rimPickBtn!: HTMLButtonElement;
+  private rimPickManager: RimPlanePickManager | null = null;
+  private rimPickActive = false;
 
   // State
   private pipeline: WearAnalysisPipeline | null = null;
@@ -97,6 +103,10 @@ export class App {
     // Setup section mode button
     this.sectionModeBtn = document.getElementById('btn-section-mode') as HTMLButtonElement;
     this.setupSectionModeButton();
+
+    // Setup manual rim plane pick button
+    this.rimPickBtn = document.getElementById('btn-rim-plane-pick') as HTMLButtonElement;
+    this.setupRimPlanePickButton();
 
     // Setup recenter button
     const recenterBtn = document.getElementById('btn-recenter');
@@ -376,6 +386,8 @@ export class App {
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
       // Init lasso manager so the user can draw exclusions after full analysis too
       this.ensureLassoManager();
+      // Enable rim pick mode after analysis (inner mesh is available)
+      this.rimPickBtn.disabled = false;
       this.currentResults = results;
       this.applyVisualization();
       this.applyVisibilityFromParams();
@@ -427,6 +439,8 @@ export class App {
       this.scene.requestRender();
       // Init lasso manager after we have a separation
       this.ensureLassoManager();
+      // Enable rim pick mode now that inner mesh exists
+      this.rimPickBtn.disabled = false;
     } catch (e) {
       this.status.setStatus(`Error: ${(e as Error).message}`);
     }
@@ -1188,6 +1202,117 @@ export class App {
       document.addEventListener('mousemove', onMouseMove);
       document.addEventListener('mouseup', onMouseUp);
     });
+  }
+
+  // ---- Manual Rim Plane Pick Mode ----
+
+  private setupRimPlanePickButton(): void {
+    this.rimPickBtn.addEventListener('click', () => this.toggleRimPlanePick());
+  }
+
+  private toggleRimPlanePick(): void {
+    if (this.rimPickActive) {
+      this.exitRimPickMode(false);
+    } else {
+      this.enterRimPickMode();
+    }
+  }
+
+  private enterRimPickMode(): void {
+    const innerMesh = this.meshViewer.getInnerMesh();
+    if (!innerMesh) {
+      this.status.setStatus('Run face separation first before picking rim points.');
+      return;
+    }
+
+    // Initialise manager (lazy)
+    if (!this.rimPickManager) {
+      this.rimPickManager = new RimPlanePickManager(
+        this.scene.renderer.domElement,
+        this.scene.scene,
+      );
+      this.rimPickManager.setCallbacks({
+        onPointAdded: (pts) => this.onRimPointsChanged(pts),
+        onPointRemoved: (pts) => this.onRimPointsChanged(pts),
+        onCancel: () => this.exitRimPickMode(true),
+      });
+    } else {
+      this.rimPickManager.clear();
+    }
+
+    this.rimPickActive = true;
+    this.rimPickBtn.classList.add('active');
+
+    // Disable orbit so clicks land on mesh, not orbit
+    this.scene.controls.enabled = false;
+
+    this.rimPickManager.enable(
+      innerMesh,
+      this.scene.camera,
+      this.meshViewer.getGroupOffset(),
+    );
+
+    const count = this.rimPickManager.getPoints().length;
+    this.status.setStatus(
+      `Rim pick mode: click points on the rim edge (${count} picked — need ≥3). Right-click removes last. Escape cancels.`,
+    );
+  }
+
+  private exitRimPickMode(cancelled: boolean): void {
+    if (!this.rimPickActive) return;
+    this.rimPickActive = false;
+    this.rimPickBtn.classList.remove('active');
+    this.scene.controls.enabled = true;
+    this.rimPickManager?.disable();
+
+    if (cancelled) {
+      this.rimPickManager?.clear();
+      this.status.setStatus('Rim pick mode cancelled.');
+    } else {
+      // Keep markers visible briefly so the user sees the result
+      const n = this.rimPickManager?.getPoints().length ?? 0;
+      this.status.setStatus(
+        n >= 3
+          ? `Rim plane defined from ${n} points. Adjust inclination/azimuth sliders to fine-tune.`
+          : 'Rim pick mode exited (fewer than 3 points — plane not updated).',
+      );
+      if (n < 3) this.rimPickManager?.clear();
+    }
+  }
+
+  /**
+   * Called every time a point is added or removed.
+   * If ≥3 points are available, compute the best-fit plane, decompose it into
+   * inclination + azimuth, write into params, and trigger a live rim preview.
+   */
+  private onRimPointsChanged(pts: THREE.Vector3[]): void {
+    const n = pts.length;
+    const cupAxis = this.pipeline?.state.separation?.cupAxis;
+
+    this.status.setStatus(
+      n < 3
+        ? `Rim pick mode: ${n} point${n !== 1 ? 's' : ''} — need ≥3. Right-click removes last.`
+        : `Rim pick mode: ${n} points — plane live-updated. Click button again or press Escape to exit.`,
+    );
+
+    if (n < 3 || !cupAxis) return;
+
+    // Best-fit plane through the picked mesh-local points.
+    // orientHint: cup axis direction (so the normal faces the pole, not the outside).
+    const orientHint = new THREE.Vector3(...cupAxis);
+    const { normal } = fitPlaneFromPoints(pts, orientHint);
+
+    // Decompose into inclination + azimuth
+    const { inclinationDeg, azimuthDeg } = decomposeNormalToInclination(normal, cupAxis);
+
+    this.params.rimInclinationAngle = Math.round(inclinationDeg * 10) / 10;
+    this.params.rimInclinationAzimuth = Math.round(azimuthDeg * 10) / 10;
+    this.controls.refreshRimSliders();
+
+    // Invalidate anchor cache and trigger instant disc + debounced mesh rebuild
+    this._rimAnchorCache = null;
+    this.updateRimPreview();
+    this.scene.requestRender();
   }
 
   private toggleSectionMode(): void {

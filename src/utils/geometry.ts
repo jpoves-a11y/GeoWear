@@ -168,6 +168,84 @@ export function cross3(
 }
 
 /**
+ * Best-fit plane through an arbitrary number of 3-D points (≥3).
+ * Uses Newell's method on all triangle fans from the centroid, which gives a
+ * weighted-area normal that degrades gracefully to a least-squares normal.
+ * Returns the plane normal (unit length, oriented towards the mesh centroid
+ * direction passed in as `orientHint`) and the centroid of the point set.
+ */
+export function fitPlaneFromPoints(
+  pts: THREE.Vector3[],
+  orientHint?: THREE.Vector3,
+): { normal: THREE.Vector3; center: THREE.Vector3 } {
+  if (pts.length < 3) throw new Error('fitPlaneFromPoints requires at least 3 points');
+
+  // Centroid
+  const center = new THREE.Vector3();
+  for (const p of pts) center.add(p);
+  center.divideScalar(pts.length);
+
+  // Newell's method: accumulate cross-products of consecutive edges around
+  // the centroid to get a robust area-weighted normal estimate.
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i].clone().sub(center);
+    const b = pts[(i + 1) % pts.length].clone().sub(center);
+    nx += a.y * b.z - a.z * b.y;
+    ny += a.z * b.x - a.x * b.z;
+    nz += a.x * b.y - a.y * b.x;
+  }
+
+  const normal = new THREE.Vector3(nx, ny, nz).normalize();
+
+  // Flip so the normal points towards `orientHint` if provided
+  if (orientHint && normal.dot(orientHint) < 0) {
+    normal.negate();
+  }
+
+  return { normal, center };
+}
+
+/**
+ * Decompose a plane normal back into (inclinationDeg, azimuthDeg) relative to
+ * a cup axis, inverting the logic of `computeTiltedRimNormal`.
+ *
+ * inclinationDeg = angle between the plane normal and the cup axis (0–180)
+ * azimuthDeg     = rotation of the tilt direction around the cup axis
+ *
+ * The returned values can be fed directly into `rimInclinationAngle` and
+ * `rimInclinationAzimuth` in AnalysisParams.
+ */
+export function decomposeNormalToInclination(
+  normal: THREE.Vector3,
+  cupAxis: [number, number, number],
+): { inclinationDeg: number; azimuthDeg: number } {
+  const ax = new THREE.Vector3(...cupAxis).normalize();
+  const n = normal.clone().normalize();
+
+  // Inclination = angle between normal and cup axis
+  const cosInc = Math.max(-1, Math.min(1, n.dot(ax)));
+  const inclinationDeg = Math.acos(cosInc) * (180 / Math.PI);
+
+  if (inclinationDeg < 1e-4) {
+    // Normal is parallel to cup axis — azimuth is undefined, use 0
+    return { inclinationDeg: 0, azimuthDeg: 0 };
+  }
+
+  // Build the same e1/e2 basis as computeTiltedRimNormal
+  const tmp = Math.abs(ax.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const e1 = new THREE.Vector3().crossVectors(ax, tmp).normalize();
+  const e2 = new THREE.Vector3().crossVectors(ax, e1).normalize();
+
+  // Tilt direction = projection of n onto the plane perpendicular to ax, normalized
+  const tilt = n.clone().addScaledVector(ax, -cosInc).normalize();
+
+  const azimuthDeg = Math.atan2(tilt.dot(e2), tilt.dot(e1)) * (180 / Math.PI);
+
+  return { inclinationDeg, azimuthDeg };
+}
+
+/**
  * Project a point onto a sphere surface.
  */
 export function projectOntoSphere(
