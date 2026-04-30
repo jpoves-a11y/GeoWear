@@ -99,6 +99,7 @@ export class ControlPanel {
 
   private buildImportSection(): void {
     const folder = this.gui.addFolder('📂 Import');
+    folder.domElement.classList.add('section-import');
 
     const importBtn = { 'Load STL File': () => this.callbacks.onLoadSTL() };
     folder.add(importBtn, 'Load STL File');
@@ -108,9 +109,12 @@ export class ControlPanel {
 
   private buildProcessingSection(): void {
     this.processingFolder = this.gui.addFolder('⚙ Processing');
+    this.processingFolder.domElement.classList.add('section-processing');
 
     const runAll = { 'Run Full Analysis': () => this.callbacks.onRunAnalysis() };
-    this.processingFolder.add(runAll, 'Run Full Analysis');
+    const runAllCtrl = this.processingFolder.add(runAll, 'Run Full Analysis');
+    const runBtn = runAllCtrl.domElement.querySelector('button');
+    if (runBtn) runBtn.classList.add('btn-run-analysis');
 
     this.processingFolder.add(this.params, 'repairInnerFace')
       .name('Repair Inner Face')
@@ -159,6 +163,7 @@ export class ControlPanel {
 
   private buildParametersSection(): void {
     const folder = this.gui.addFolder('🔧 Parameters');
+    folder.domElement.classList.add('section-parameters');
 
     // --- Wear Model sub-section ---
     const wearModel = folder.addFolder('Wear Model');
@@ -239,7 +244,7 @@ export class ControlPanel {
     this.doubleSphereControllers.push(dsStep);
 
     wearModel.open();
-    dsFolder.open();
+    dsFolder.close();
 
     const yivCtrl = folder.add(this.params, 'yearsInVivo', 0, 40, 0.1)
       .name('⏱ Years In Vivo')
@@ -247,126 +252,131 @@ export class ControlPanel {
     yivCtrl.domElement.parentElement!.style.cssText +=
       'background: rgba(56,154,237,0.12); border-left: 3px solid #389aed; border-radius: 3px; padding-left: 4px;';
 
-    folder.add(this.params, 'geodesicCount', 36, 720, 1)
+    // --- Geometry sub-section ---
+    const geoFolder = folder.addFolder('Geometry');
+    geoFolder.add(this.params, 'geodesicCount', 36, 720, 1)
       .name('Geodesics')
       .onChange(() => this.callbacks.onParamsChange(this.params));
-
-    folder.add(this.params, 'rimTrimPercent', 0, 50, 0.5)
+    geoFolder.add(this.params, 'rimTrimPercent', 0, 50, 0.5)
       .name('Rim Trim %')
       .onChange(() => this.callbacks.onParamsChange(this.params));
-
-    folder.add(this.params, 'rimInclinationAngle', -180, 180, 0.5)
+    geoFolder.add(this.params, 'rimInclinationAngle', -180, 180, 0.5)
       .name('Rim Inclination (°)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
-
-    folder.add(this.params, 'rimInclinationAzimuth', -180, 180, 1)
+    geoFolder.add(this.params, 'rimInclinationAzimuth', -180, 180, 1)
       .name('Rim Azimuth (°)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
-
-    folder.add(this.params, 'smoothingIterations', 0, 10, 1)
+    geoFolder.add(this.params, 'smoothingIterations', 0, 10, 1)
       .name('Smoothing Iter.')
       .onChange(() => this.callbacks.onParamsChange(this.params));
+    geoFolder.close();
 
-    folder.add(this.params, 'thresholdMicrons', 0.1, 10, 0.1)
+    // --- Analysis & Display sub-section ---
+    const dispFolder = folder.addFolder('Analysis & Display');
+    dispFolder.add(this.params, 'thresholdMicrons', 0.1, 10, 0.1)
       .name('Threshold (μm)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
-
-    folder.add(this.params, 'density', 0.8, 1.1, 0.001)
+    dispFolder.add(this.params, 'density', 0.8, 1.1, 0.001)
       .name('Density (g/cm³)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
-
-    folder.add(this.params, 'colorMapName', ['rainbow', 'cooltowarm', 'blackbody'])
+    dispFolder.add(this.params, 'colorMapName', ['rainbow', 'cooltowarm', 'blackbody'])
       .name('Color Map')
       .onChange(() => this.callbacks.onParamsChange(this.params));
-
-    this.colorRangeMaxController = folder.add(this.params, 'colorRangeMax', 0, 200, 1)
+    this.colorRangeMaxController = dispFolder.add(this.params, 'colorRangeMax', 0, 200, 1)
       .name('Color Max (μm)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
+    dispFolder.close();
 
     folder.close();
   }
 
   private buildVisualizationSection(): void {
     const folder = this.gui.addFolder('👁 Visualization');
+    folder.domElement.classList.add('section-visualization');
 
-    folder.add(this.params, 'showWireframe')
-      .name('Wireframe')
-      .onChange((v: boolean) => this.callbacks.onToggleWireframe(v));
-
-    folder.add(this.params, 'geodesicDisplayMode', ['all', 'regular', 'irregular', 'none'])
-      .name('Geodesics')
-      .onChange((v: string) => this.callbacks.onGeodesicDisplayMode(v));
-
-    folder.add(this.params, 'showHeatmap')
-      .name('Heat Map')
-      .onChange((v: boolean) => this.callbacks.onToggleHeatmap(v));
-
-    folder.add(this.params, 'showAnnotations')
-      .name('Annotations')
-      .onChange((v: boolean) => this.callbacks.onToggleAnnotations(v));
-
-    folder.add(this.params, 'showReferenceShape')
-      .name('Reference Sphere')
-      .onChange((v: boolean) => this.callbacks.onToggleRefSphere(v));
-
+    // Always-visible at root level
     folder.add(this.params, 'contextOpaque')
       .name('Opaque Context')
       .onChange((v: boolean) => this.callbacks.onToggleContext(v));
 
-    // BestFit-specific toggles (bound directly to global params)
-    const csc = folder.add(this.params, 'showCommercialSphere')
+    const resultsBtn = { 'Show Results Panel': () => this.callbacks.onShowResults() };
+    folder.add(resultsBtn, 'Show Results Panel');
+
+    // --- Rendering sub-folder ---
+    const renderFolder = folder.addFolder('Rendering');
+    renderFolder.add(this.params, 'showWireframe')
+      .name('Wireframe')
+      .onChange((v: boolean) => this.callbacks.onToggleWireframe(v));
+    renderFolder.add(this.params, 'geodesicDisplayMode', ['all', 'regular', 'irregular', 'none'])
+      .name('Geodesics')
+      .onChange((v: string) => this.callbacks.onGeodesicDisplayMode(v));
+    renderFolder.add(this.params, 'showHeatmap')
+      .name('Heat Map')
+      .onChange((v: boolean) => this.callbacks.onToggleHeatmap(v));
+    renderFolder.add(this.params, 'showAnnotations')
+      .name('Annotations')
+      .onChange((v: boolean) => this.callbacks.onToggleAnnotations(v));
+    renderFolder.open();
+
+    // --- Overlays sub-folder (spheres, planes, volumes) ---
+    const overlayFolder = folder.addFolder('Overlays');
+    overlayFolder.add(this.params, 'showReferenceShape')
+      .name('Reference Sphere')
+      .onChange((v: boolean) => this.callbacks.onToggleRefSphere(v));
+
+    const csc = overlayFolder.add(this.params, 'showCommercialSphere')
       .name('Commercial Sphere')
       .onChange((v: boolean) => this.callbacks.onToggleCommercialSphere(v));
     this.bestfitVisControllers.push(csc);
 
-    const wsc = folder.add(this.params, 'showWornSphere')
+    const wsc = overlayFolder.add(this.params, 'showWornSphere')
       .name('Worn Sphere (Red)')
       .onChange((v: boolean) => this.callbacks.onToggleWornSphere(v));
     this.dualModeVisControllers.push(wsc);
 
-    const usc = folder.add(this.params, 'showUnwornSphere')
+    const usc = overlayFolder.add(this.params, 'showUnwornSphere')
       .name('Unworn Sphere (Green)')
       .onChange((v: boolean) => this.callbacks.onToggleUnwornSphere(v));
     this.dualModeVisControllers.push(usc);
 
-    const rpc = folder.add(this.params, 'showRimPlane')
+    const rpc = overlayFolder.add(this.params, 'showRimPlane')
       .name('Rim Plane')
       .onChange((v: boolean) => this.callbacks.onToggleRimPlane(v));
     this.dualModeVisControllers.push(rpc);
 
-    const wpc = folder.add(this.params, 'showWearPlane')
+    const wpc = overlayFolder.add(this.params, 'showWearPlane')
       .name('Wear Section Plane')
       .onChange((v: boolean) => this.callbacks.onToggleWearPlane(v));
     this.bestfitVisControllers.push(wpc);
 
-    const mvc = folder.add(this.params, 'showMeshVolume')
+    const mvc = overlayFolder.add(this.params, 'showMeshVolume')
       .name('Mesh Volume (Blue)')
       .onChange((v: boolean) => this.callbacks.onToggleMeshVolume(v));
     this.dualModeVisControllers.push(mvc);
 
-    const scc = folder.add(this.params, 'showSphereCapVolume')
+    const scc = overlayFolder.add(this.params, 'showSphereCapVolume')
       .name('Sphere Cap (Green)')
       .onChange((v: boolean) => this.callbacks.onToggleSphereCapVolume(v));
     this.dualModeVisControllers.push(scc);
 
-    const wvc = folder.add(this.params, 'showWearVolume')
+    const wvc = overlayFolder.add(this.params, 'showWearVolume')
       .name('Wear Volume (Red)')
       .onChange((v: boolean) => this.callbacks.onToggleWearVolume(v));
     this.dualModeVisControllers.push(wvc);
 
-    const omc = folder.add(this.params, 'showOriginalMesh')
+    const omc = overlayFolder.add(this.params, 'showOriginalMesh')
       .name('Full STL Sample')
       .onChange((v: boolean) => this.callbacks.onToggleOriginalMesh(v));
     this.dualModeVisControllers.push(omc);
 
-    const resultsBtn = { 'Show Results Panel': () => this.callbacks.onShowResults() };
-    folder.add(resultsBtn, 'Show Results Panel');
+    overlayFolder.close();
 
     folder.open();
   }
 
   private buildExclusionSection(): void {
     const folder = this.gui.addFolder('✂ Exclusion Zone');
+    folder.domElement.classList.add('section-exclusion');
 
     const actions = {
       'Draw Lasso': () => this.callbacks.onEnableLassoMode(),
@@ -398,6 +408,7 @@ export class ControlPanel {
 
   private buildExportSection(): void {
     const folder = this.gui.addFolder('💾 Export');
+    folder.domElement.classList.add('section-export');
 
     const exports = {
       'Screenshot (PNG)': () => this.callbacks.onExportPNG(),

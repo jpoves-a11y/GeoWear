@@ -247,7 +247,7 @@ html, body {
 #gui-container .lil-gui {
   --background-color: var(--bg-secondary);
   --widget-color: var(--bg-tertiary);
-  --focus-color: var(--accent-primary);
+  --focus-color: #c9e2f7;           /* light blue — avoids blue-on-blue in focused inputs */
   --hover-color: var(--bg-surface);
   --font-family: var(--font-sans);
   --font-size: 12px;
@@ -257,9 +257,72 @@ html, body {
   --title-background-color: var(--bg-tertiary);
   --title-text-color: var(--text-primary);
   --text-color: var(--text-secondary);
+  --widget-height: 22px;
+  --spacing: 3px;
+  --padding: 5px;
   width: 100% !important;
   border: none !important;
   border-radius: 0 !important;
+}
+
+/* Focused number input: keep a white/light bg so number text stays readable */
+#gui-container .lil-controller.lil-number input[type=number]:focus,
+#gui-container .lil-controller.lil-number input[type=number]:active {
+  background: #f0f7ff !important;
+  color: var(--accent-secondary) !important;
+}
+
+/* ---- Top-level section title color coding ---- */
+#gui-container .section-import    > .lil-title { border-left: 3px solid #22c55e; padding-left: 9px; }
+#gui-container .section-processing > .lil-title { border-left: 3px solid var(--accent-primary); padding-left: 9px; }
+#gui-container .section-parameters > .lil-title { border-left: 3px solid #f59e0b; padding-left: 9px; }
+#gui-container .section-visualization > .lil-title { border-left: 3px solid #a855f7; padding-left: 9px; }
+#gui-container .section-exclusion  > .lil-title { border-left: 3px solid #ef4444; padding-left: 9px; }
+#gui-container .section-export     > .lil-title { border-left: 3px solid #6b7280; padding-left: 9px; }
+
+/* Top-level section titles: slightly taller and bolder */
+#gui-container .lil-gui.lil-root > .lil-children > .lil-gui > .lil-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  height: 30px;
+  line-height: 30px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+}
+
+/* Sub-folder titles: smaller, lighter */
+#gui-container .lil-gui .lil-gui .lil-gui > .lil-title,
+#gui-container .lil-gui .lil-gui > .lil-children > .lil-gui > .lil-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  color: var(--text-secondary);
+  height: 24px;
+  line-height: 24px;
+}
+
+/* ---- Run Full Analysis button ---- */
+#gui-container button.btn-run-analysis {
+  background: linear-gradient(135deg, #0077cc, #005fa3) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  height: 34px !important;
+  border-radius: 5px !important;
+  letter-spacing: 0.3px !important;
+  box-shadow: 0 2px 8px rgba(0, 119, 204, 0.45) !important;
+  transition: all 150ms ease !important;
+  margin: 4px 0 2px !important;
+}
+#gui-container button.btn-run-analysis:hover {
+  background: linear-gradient(135deg, #0088ee, #006ec0) !important;
+  box-shadow: 0 4px 12px rgba(0, 119, 204, 0.6) !important;
+  transform: translateY(-1px) !important;
+}
+#gui-container button.btn-run-analysis:active {
+  transform: translateY(0) !important;
+  box-shadow: 0 1px 4px rgba(0, 119, 204, 0.4) !important;
 }
 
 /* ---------- 3D Viewport ---------- */
