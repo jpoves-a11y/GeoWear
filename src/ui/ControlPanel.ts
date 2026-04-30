@@ -79,7 +79,7 @@ export class ControlPanel {
     'double-sphere-metrics': 'Double Sphere Metrics',
     'compare-all-modes': 'Compare All Modes',
   };
-  private analysisModelProxy = { mode: 'Sphere BestFit' };
+  private analysisModelProxy = { mode: 'Compare All Modes' };
 
   constructor(callbacks: ControlCallbacks) {
     this.callbacks = callbacks;
