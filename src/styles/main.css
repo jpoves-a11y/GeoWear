@@ -587,6 +587,176 @@ html, body {
   margin-left: 4px;
 }
 
+/* ---------- KPI Cards (single-mode top summary) ---------- */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 4px;
+}
+
+.kpi-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 9px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.kpi-card.danger  { border-left-color: var(--danger); }
+.kpi-card.warning { border-left-color: var(--warning); }
+.kpi-card.success { border-left-color: var(--success); }
+.kpi-card.rate    { border-left-color: #389aed; background: rgba(56,154,237,0.05); }
+.kpi-card.neutral { border-left-color: var(--text-muted); }
+
+.kpi-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 700;
+}
+
+.kpi-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.15;
+}
+
+.kpi-card.danger  .kpi-value { color: var(--danger); }
+.kpi-card.warning .kpi-value { color: var(--warning); }
+.kpi-card.success .kpi-value { color: var(--success); }
+.kpi-card.rate    .kpi-value { color: #389aed; }
+
+.kpi-unit {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 1px;
+}
+
+.kpi-warn-badge {
+  margin-top: 2px;
+  font-size: 9px;
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* ---------- Compare-All Summary Table ---------- */
+.compare-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.compare-section-title .icon { font-size: 14px; }
+
+.wear-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.wear-compare-table th {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 5px 4px 7px;
+  border-bottom: 2px solid var(--border-color);
+  text-align: right;
+}
+
+.wear-compare-table th.col-metric {
+  text-align: left;
+  color: var(--text-muted);
+  min-width: 80px;
+}
+
+.wear-compare-table th.col-pg  { color: #8b5cf6; }
+.wear-compare-table th.col-sbf { color: var(--accent-primary); }
+.wear-compare-table th.col-dsm { color: #d97706; }
+
+.wear-compare-table td {
+  padding: 7px 4px;
+  text-align: right;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.wear-compare-table td.col-metric {
+  text-align: left;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.wear-compare-table tr:last-child td { border-bottom: none; }
+
+.cmp-num {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text-primary);
+  display: block;
+  line-height: 1.2;
+}
+
+.cmp-num.danger  { color: var(--danger); }
+.cmp-num.warning { color: var(--warning); }
+.cmp-num.success { color: var(--success); }
+
+.cmp-unit {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  display: block;
+  line-height: 1;
+}
+
+.cmp-na {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  display: block;
+}
+
+/* Mode badge inside section headers */
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  margin-bottom: 2px;
+}
+
+.mode-badge.pg  { background: rgba(139,92,246,0.14); color: #8b5cf6; }
+.mode-badge.sbf { background: rgba(0,119,204,0.14);  color: var(--accent-primary); }
+.mode-badge.dsm { background: rgba(217,119,6,0.14);  color: #d97706; }
+
+.results-section.mode-detail {
+  border-top: 3px solid var(--border-color);
+  margin-top: 4px;
+}
+
+.results-section.mode-detail.pg  { border-top-color: #8b5cf6; }
+.results-section.mode-detail.sbf { border-top-color: var(--accent-primary); }
+.results-section.mode-detail.dsm { border-top-color: #d97706; }
+
 /* ---------- Geodesic Table ---------- */
 .geodesic-table {
   width: 100%;
