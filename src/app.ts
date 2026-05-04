@@ -375,6 +375,11 @@ export class App {
 
     this.isRunning = true;
     this.showLoading('Running analysis...');
+    // Cancel any pending preview debounce — the analysis will provide the authoritative mesh.
+    if (this._rimMeshDebounce !== null) {
+      clearTimeout(this._rimMeshDebounce);
+      this._rimMeshDebounce = null;
+    }
     this.clearVisualization();
 
     // Capture separation from previous pipeline so the new one uses the same cupAxis.
@@ -407,10 +412,15 @@ export class App {
       this.currentResults = results;
       this.applyVisualization();
       this.applyVisibilityFromParams();
-      // Restore rim plane disc to user-configured position (applyVisualization may
-      // have drawn the algorithm-computed rimPlane — we always want the user params).
+      // Cancel any pending preview debounce so it doesn't overwrite the analysis result.
+      // Then update ONLY the disc position — do NOT rebuild the trimmed mesh, because the
+      // analysis result (with exclusion mask applied + heatmap) is already displayed.
+      if (this._rimMeshDebounce !== null) {
+        clearTimeout(this._rimMeshDebounce);
+        this._rimMeshDebounce = null;
+      }
       this._rimAnchorCache = null; // separation may have changed — invalidate cache
-      this.updateRimPreview();
+      this.updateRimDiscOnly();
       this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(results);
       this.status.setStatus(`Analysis complete in ${(results.processingTimeMs / 1000).toFixed(1)}s`);
@@ -606,7 +616,8 @@ export class App {
         sep2.inner,
         sep2.cupAxis,
         this.params.rimTrimPercent,
-        undefined,
+        // Apply the same exclusion mask as the analysis so the preview matches exactly.
+        this.excludedInnerMeshVertices.size > 0 ? this.excludedInnerMeshVertices : undefined,
         pn,
         this._rimAnchorCache ?? undefined,
         planeAnchorOverride,
@@ -1226,6 +1237,15 @@ export class App {
 
     // If rim plane params changed, update live preview
     if (rimPlaneChanged) {
+      // When a confirmed manual normal is active: at inclination=0, azimuth has no effect
+      // on the plane (any rotation around the confirmed normal leaves the plane unchanged).
+      // Inform the user so they know to increase inclination first.
+      if (this._confirmedManualNormal &&
+          Math.abs(this.params.rimInclinationAngle) < 1e-6 &&
+          newParams.rimInclinationAzimuth !== this.params.rimInclinationAzimuth) {
+        // (params already updated above)
+        this.status.setStatus('Azimuth only takes effect when Inclination > 0. Increase Inclination to tilt the plane.');
+      }
       this.updateRimPreview();
     }
 
