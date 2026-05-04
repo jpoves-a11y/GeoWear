@@ -13,7 +13,7 @@ import type {
   DoubleSphereSweepCellResult
 } from '../types';
 import { COMMERCIAL_RADII } from '../types';
-import { separateFaces, trimRim } from './MeshProcessor';
+import { separateFaces, trimRim, computeRimAnchor } from './MeshProcessor';
 import { smoothMesh, repairInnerFaceMesh } from './MeshSmoother';
 import { computeTiltedRimNormal } from '../utils/geometry';
 import { fitSphereRobust, fitSphereFixedRadius, fitSphereFixedRadiusRobust } from './SphereFitter';
@@ -116,6 +116,12 @@ export interface PipelineState {
   // stepSeparateFaces uses the fresh cupAxis, avoiding stale-separation bugs)
   rimInclinationAngleDeg: number;
   rimInclinationAzimuthDeg: number;
+  /**
+   * Centroid of the manually-picked rim points (in mesh-local coordinates).
+   * When set, the cut plane is anchored here (+ trim% shift along cup axis)
+   * instead of the default mesh-centroid-based calculation.
+   */
+  manualRimBasePoint: [number, number, number] | null;
   // Cup axis refined during geodesic computation (rim-centroid → pole on trimmed mesh).
   // Kept separate from separation.cupAxis so that the original PCA axis is never
   // overwritten — updateRimPreview() reads separation.cupAxis and must see the same
@@ -156,6 +162,7 @@ export class WearAnalysisPipeline {
     rimPlaneNormal: undefined,
     rimInclinationAngleDeg: 0,
     rimInclinationAzimuthDeg: 0,
+    manualRimBasePoint: null,
     geodesicCupAxis: undefined,
   };
 
@@ -194,6 +201,15 @@ export class WearAnalysisPipeline {
    *  This ensures the cupAxis used for trim is identical to the one used in the preview. */
   public setSeparation(sep: SeparationResult): void {
     this.state.separation = sep;
+  }
+
+  /**
+   * Set the centroid of the manually-picked rim points (mesh-local coordinates).
+   * When set, the trim plane is anchored at this point (shifted by trim%) instead of
+   * the default mesh-centroid position, so the cut matches the visual disc.
+   */
+  public setManualRimBasePoint(pt: [number, number, number] | null): void {
+    this.state.manualRimBasePoint = pt;
   }
 
   /**
@@ -305,6 +321,7 @@ export class WearAnalysisPipeline {
       subPipeline.setRimPlaneNormal(this.state.rimPlaneNormal);
       subPipeline.setExclusionMask(this.state.excludedInnerMeshVertices);
       subPipeline.setRimInclination(this.state.rimInclinationAngleDeg, this.state.rimInclinationAzimuthDeg);
+      subPipeline.setManualRimBasePoint(this.state.manualRimBasePoint);
       // Inject the pre-computed separation so all sub-pipelines use the same cupAxis
       if (this.state.separation) subPipeline.setSeparation(this.state.separation);
       const subResult = await subPipeline.runFullAnalysis(meshData, buildModeParams(mode));
@@ -386,10 +403,31 @@ export class WearAnalysisPipeline {
       rimPercent,
       this.state.excludedInnerMeshVertices.size > 0 ? this.state.excludedInnerMeshVertices : undefined,
       rimPlaneNormal,
+      undefined,   // no pre-computed anchor here
+      this._computeManualPlaneAnchor(rimPercent, rimPlaneNormal),
     );
     this.state.workingMesh = this.state.trimResult.mesh;
     this.state.smoothedMesh = null; // invalidate
     return this.state.trimResult;
+  }
+
+  /**
+   * Compute the exact cut-plane anchor for the current manual rim base point + trim%.
+   * Returns undefined when no manual rim point is stored (falls back to default logic).
+   */
+  private _computeManualPlaneAnchor(
+    rimPercent: number,
+    rimPlaneNormal: [number, number, number] | undefined,
+  ): [number, number, number] | undefined {
+    if (!this.state.manualRimBasePoint || !rimPlaneNormal || !this.state.separation) return undefined;
+    const ca = this.state.separation.cupAxis;
+    const [ax, ay, az] = ca;
+    const anchor = computeRimAnchor(this.state.separation.inner, ca);
+    const range = anchor.maxHA - anchor.minHA;
+    const sign = anchor.rimAtHighEnd ? -1 : 1;
+    const shift = sign * (rimPercent / 100) * range;
+    const bp = this.state.manualRimBasePoint;
+    return [bp[0] + ax * shift, bp[1] + ay * shift, bp[2] + az * shift];
   }
 
   /**

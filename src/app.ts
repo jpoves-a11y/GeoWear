@@ -389,6 +389,12 @@ export class App {
     try {
       this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
       this.pipeline.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
+      // Propagate manual rim base point so the cut plane matches the live preview
+      if (this._manualRimCenter) {
+        this.pipeline.setManualRimBasePoint([this._manualRimCenter.x, this._manualRimCenter.y, this._manualRimCenter.z]);
+      } else {
+        this.pipeline.setManualRimBasePoint(null);
+      }
       if (existingSeparation) this.pipeline.setSeparation(existingSeparation);
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
       // Init lasso manager so the user can draw exclusions after full analysis too
@@ -460,6 +466,11 @@ export class App {
       p.setExclusionMask(this.excludedInnerMeshVertices);
       p.setRimPlaneNormal(this.computeCurrentRimNormal());
       p.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
+      if (this._manualRimCenter) {
+        p.setManualRimBasePoint([this._manualRimCenter.x, this._manualRimCenter.y, this._manualRimCenter.z]);
+      } else {
+        p.setManualRimBasePoint(null);
+      }
       const trim = p.stepTrimRim(this.params.rimTrimPercent);
       this.meshViewer.displayInnerMesh(trim.mesh);
       this.meshViewer.displayGhostMesh(trim.rimMesh);
@@ -554,13 +565,27 @@ export class App {
       if (!sep2) return;
       const pn = this.computeCurrentRimNormal();
       if (!pn) return;
+
+      // Compute the exact plane anchor when a manual rim center is available
+      let planeAnchorOverride: [number, number, number] | undefined;
+      const mc = this._manualRimCenter;
+      if (mc && this._rimAnchorCache) {
+        const [ax, ay, az] = sep2.cupAxis;
+        const anchor = this._rimAnchorCache;
+        const range = anchor.maxHA - anchor.minHA;
+        const sign = anchor.rimAtHighEnd ? -1 : 1;
+        const shift = sign * (this.params.rimTrimPercent / 100) * range;
+        planeAnchorOverride = [mc.x + ax * shift, mc.y + ay * shift, mc.z + az * shift];
+      }
+
       const trimResult = trimRim(
         sep2.inner,
         sep2.cupAxis,
         this.params.rimTrimPercent,
-        undefined,   // no exclusion mask for preview
+        undefined,
         pn,
         this._rimAnchorCache ?? undefined,
+        planeAnchorOverride,
       );
       this.meshViewer.displayInnerMesh(trimResult.mesh);
       this.meshViewer.displayGhostMesh(trimResult.rimMesh);

@@ -604,6 +604,13 @@ export function trimRim(
   rimPlaneNormal?: [number, number, number],
   /** Pre-computed anchor — pass to skip the O(F) edge-map boundary detection. */
   anchor?: RimAnchor,
+  /**
+   * When provided together with `rimPlaneNormal`, this point is used directly as the
+   * plane anchor instead of the cup-axis-centroid calculation.  Use this to position
+   * the cut exactly where the manually picked rim centroid is (already shifted for trim%).
+   * When not provided, the default cup-axis-based calculation is used.
+   */
+  planeAnchorOverride?: [number, number, number],
 ): TrimResult {
   // ------------------------------------------------------------------
   // FAST PATH: plane-based trim (used when rimPlaneNormal is provided)
@@ -611,6 +618,12 @@ export function trimRim(
   // (percent%)-from-top threshold are classified as "rim" and removed.
   // ------------------------------------------------------------------
   if (rimPlaneNormal) {
+    // When the caller supplies the exact plane anchor (manual rim pick), use it directly.
+    if (planeAnchorOverride) {
+      const rimHint = anchor?.rimAtHighEnd;
+      return trimRimByPlane(meshData, planeAnchorOverride, rimPlaneNormal, excludedVertices, rimHint);
+    }
+
     let pcx: number, pcy: number, pcz: number;
     let minHA: number, maxHA: number;
     let rimAtHighEndA: boolean;
