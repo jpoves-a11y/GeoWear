@@ -389,6 +389,9 @@ export class App {
     try {
       this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
       this.pipeline.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
+      // Always set the fully-resolved plane normal so WearAnalysis uses it directly
+      // regardless of inclination angle values (critical when confirmed normal is active).
+      this.pipeline.setRimPlaneNormal(this.computeCurrentRimNormal());
       // Propagate manual rim base point so the cut plane matches the live preview
       if (this._manualRimCenter) {
         this.pipeline.setManualRimBasePoint([this._manualRimCenter.x, this._manualRimCenter.y, this._manualRimCenter.z]);
@@ -514,7 +517,20 @@ export class App {
     const sep = this.pipeline?.state.separation;
     if (!sep) return undefined;
     const { rimInclinationAngle, rimInclinationAzimuth } = this.params;
-    // Always return a plane normal — this ensures consistent plane-based trim when previewing
+
+    if (this._confirmedManualNormal) {
+      // Sliders are relative to the confirmed manual normal.
+      // 0/0 = exactly the confirmed plane; non-zero = tilt from that plane.
+      if (Math.abs(rimInclinationAngle) < 1e-6 && Math.abs(rimInclinationAzimuth) < 1e-6) {
+        const n = this._confirmedManualNormal;
+        return [n.x, n.y, n.z];
+      }
+      const n = this._confirmedManualNormal;
+      const v = computeTiltedRimNormal([n.x, n.y, n.z], rimInclinationAngle, rimInclinationAzimuth);
+      return [v.x, v.y, v.z];
+    }
+
+    // Auto mode: tilt relative to cup axis
     const v = computeTiltedRimNormal(sep.cupAxis, rimInclinationAngle, rimInclinationAzimuth);
     return [v.x, v.y, v.z];
   }
@@ -528,6 +544,13 @@ export class App {
    *   2. DEBOUNCED – rebuild the trimmed inner/ghost mesh geometry after 300 ms of inactivity.
    */
   private updateRimPreview(): void {
+    // During pick mode, only update the disc geometry — no mesh rebuild.
+    // The disc is driven by the live-fitted normal, not by params.
+    if (this.rimPickActive) {
+      this.updateRimDiscOnly();
+      return;
+    }
+
     const sep = this.pipeline?.state.separation;
     if (!sep) return;
     const planeNormal = this.computeCurrentRimNormal();
@@ -538,16 +561,15 @@ export class App {
       this._rimAnchorCache = computeRimAnchor(sep.inner, sep.cupAxis);
     }
     const anchor = this._rimAnchorCache;
+    const range = anchor.maxHA - anchor.minHA;
 
-    // Use manual rim centroid as disc center when available (trim% shifts along cup axis)
+    // Disc center: if manual rim confirmed, shift along the effective plane normal (toward pole).
+    // The plane normal always points toward the pole, so positive shift = toward pole.
     let planePt: THREE.Vector3;
     if (this._manualRimCenter) {
-      const [ax, ay, az] = sep.cupAxis;
-      const axVec = new THREE.Vector3(ax, ay, az);
-      const range = anchor.maxHA - anchor.minHA;
-      const sign = anchor.rimAtHighEnd ? -1 : 1;
+      const shift = (this.params.rimTrimPercent / 100) * range;
       planePt = this._manualRimCenter.clone()
-        .addScaledVector(axVec, sign * (this.params.rimTrimPercent / 100) * range);
+        .addScaledVector(new THREE.Vector3(...planeNormal), shift);
     } else {
       const pc = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
       planePt = new THREE.Vector3(pc[0], pc[1], pc[2]);
@@ -567,20 +589,17 @@ export class App {
       if (!pn) return;
 
       // Compute the exact plane anchor when a manual rim center is available.
-      // Even if _rimAnchorCache is null at this point (shouldn't happen, but be safe),
-      // compute it here so the override is never silently skipped.
+      // Shift along the effective plane normal (toward pole), not along the cup axis.
       let planeAnchorOverride: [number, number, number] | undefined;
       const mc = this._manualRimCenter;
       if (mc) {
         if (!this._rimAnchorCache) {
           this._rimAnchorCache = computeRimAnchor(sep2.inner, sep2.cupAxis);
         }
-        const anchorForShift = this._rimAnchorCache!;
-        const [ax, ay, az] = sep2.cupAxis;
-        const range = anchorForShift.maxHA - anchorForShift.minHA;
-        const sign = anchorForShift.rimAtHighEnd ? -1 : 1;
-        const shift = sign * (this.params.rimTrimPercent / 100) * range;
-        planeAnchorOverride = [mc.x + ax * shift, mc.y + ay * shift, mc.z + az * shift];
+        const r2 = this._rimAnchorCache!.maxHA - this._rimAnchorCache!.minHA;
+        const shift = (this.params.rimTrimPercent / 100) * r2;
+        const [pnx, pny, pnz] = pn;
+        planeAnchorOverride = [mc.x + pnx * shift, mc.y + pny * shift, mc.z + pnz * shift];
       }
 
       const trimResult = trimRim(
@@ -652,7 +671,7 @@ export class App {
 
       let effNormal: THREE.Vector3;
       if (this._manualRimNormal) {
-        // Still in (or recently exited) pick mode — work with the stored raw normal + flip flag
+        // Still in pick mode — work with the stored raw normal + flip flag
         effNormal = this._normalFlipped
           ? this._manualRimNormal.clone().negate()
           : this._manualRimNormal.clone();
@@ -663,15 +682,12 @@ export class App {
         effNormal = new THREE.Vector3(...pn);
       }
 
-      // Plane center in mesh-local coords
+      // Plane center in mesh-local coords: shift along effective normal (toward pole)
       const planePt = this._manualRimCenter
         ? (() => {
-            const [ax, ay, az] = sep.cupAxis;
-            const axVec = new THREE.Vector3(ax, ay, az);
             const range = anchor.maxHA - anchor.minHA;
-            const sign = anchor.rimAtHighEnd ? -1 : 1;
-            return this._manualRimCenter!.clone()
-              .addScaledVector(axVec, sign * (this.params.rimTrimPercent / 100) * range);
+            const shift = (this.params.rimTrimPercent / 100) * range;
+            return this._manualRimCenter!.clone().addScaledVector(effNormal, shift);
           })()
         : (() => {
             const pc = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
@@ -680,13 +696,21 @@ export class App {
 
       const towardPole = localPole.clone().sub(planePt);
       if (towardPole.dot(effNormal) > 0) {
-        // Pole is on positive (rim) side — flip the normal
+        // Pole is on positive (rim-opening) side of the normal — flip needed
         if (this._manualRimNormal) {
           // In pick-mode context: toggle flip flag and re-apply
           this._normalFlipped = !this._normalFlipped;
           this._applyManualNormal();
+        } else if (this._confirmedManualNormal) {
+          // Post-confirm with confirmed normal: negate the confirmed normal and reset sliders
+          this._confirmedManualNormal.negate();
+          this.params.rimInclinationAngle = 0;
+          this.params.rimInclinationAzimuth = 0;
+          this.controls.refreshRimSliders();
+          this._rimAnchorCache = null;
+          this.updateRimPreview();
         } else {
-          // Post-confirm: flip via params (inc → 180-inc, az → az+180)
+          // Auto mode: flip via params (inc → 180-inc, az → az+180)
           let newInc = 180 - this.params.rimInclinationAngle;
           let newAz  = this.params.rimInclinationAzimuth + 180;
           if (newAz > 180) newAz -= 360;
@@ -1370,6 +1394,13 @@ export class App {
   private _prePickAzimuth = 0;
   /** Centroid of the last set of picked rim points — used as disc center after confirmation. */
   private _manualRimCenter: THREE.Vector3 | null = null;
+  /**
+   * The CONFIRMED manual rim plane normal (oriented toward the pole).
+   * Set on confirm/exit-with-points; cleared by Revert to Auto.
+   * When set, the Inclination/Azimuth sliders define tilt RELATIVE to this normal
+   * (0/0 = exactly this plane, not relative to the cup axis).
+   */
+  private _confirmedManualNormal: THREE.Vector3 | null = null;
   /** User-defined pole point (mesh-local) — used to auto-orient the rim normal. */
   private _polePoint: THREE.Vector3 | null = null;
   /** True while waiting for a one-shot pole click. */
@@ -1468,11 +1499,20 @@ export class App {
       const hasManual = this._manualRimCenter !== null;
       this.controls.updateRimPickUI(false, n >= 3 ? n : 0, hasManual);
       if (n >= 3) {
-        // Trigger a full mesh rebuild now that we've exited (disc was already live)
+        // Store confirmed normal and reset sliders to 0/0 (relative to this normal)
+        if (this._manualRimNormal) {
+          const effN = this._normalFlipped
+            ? this._manualRimNormal.clone().negate()
+            : this._manualRimNormal.clone();
+          this._confirmedManualNormal = effN.normalize();
+          this.params.rimInclinationAngle = 0;
+          this.params.rimInclinationAzimuth = 0;
+          this.controls.refreshRimSliders();
+        }
         this._rimAnchorCache = null;
         this.updateRimPreview();
         this.controls.setPoleButtonEnabled(hasManual);
-        this.status.setStatus(`Rim plane set from ${n} points. Use sliders to fine-tune.`);
+        this.status.setStatus(`Rim plane set. Inclination/Azimuth sliders now relative to this plane.`);
       } else {
         // Not enough points: revert to pre-pick state
         this._manualRimCenter = null;
@@ -1509,11 +1549,22 @@ export class App {
     this.rimPickManager?.clear();
     this.meshViewer.clearRimNormalArrow();
     const hasManual = this._manualRimCenter !== null;
+    // Store the confirmed normal (oriented toward pole) and reset sliders to 0/0.
+    // From now on, Inclination/Azimuth sliders are relative to THIS normal, not the cup axis.
+    if (this._manualRimNormal) {
+      const effN = this._normalFlipped
+        ? this._manualRimNormal.clone().negate()
+        : this._manualRimNormal.clone();
+      this._confirmedManualNormal = effN.normalize();
+      this.params.rimInclinationAngle = 0;
+      this.params.rimInclinationAzimuth = 0;
+      this.controls.refreshRimSliders();
+    }
     this.controls.updateRimPickUI(false, n, hasManual);
     this.controls.setPoleButtonEnabled(hasManual);
     this._rimAnchorCache = null;
     this.updateRimPreview();
-    this.status.setStatus(`Rim plane confirmed from ${n} points. Sliders fine-tune further.`);
+    this.status.setStatus(`Rim plane confirmed. Inclination/Azimuth sliders now relative to this plane.`);
   }
 
   /** Undo last picked point (left panel button). */
@@ -1565,6 +1616,7 @@ export class App {
     }
     this._manualRimNormal = null;
     this._manualRimCenter = null;
+    this._confirmedManualNormal = null;
     this._polePoint = null;
     this._normalFlipped = false;
     this.meshViewer.clearRimNormalArrow();
@@ -1646,24 +1698,34 @@ export class App {
   private updateRimDiscOnly(): void {
     const sep = this.pipeline?.state.separation;
     if (!sep) return;
-    const planeNormal = this.computeCurrentRimNormal();
-    if (!planeNormal) return;
+
+    // During pick mode: use the raw fitted normal + flip directly (not from params).
+    // This avoids the confusion of params reflecting cupAxis-relative angles while
+    // _confirmedManualNormal is set (which would make computeCurrentRimNormal give wrong result).
+    let planeNormal: [number, number, number];
+    if (this.rimPickActive && this._manualRimNormal) {
+      const eff = this._normalFlipped
+        ? this._manualRimNormal.clone().negate()
+        : this._manualRimNormal.clone();
+      planeNormal = [eff.x, eff.y, eff.z];
+    } else {
+      const pn = this.computeCurrentRimNormal();
+      if (!pn) return;
+      planeNormal = pn;
+    }
 
     if (!this._rimAnchorCache) {
       this._rimAnchorCache = computeRimAnchor(sep.inner, sep.cupAxis);
     }
     const anchor = this._rimAnchorCache;
 
-    // Compute disc center: if a manual rim center is stored, offset from it along the cup axis;
-    // otherwise fall back to the standard cup-axis-based computation.
+    // Disc center: shift along effective plane normal (toward pole).
     let planePt: THREE.Vector3;
     if (this._manualRimCenter) {
-      const [ax, ay, az] = sep.cupAxis;
-      const axVec = new THREE.Vector3(ax, ay, az);
       const range = anchor.maxHA - anchor.minHA;
-      const sign = anchor.rimAtHighEnd ? -1 : 1;
+      const shift = (this.params.rimTrimPercent / 100) * range;
       planePt = this._manualRimCenter.clone()
-        .addScaledVector(axVec, sign * (this.params.rimTrimPercent / 100) * range);
+        .addScaledVector(new THREE.Vector3(...planeNormal), shift);
     } else {
       const pc = rimAnchorToPlanePoint(anchor, sep.cupAxis, this.params.rimTrimPercent);
       planePt = new THREE.Vector3(pc[0], pc[1], pc[2]);

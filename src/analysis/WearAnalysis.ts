@@ -378,23 +378,24 @@ export class WearAnalysisPipeline {
   stepTrimRim(rimPercent: number = 5): TrimResult {
     if (!this.state.separation) throw new Error('Run face separation first');
 
-    // Re-derive the rim plane normal from the freshly computed cupAxis + stored angles.
-    // This is the authoritative calculation: it uses the cupAxis from THIS pipeline's
-    // separation, so it is never stale regardless of when setRimInclination was called.
+    // Use the explicitly-provided rim plane normal when available (set by app.ts via
+    // setRimPlaneNormal before each run). This already accounts for the confirmed manual
+    // normal + any slider tilt, so no recomputation from angles is needed.
+    // Fall back to angle-based recomputation only when no explicit normal was provided.
     let rimPlaneNormal = this.state.rimPlaneNormal;
-    if (this.state.rimInclinationAngleDeg !== 0 || this.state.rimInclinationAzimuthDeg !== 0) {
-      const v = computeTiltedRimNormal(
-        this.state.separation.cupAxis,
-        this.state.rimInclinationAngleDeg,
-        this.state.rimInclinationAzimuthDeg,
-      );
-      rimPlaneNormal = [v.x, v.y, v.z];
-    } else if (rimPlaneNormal === undefined) {
-      // inclination = 0 → use cup axis as plane normal (plane perpendicular to cup axis).
-      // This keeps behaviour consistent with the live preview, which always uses the
-      // plane-based path. The old geodesic fallback produced a different cut at 0° only.
-      const [ax, ay, az] = this.state.separation.cupAxis;
-      rimPlaneNormal = [ax, ay, az];
+    if (rimPlaneNormal === undefined) {
+      if (this.state.rimInclinationAngleDeg !== 0 || this.state.rimInclinationAzimuthDeg !== 0) {
+        const v = computeTiltedRimNormal(
+          this.state.separation.cupAxis,
+          this.state.rimInclinationAngleDeg,
+          this.state.rimInclinationAzimuthDeg,
+        );
+        rimPlaneNormal = [v.x, v.y, v.z];
+      } else {
+        // inclination = 0 → use cup axis as plane normal (plane perpendicular to cup axis).
+        const [ax, ay, az] = this.state.separation.cupAxis;
+        rimPlaneNormal = [ax, ay, az];
+      }
     }
 
     this.state.trimResult = trimRim(
@@ -421,13 +422,14 @@ export class WearAnalysisPipeline {
   ): [number, number, number] | undefined {
     if (!this.state.manualRimBasePoint || !rimPlaneNormal || !this.state.separation) return undefined;
     const ca = this.state.separation.cupAxis;
-    const [ax, ay, az] = ca;
     const anchor = computeRimAnchor(this.state.separation.inner, ca);
     const range = anchor.maxHA - anchor.minHA;
-    const sign = anchor.rimAtHighEnd ? -1 : 1;
-    const shift = sign * (rimPercent / 100) * range;
+    // Shift along the plane normal (which points toward the pole) by trim%.
+    // The normal is already oriented toward the interior — no sign flip needed.
+    const shift = (rimPercent / 100) * range;
+    const [nx, ny, nz] = rimPlaneNormal;
     const bp = this.state.manualRimBasePoint;
-    return [bp[0] + ax * shift, bp[1] + ay * shift, bp[2] + az * shift];
+    return [bp[0] + nx * shift, bp[1] + ny * shift, bp[2] + nz * shift];
   }
 
   /**

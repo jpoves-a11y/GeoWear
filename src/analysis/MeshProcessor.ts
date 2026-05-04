@@ -435,37 +435,24 @@ function trimRimByPlane(
     if (h > maxH) maxH = h;
   }
 
-  // Validate which side of the plane (h>0 or h<0) is the rim by checking actual
-  // boundary vertices (edges shared by only one face).
-  // Skip this O(F) string-key edge-map when the caller already knows the rim side.
+  // Determine which side of the plane (h>0 or h<0) is the rim vs the interior bowl.
+  //
+  // We use the OVERALL vertex mean height instead of boundary-edge detection.
+  // Reason: the manual rim plane is placed exactly at the rim boundary, so boundary
+  // vertices have h ≈ 0 and their sign is numerically unstable (especially at trim%=0).
+  // The interior bowl dominates the total vertex count and has a clear, consistent sign.
+  //
+  //   rimAtHighEnd = true  → rim at h>0 side → keep h≤0 (interior at negative side)
+  //   rimAtHighEnd = false → rim at h<0 side → keep h≥0 (interior at positive side)
   let rimAtHighEnd: boolean;
   if (rimAtHighEndHint !== undefined) {
     rimAtHighEnd = rimAtHighEndHint;
   } else {
-    rimAtHighEnd = true; // default: rim at h>0 side
-    const edgeCnt = new Map<string, number>();
-    for (let f = 0; f < faceCount; f++) {
-      for (let e = 0; e < 3; e++) {
-        const a = indices[f * 3 + e], b = indices[f * 3 + ((e + 1) % 3)];
-        const k = a < b ? `${a}_${b}` : `${b}_${a}`;
-        edgeCnt.set(k, (edgeCnt.get(k) || 0) + 1);
-      }
-    }
-    let boundaryHSum = 0, boundaryHCnt = 0;
-    const seen = new Set<number>();
-    for (const [k, cnt] of edgeCnt) {
-      if (cnt === 1) {
-        const [a, b] = k.split('_').map(Number);
-        if (!seen.has(a)) { boundaryHSum += height[a]; boundaryHCnt++; seen.add(a); }
-        if (!seen.has(b)) { boundaryHSum += height[b]; boundaryHCnt++; seen.add(b); }
-      }
-    }
-    if (boundaryHCnt > 0) {
-      rimAtHighEnd = (boundaryHSum / boundaryHCnt) > 0;
-      if (!rimAtHighEnd) {
-        console.log(`[trimRimByPlane] Rim detected at h<0 side (boundary meanH=${(boundaryHSum/boundaryHCnt).toFixed(2)}) — keeping h≥0 side.`);
-      }
-    }
+    let totalH = 0;
+    for (let i = 0; i < vertexCount; i++) totalH += height[i];
+    // Interior bowl is the larger portion of the mesh.
+    // If the mean is negative, interior is at h<0 → rim is at h>0 → rimAtHighEnd=true.
+    rimAtHighEnd = (totalH / vertexCount) < 0;
   }
 
   // Cut: keep vertices on the pole side (opposite the rim side).
