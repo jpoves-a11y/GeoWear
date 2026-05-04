@@ -524,13 +524,11 @@ export class App {
    * Returns undefined when inclination = 0 (falls back to geodesic-based trim in analysis).
    */
   private computeCurrentRimNormal(): [number, number, number] | undefined {
-    const sep = this.pipeline?.state.separation;
-    if (!sep) return undefined;
     const { rimInclinationAngle, rimInclinationAzimuth } = this.params;
 
     if (this._confirmedManualNormal) {
-      // Sliders are relative to the confirmed manual normal.
-      // 0/0 = exactly the confirmed plane; non-zero = tilt from that plane.
+      // Confirmed manual normal: sliders define tilt RELATIVE to this normal.
+      // This path does NOT need sep — safe to call even before separation has run.
       if (Math.abs(rimInclinationAngle) < 1e-6 && Math.abs(rimInclinationAzimuth) < 1e-6) {
         const n = this._confirmedManualNormal;
         return [n.x, n.y, n.z];
@@ -540,7 +538,9 @@ export class App {
       return [v.x, v.y, v.z];
     }
 
-    // Auto mode: tilt relative to cup axis
+    // Auto mode: tilt relative to cup axis — requires separation.
+    const sep = this.pipeline?.state.separation;
+    if (!sep) return undefined;
     const v = computeTiltedRimNormal(sep.cupAxis, rimInclinationAngle, rimInclinationAzimuth);
     return [v.x, v.y, v.z];
   }
