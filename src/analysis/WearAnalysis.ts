@@ -1588,9 +1588,20 @@ export class WearAnalysisPipeline {
     if (!this.state.realRimPlaneNormal) throw new Error('Run geodesics first (real rim data needed)');
     if (!this.state.polePosition) throw new Error('No pole position available');
 
-    // Use the real border plane normal (from untrimmed inner surface boundary)
-    const normal = this.state.realRimPlaneNormal.clone().normalize();
-    const rimCentroid = this.state.realRimCentroid.clone();
+    // When the user has defined a manual rim plane, use its orientation directly so the
+    // volume cut plane is consistent with the displayed trim.  Otherwise fall back to the
+    // PCA-fitted normal from the physical boundary of the untrimmed inner surface.
+    const normalSrc = this.state.rimPlaneNormal
+      ? new THREE.Vector3(...this.state.rimPlaneNormal)
+      : this.state.realRimPlaneNormal.clone();
+    const normal = normalSrc.normalize();
+
+    // Anchor: use the manual rim centroid (user-picked points) when available;
+    // otherwise use the PCA rim centroid from the physical boundary.
+    const rimCentroid = this.state.manualRimBasePoint
+      ? new THREE.Vector3(...this.state.manualRimBasePoint)
+      : this.state.realRimCentroid.clone();
+
     const pole = this.state.polePosition.clone();
 
     // Orient normal toward the pole (interior)
@@ -1612,7 +1623,8 @@ export class WearAnalysisPipeline {
       rimVertices: [],
     };
 
-    console.log(`[Rim Plane] center=(${planePoint.x.toFixed(3)}, ${planePoint.y.toFixed(3)}, ${planePoint.z.toFixed(3)}), normal=(${normal.x.toFixed(4)}, ${normal.y.toFixed(4)}, ${normal.z.toFixed(4)}), offset=${offset.toFixed(4)}mm (${rimTrimPercent}% of ${distToPole.toFixed(4)}mm)`);
+    const src = this.state.rimPlaneNormal ? 'manual' : 'auto-PCA';
+    console.log(`[Rim Plane] source=${src}, center=(${planePoint.x.toFixed(3)}, ${planePoint.y.toFixed(3)}, ${planePoint.z.toFixed(3)}), normal=(${normal.x.toFixed(4)}, ${normal.y.toFixed(4)}, ${normal.z.toFixed(4)}), offset=${offset.toFixed(4)}mm (${rimTrimPercent}% of ${distToPole.toFixed(4)}mm)`);
     return this.state.rimPlane;
   }
 
