@@ -1612,26 +1612,45 @@ export class WearAnalysisPipeline {
     }
     const normal = normalSrc.normalize();
 
-    // Anchor: use the manual rim centroid (user-picked points) when available;
-    // otherwise use the PCA rim centroid from the physical boundary.
-    const rimCentroid = this.state.manualRimBasePoint
-      ? new THREE.Vector3(...this.state.manualRimBasePoint)
-      : this.state.realRimCentroid.clone();
-
-    const pole = this.state.polePosition.clone();
-
-    // Orient normal toward the pole (interior)
-    const toPole = pole.clone().sub(rimCentroid);
+    // Orient normal toward the pole so h>0 always means "toward the interior".
+    const toPole = this.state.polePosition.clone().sub(this.state.realRimCentroid.clone());
     if (toPole.dot(normal) < 0) {
       normal.negate();
     }
 
-    // Distance from border centroid to pole along the normal direction
-    const distToPole = toPole.dot(normal);
-
-    // Translate the plane toward the pole by rimTrimPercent% of that distance
-    const offset = (rimTrimPercent / 100) * distToPole;
-    const planePoint = rimCentroid.clone().add(normal.clone().multiplyScalar(offset));
+    // Compute the plane anchor using EXACTLY the same arithmetic as stepTrimRim/trimRim
+    // so the volume cut plane is at the same position as the visual trim and preview disc.
+    //
+    //   Auto   mode: trimRim uses meshCentroid + cupAxis × threshA
+    //                threshA = maxHA ∓ (pct/100) × (maxHA − minHA)
+    //   Manual mode: trimRim uses manualRimBasePoint + normal × (pct/100) × (maxHA − minHA)
+    //
+    // Previously this function used (polePosition − rimCentroid)·normal as the scale,
+    // which is ~14 mm for a 16 mm cup vs the ~9 mm span used by trimRim — a systematic
+    // ~0.7–1 mm plane offset that made the numerical wear volume inconsistent with the
+    // visual trim.
+    if (!this.state.separation) throw new Error('Run face separation first');
+    const ca = this.state.separation.cupAxis;
+    const rimAnchor = computeRimAnchor(this.state.separation.inner, ca);
+    const range = rimAnchor.maxHA - rimAnchor.minHA;
+    let planePoint: THREE.Vector3;
+    if (this.state.manualRimBasePoint) {
+      // Manual mode — mirror _computeManualPlaneAnchor exactly
+      const shift = (rimTrimPercent / 100) * range;
+      planePoint = new THREE.Vector3(...this.state.manualRimBasePoint)
+        .addScaledVector(normal, shift);
+    } else {
+      // Auto mode — mirror trimRim's inner anchor computation exactly
+      const [ax, ay, az] = ca;
+      const threshA = rimAnchor.rimAtHighEnd
+        ? rimAnchor.maxHA - (rimTrimPercent / 100) * range
+        : rimAnchor.minHA + (rimTrimPercent / 100) * range;
+      planePoint = new THREE.Vector3(
+        rimAnchor.cx + ax * threshA,
+        rimAnchor.cy + ay * threshA,
+        rimAnchor.cz + az * threshA,
+      );
+    }
 
     this.state.rimPlane = {
       point: planePoint,
@@ -1640,7 +1659,7 @@ export class WearAnalysisPipeline {
     };
 
     const src = this.state.rimPlaneNormal ? 'manual' : 'auto-PCA';
-    console.log(`[Rim Plane] source=${src}, center=(${planePoint.x.toFixed(3)}, ${planePoint.y.toFixed(3)}, ${planePoint.z.toFixed(3)}), normal=(${normal.x.toFixed(4)}, ${normal.y.toFixed(4)}, ${normal.z.toFixed(4)}), offset=${offset.toFixed(4)}mm (${rimTrimPercent}% of ${distToPole.toFixed(4)}mm)`);
+    console.log(`[Rim Plane] source=${src}, center=(${planePoint.x.toFixed(3)}, ${planePoint.y.toFixed(3)}, ${planePoint.z.toFixed(3)}), normal=(${normal.x.toFixed(4)}, ${normal.y.toFixed(4)}, ${normal.z.toFixed(4)}), range=${range.toFixed(4)}mm, pct=${rimTrimPercent}%`);
     return this.state.rimPlane;
   }
 

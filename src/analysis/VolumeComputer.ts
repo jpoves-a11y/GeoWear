@@ -227,34 +227,82 @@ export function computeMeshEnclosedVolume(
     const i1 = indices[f * 3 + 1];
     const i2 = indices[f * 3 + 2];
 
-    // Signed height of each vertex above the plane
+    // Signed height of each vertex above the plane (positive = pole side = interior)
     const h0 = (positions[i0 * 3] - px) * nx + (positions[i0 * 3 + 1] - py) * ny + (positions[i0 * 3 + 2] - pz) * nz;
     const h1 = (positions[i1 * 3] - px) * nx + (positions[i1 * 3 + 1] - py) * ny + (positions[i1 * 3 + 2] - pz) * nz;
     const h2 = (positions[i2 * 3] - px) * nx + (positions[i2 * 3 + 1] - py) * ny + (positions[i2 * 3 + 2] - pz) * nz;
 
-    // Skip faces not on the pole side
-    if (h0 < 0 && h1 < 0 && h2 < 0) continue;
-    // Skip faces straddling the plane (minor boundary strip)
-    if (h0 < 0 || h1 < 0 || h2 < 0) continue;
+    // Fully exterior — skip
+    if (h0 <= 0 && h1 <= 0 && h2 <= 0) continue;
 
-    // Edge vectors
-    const e1x = positions[i1 * 3] - positions[i0 * 3];
-    const e1y = positions[i1 * 3 + 1] - positions[i0 * 3 + 1];
-    const e1z = positions[i1 * 3 + 2] - positions[i0 * 3 + 2];
-    const e2x = positions[i2 * 3] - positions[i0 * 3];
-    const e2y = positions[i2 * 3 + 1] - positions[i0 * 3 + 1];
-    const e2z = positions[i2 * 3 + 2] - positions[i0 * 3 + 2];
+    if (h0 >= 0 && h1 >= 0 && h2 >= 0) {
+      // ── Fully interior face ──────────────────────────────────────────────────
+      // V = (h0+h1+h2)/3 × signedProjArea   (truncated prism formula)
+      const e1x = positions[i1 * 3]     - positions[i0 * 3];
+      const e1y = positions[i1 * 3 + 1] - positions[i0 * 3 + 1];
+      const e1z = positions[i1 * 3 + 2] - positions[i0 * 3 + 2];
+      const e2x = positions[i2 * 3]     - positions[i0 * 3];
+      const e2y = positions[i2 * 3 + 1] - positions[i0 * 3 + 1];
+      const e2z = positions[i2 * 3 + 2] - positions[i0 * 3 + 2];
+      const crx = e1y * e2z - e1z * e2y;
+      const cry = e1z * e2x - e1x * e2z;
+      const crz = e1x * e2y - e1y * e2x;
+      volume += (h0 + h1 + h2) / 3.0 * 0.5 * (crx * nx + cry * ny + crz * nz);
+    } else {
+      // ── Straddling face — clip at the plane ──────────────────────────────────
+      // Sort vertices so that the positive-height ones come first.
+      // We always end up with either:
+      //   2 positive + 1 negative → one sub-quad (split into 2 triangles)
+      //   1 positive + 2 negative → one sub-triangle
+      //
+      // Vertex positions as inline arrays to avoid object allocation.
+      let ax = positions[i0 * 3], ay = positions[i0 * 3 + 1], az = positions[i0 * 3 + 2], ah = h0;
+      let bx = positions[i1 * 3], by = positions[i1 * 3 + 1], bz = positions[i1 * 3 + 2], bh = h1;
+      let cx = positions[i2 * 3], cy = positions[i2 * 3 + 1], cz = positions[i2 * 3 + 2], ch = h2;
 
-    // cross(e1, e2)
-    const crx = e1y * e2z - e1z * e2y;
-    const cry = e1z * e2x - e1x * e2z;
-    const crz = e1x * e2y - e1y * e2x;
+      // Sort so ah >= bh >= ch (bubble sort — 3 elements)
+      if (ah < bh) { let t = ah; ah = bh; bh = t; t = ax; ax = bx; bx = t; t = ay; ay = by; by = t; t = az; az = bz; bz = t; }
+      if (bh < ch) { let t = bh; bh = ch; ch = t; t = bx; bx = cx; cx = t; t = by; by = cy; cy = t; t = bz; bz = cz; cz = t; }
+      if (ah < bh) { let t = ah; ah = bh; bh = t; t = ax; ax = bx; bx = t; t = ay; ay = by; by = t; t = az; az = bz; bz = t; }
+      // Now: ah >= bh >= ch, and ch < 0 (at least one negative)
 
-    // Signed projected area = (1/2) * cross · n̂
-    const signedProjArea = 0.5 * (crx * nx + cry * ny + crz * nz);
+      // Intersection points on edges where h crosses zero:
+      //   P_AC = A + (0 − ah)/(ch − ah) × (C − A)   [edge A→C]
+      //   P_BC = B + (0 − bh)/(ch − bh) × (C − B)   [edge B→C]
+      const tAC = ah / (ah - ch); // = -ah/(ch-ah) normalised, guaranteed > 0
+      const pacx = ax + tAC * (cx - ax), pacy = ay + tAC * (cy - ay), pacz = az + tAC * (cz - az);
 
-    // Volume of truncated prism from triangle to its projection on the plane
-    volume += (h0 + h1 + h2) / 3.0 * signedProjArea;
+      // Helper: add prism volume for one triangle with heights ha, hb, hc
+      const addTri = (
+        x0: number, y0: number, z0: number, _h0: number,
+        x1: number, y1: number, z1: number, _h1: number,
+        x2: number, y2: number, z2: number, _h2: number,
+      ) => {
+        const ex1 = x1 - x0, ey1 = y1 - y0, ez1 = z1 - z0;
+        const ex2 = x2 - x0, ey2 = y2 - y0, ez2 = z2 - z0;
+        const crx2 = ey1 * ez2 - ez1 * ey2;
+        const cry2 = ez1 * ex2 - ex1 * ez2;
+        const crz2 = ex1 * ey2 - ey1 * ex2;
+        volume += (_h0 + _h1 + _h2) / 3.0 * 0.5 * (crx2 * nx + cry2 * ny + crz2 * nz);
+      };
+
+      if (bh >= 0) {
+        // 2 vertices above plane (A and B), 1 below (C)
+        // Clip edge B→C as well
+        const tBC = bh / (bh - ch);
+        const pbcx = bx + tBC * (cx - bx), pbcy = by + tBC * (cy - by), pbcz = bz + tBC * (cz - bz);
+        // Sub-quad A, B, P_BC, P_AC — split into triangles (A,B,P_BC) + (A,P_BC,P_AC)
+        addTri(ax, ay, az, ah,  bx, by, bz, bh,  pbcx, pbcy, pbcz, 0);
+        addTri(ax, ay, az, ah,  pbcx, pbcy, pbcz, 0,  pacx, pacy, pacz, 0);
+      } else {
+        // 1 vertex above plane (A only), 2 below (B and C)
+        // Only edge A→B needs a second intersection
+        const tAB = ah / (ah - bh);
+        const pabx = ax + tAB * (bx - ax), paby = ay + tAB * (by - ay), pabz = az + tAB * (bz - az);
+        // Sub-triangle A, P_AB, P_AC
+        addTri(ax, ay, az, ah,  pabx, paby, pabz, 0,  pacx, pacy, pacz, 0);
+      }
+    }
   }
 
   return Math.abs(volume);
