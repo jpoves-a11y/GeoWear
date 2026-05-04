@@ -1588,12 +1588,28 @@ export class WearAnalysisPipeline {
     if (!this.state.realRimPlaneNormal) throw new Error('Run geodesics first (real rim data needed)');
     if (!this.state.polePosition) throw new Error('No pole position available');
 
-    // When the user has defined a manual rim plane, use its orientation directly so the
-    // volume cut plane is consistent with the displayed trim.  Otherwise fall back to the
-    // PCA-fitted normal from the physical boundary of the untrimmed inner surface.
-    const normalSrc = this.state.rimPlaneNormal
-      ? new THREE.Vector3(...this.state.rimPlaneNormal)
-      : this.state.realRimPlaneNormal.clone();
+    // Use the same normal selection logic as stepTrimRim so the volume cut plane
+    // is always consistent with the actual trim used for the working mesh:
+    //   1. Explicit manual rim plane normal (set via setRimPlaneNormal)
+    //   2. Auto mode with inclination/azimuth: compute tilted normal from angles
+    //   3. Auto mode, no tilt: PCA-fitted normal from the physical boundary
+    let normalSrc: THREE.Vector3;
+    if (this.state.rimPlaneNormal) {
+      normalSrc = new THREE.Vector3(...this.state.rimPlaneNormal);
+    } else if (
+      (this.state.rimInclinationAngleDeg !== 0 || this.state.rimInclinationAzimuthDeg !== 0) &&
+      this.state.separation
+    ) {
+      // Mirror stepTrimRim: compute the tilted normal from user inclination/azimuth
+      const v = computeTiltedRimNormal(
+        this.state.separation.cupAxis,
+        this.state.rimInclinationAngleDeg,
+        this.state.rimInclinationAzimuthDeg,
+      );
+      normalSrc = new THREE.Vector3(v.x, v.y, v.z);
+    } else {
+      normalSrc = this.state.realRimPlaneNormal.clone();
+    }
     const normal = normalSrc.normalize();
 
     // Anchor: use the manual rim centroid (user-picked points) when available;

@@ -394,6 +394,9 @@ export class App {
     try {
       this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
       this.pipeline.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
+      // Inject the pre-computed separation BEFORE setRimPlaneNormal so that
+      // computeCurrentRimNormal() can access sep.cupAxis in auto mode.
+      if (existingSeparation) this.pipeline.setSeparation(existingSeparation);
       // Always set the fully-resolved plane normal so WearAnalysis uses it directly
       // regardless of inclination angle values (critical when confirmed normal is active).
       this.pipeline.setRimPlaneNormal(this.computeCurrentRimNormal());
@@ -403,7 +406,6 @@ export class App {
       } else {
         this.pipeline.setManualRimBasePoint(null);
       }
-      if (existingSeparation) this.pipeline.setSeparation(existingSeparation);
       const results = await this.pipeline.runFullAnalysis(this.currentMeshData, this.params);
       // Init lasso manager so the user can draw exclusions after full analysis too
       this.ensureLassoManager();
