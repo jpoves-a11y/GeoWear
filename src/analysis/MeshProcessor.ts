@@ -619,9 +619,13 @@ export function trimRim(
   // ------------------------------------------------------------------
   if (rimPlaneNormal) {
     // When the caller supplies the exact plane anchor (manual rim pick), use it directly.
+    // IMPORTANT: do NOT forward anchor.rimAtHighEnd as a hint here.
+    // That flag is based on heights along the cup axis, whereas trimRimByPlane measures
+    // heights along `rimPlaneNormal`.  When the normal is tilted the two directions
+    // are inconsistent, causing the wrong half of the mesh to be kept.
+    // Let trimRimByPlane auto-detect the correct side from actual boundary edges.
     if (planeAnchorOverride) {
-      const rimHint = anchor?.rimAtHighEnd;
-      return trimRimByPlane(meshData, planeAnchorOverride, rimPlaneNormal, excludedVertices, rimHint);
+      return trimRimByPlane(meshData, planeAnchorOverride, rimPlaneNormal, excludedVertices, undefined);
     }
 
     let pcx: number, pcy: number, pcz: number;

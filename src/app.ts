@@ -566,14 +566,19 @@ export class App {
       const pn = this.computeCurrentRimNormal();
       if (!pn) return;
 
-      // Compute the exact plane anchor when a manual rim center is available
+      // Compute the exact plane anchor when a manual rim center is available.
+      // Even if _rimAnchorCache is null at this point (shouldn't happen, but be safe),
+      // compute it here so the override is never silently skipped.
       let planeAnchorOverride: [number, number, number] | undefined;
       const mc = this._manualRimCenter;
-      if (mc && this._rimAnchorCache) {
+      if (mc) {
+        if (!this._rimAnchorCache) {
+          this._rimAnchorCache = computeRimAnchor(sep2.inner, sep2.cupAxis);
+        }
+        const anchorForShift = this._rimAnchorCache!;
         const [ax, ay, az] = sep2.cupAxis;
-        const anchor = this._rimAnchorCache;
-        const range = anchor.maxHA - anchor.minHA;
-        const sign = anchor.rimAtHighEnd ? -1 : 1;
+        const range = anchorForShift.maxHA - anchorForShift.minHA;
+        const sign = anchorForShift.rimAtHighEnd ? -1 : 1;
         const shift = sign * (this.params.rimTrimPercent / 100) * range;
         planeAnchorOverride = [mc.x + ax * shift, mc.y + ay * shift, mc.z + az * shift];
       }
