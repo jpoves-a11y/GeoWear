@@ -127,6 +127,10 @@ export interface PipelineState {
   // overwritten — updateRimPreview() reads separation.cupAxis and must see the same
   // value before and after analysis for identical inclination/azimuth parameters.
   geodesicCupAxis?: [number, number, number];
+  /** Index of first face added by hole repair (= original faceCount before repair). Null when repair was not applied or no holes were found. */
+  filledHolesFaceStart: number | null;
+  /** Number of holes filled during inner face repair. */
+  filledHolesCount: number;
 }
 
 export class WearAnalysisPipeline {
@@ -172,6 +176,8 @@ export class WearAnalysisPipeline {
     rimInclinationAzimuthDeg: 0,
     manualRimBasePoint: null,
     geodesicCupAxis: undefined,
+    filledHolesFaceStart: null,
+    filledHolesCount: 0,
   };
 
   private onProgress?: (stage: string, progress: number, message: string) => void;
@@ -382,11 +388,15 @@ export class WearAnalysisPipeline {
   stepRepairInnerFace(iterations: number = 2): void {
     if (!this.state.separation) throw new Error('Run face separation first');
 
-    const repairedInner = repairInnerFaceMesh(this.state.separation.inner, iterations, 300);
+    const result = repairInnerFaceMesh(this.state.separation.inner, iterations, 1000);
     this.state.separation = {
       ...this.state.separation,
-      inner: repairedInner,
+      inner: result.meshData,
     };
+    this.state.filledHolesFaceStart = result.holeCount > 0 ? result.filledFaceStart : null;
+    this.state.filledHolesCount = result.holeCount;
+    const newFaces = result.meshData.faceCount - result.filledFaceStart;
+    console.log(`[Repair] Filled ${result.holeCount} hole(s), added ${newFaces} face(s). Inner mesh: ${result.meshData.faceCount} faces total.`);
   }
 
   stepTrimRim(rimPercent: number = 5): TrimResult {
@@ -1712,6 +1722,16 @@ export class WearAnalysisPipeline {
     );
 
     const wearVolume = Math.max(0, meshEnclosedVolume - sphereCapVolume);
+
+    // Diagnostic: mesh volume significantly below sphere cap → likely caused by unfilled holes
+    if (meshEnclosedVolume < 0.85 * sphereCapVolume) {
+      console.warn(
+        `[Wear Volume] WARNING: meshEnclosedVolume (${meshEnclosedVolume.toFixed(4)} mm³) is ` +
+        `significantly below sphereCapVolume (${sphereCapVolume.toFixed(4)} mm³). ` +
+        `Holes in the inner surface are likely falsifying the result. ` +
+        `Enable "Repair Inner Face" and re-run.`
+      );
+    }
 
     this.state.wearVolume = {
       meshEnclosedVolume,

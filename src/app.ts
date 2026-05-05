@@ -464,6 +464,8 @@ export class App {
     try {
       this.status.setStatus('Separating inner/outer faces...');
       p.stepSeparateFaces(this.currentMeshData);
+      // Clear any overlay from a previous repair before displaying the new mesh
+      this.meshViewer.removeRepairedHolesOverlay();
       if (this.params.repairInnerFace) {
         p.stepRepairInnerFace();
       }
@@ -472,7 +474,16 @@ export class App {
       this.meshViewer.displayOuterMesh(sep.outer);
       this.meshViewer.hideOriginal();
       this._rimAnchorCache = null; // new separation — invalidate cache
-      this.status.setStatus(`Separated: ${sep.inner.faceCount} inner / ${sep.outer.faceCount} outer faces${this.params.repairInnerFace ? ' (inner repaired)' : ''}`);
+      // Show amber overlay for filled holes (if any)
+      if (this.params.repairInnerFace && p.state.filledHolesFaceStart !== null) {
+        this.meshViewer.displayRepairedHolesOverlay(sep.inner, p.state.filledHolesFaceStart);
+        this.status.setStatus(
+          `Separated: ${sep.inner.faceCount} inner / ${sep.outer.faceCount} outer faces` +
+          ` (${p.state.filledHolesCount} hole(s) repaired — highlighted in orange)`
+        );
+      } else {
+        this.status.setStatus(`Separated: ${sep.inner.faceCount} inner / ${sep.outer.faceCount} outer faces${this.params.repairInnerFace ? ' (no holes found)' : ''}`);
+      }
       this.controls.markStepCompleted('separate');
       this.applyVisibilityFromParams();
       this.scene.requestRender();
@@ -964,6 +975,13 @@ export class App {
     // Show inner mesh (trimmed, opaque)
     if (p.state.workingMesh) {
       this.meshViewer.displayInnerMesh(p.state.workingMesh);
+    }
+
+    // Repaired holes overlay (amber patch on filled holes from inner face repair)
+    if (this.params.repairInnerFace && p.state.filledHolesFaceStart !== null && p.state.separation) {
+      this.meshViewer.displayRepairedHolesOverlay(p.state.separation.inner, p.state.filledHolesFaceStart);
+    } else {
+      this.meshViewer.removeRepairedHolesOverlay();
     }
 
     // Show transparent context meshes

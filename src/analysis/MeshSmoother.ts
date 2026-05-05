@@ -6,19 +6,31 @@
 
 import type { MeshData } from '../types';
 
+/** Result returned by repairInnerFaceMesh — includes the repaired mesh and info about filled holes for visualisation. */
+export interface RepairResult {
+  meshData: MeshData;
+  /** Index of the first face added by hole fill (equals original faceCount). Use to slice the index buffer for the overlay. */
+  filledFaceStart: number;
+  /** Number of holes that were filled (0 when no holes found or all exceeded maxHoleLoopSize). */
+  holeCount: number;
+}
+
 /**
  * Optional cleanup pass for scanned inner faces:
  * 1) fill small boundary holes (except the largest rim loop),
  * 2) apply a light Taubin smoothing to soften scan texture.
+ *
+ * maxHoleLoopSize raised to 1000 (from 300) to handle larger scanning artefacts.
  */
 export function repairInnerFaceMesh(
   meshData: MeshData,
   smoothingIterations: number = 2,
-  maxHoleLoopSize: number = 300,
-): MeshData {
-  const holeFilled = fillSmallBoundaryHoles(meshData, maxHoleLoopSize);
-  if (smoothingIterations <= 0) return holeFilled;
-  return smoothMesh(holeFilled, smoothingIterations);
+  maxHoleLoopSize: number = 1000,
+): RepairResult {
+  const result = fillSmallBoundaryHoles(meshData, maxHoleLoopSize);
+  if (smoothingIterations <= 0) return result;
+  const smoothedData = smoothMesh(result.meshData, smoothingIterations);
+  return { ...result, meshData: smoothedData };
 }
 
 /**
@@ -109,8 +121,9 @@ export function smoothMesh(
 /**
  * Fill small boundary holes by triangulating boundary loops with a fan.
  * The largest boundary loop is assumed to be the cup rim and is never filled.
+ * Returns the repaired mesh together with metadata needed for hole visualisation.
  */
-function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): MeshData {
+function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): RepairResult {
   const { positions, normals, indices, vertexCount, faceCount } = meshData;
 
   // Count edge usage.
@@ -140,11 +153,9 @@ function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): Me
 
   if (boundaryAdj.size === 0) {
     return {
-      positions: new Float32Array(positions),
-      normals: new Float32Array(normals),
-      indices: new Uint32Array(indices),
-      vertexCount,
-      faceCount,
+      meshData: { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices), vertexCount, faceCount },
+      filledFaceStart: faceCount,
+      holeCount: 0,
     };
   }
 
@@ -210,11 +221,9 @@ function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): Me
 
   if (loops.length === 0) {
     return {
-      positions: new Float32Array(positions),
-      normals: new Float32Array(normals),
-      indices: new Uint32Array(indices),
-      vertexCount,
-      faceCount,
+      meshData: { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices), vertexCount, faceCount },
+      filledFaceStart: faceCount,
+      holeCount: 0,
     };
   }
 
@@ -226,7 +235,9 @@ function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): Me
 
   const posOut = Array.from(positions);
   const idxOut = Array.from(indices);
-  let filledAny = false;
+  // Record the face index at which new (filled) faces begin
+  const filledFaceStart = faceCount;
+  let holeCount = 0;
 
   for (let li = 0; li < loops.length; li++) {
     if (li === largestLoopIdx) continue;
@@ -246,6 +257,24 @@ function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): Me
     cx /= loop.length;
     cy /= loop.length;
     cz /= loop.length;
+
+    // Project centroid outward along the average boundary normal to better
+    // approximate the underlying sphere curvature (avoids a flat inset patch).
+    // Estimate: shift by half the average distance from centroid to boundary.
+    let avgDist = 0;
+    for (const v of loop) {
+      const dx = positions[v * 3] - cx;
+      const dy = positions[v * 3 + 1] - cy;
+      const dz = positions[v * 3 + 2] - cz;
+      avgDist += Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    avgDist /= loop.length;
+    const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+    // offset ≈ avgDist²/(2R), approximated as avgDist * 0.04 for typical 15 mm cups
+    const offset = (avgDist * avgDist) / (2 * 15.0); // 15 mm nominal sphere radius
+    cx += (nx / nLen) * offset;
+    cy += (ny / nLen) * offset;
+    cz += (nz / nLen) * offset;
 
     // Orient loop consistently with average boundary normal.
     let lnx = 0, lny = 0, lnz = 0;
@@ -274,16 +303,14 @@ function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): Me
       idxOut.push(a, b, centerIdx);
     }
 
-    filledAny = true;
+    holeCount++;
   }
 
-  if (!filledAny) {
+  if (holeCount === 0) {
     return {
-      positions: new Float32Array(positions),
-      normals: new Float32Array(normals),
-      indices: new Uint32Array(indices),
-      vertexCount,
-      faceCount,
+      meshData: { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices), vertexCount, faceCount },
+      filledFaceStart: faceCount,
+      holeCount: 0,
     };
   }
 
@@ -294,11 +321,9 @@ function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): Me
   const nrmArr = recomputeNormals(posArr, idxArr, vCount);
 
   return {
-    positions: posArr,
-    normals: nrmArr,
-    indices: idxArr,
-    vertexCount: vCount,
-    faceCount: fCount,
+    meshData: { positions: posArr, normals: nrmArr, indices: idxArr, vertexCount: vCount, faceCount: fCount },
+    filledFaceStart,
+    holeCount,
   };
 }
 

@@ -363,7 +363,7 @@ export interface AnalysisParams {
 export const DEFAULT_PARAMS: AnalysisParams = {
   geodesicCount: 360,
   rimTrimPercent: 16,
-  repairInnerFace: false,
+  repairInnerFace: true,
   smoothingIterations: 3,
   thresholdMicrons: 1.0,
   colorMapName: 'rainbow',

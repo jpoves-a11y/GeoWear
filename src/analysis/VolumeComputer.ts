@@ -330,10 +330,25 @@ export function computeSphereCap(
             (center.y - planePoint.y) * pn.y +
             (center.z - planePoint.z) * pn.z;
 
-  // Cap on the same side as the normal (interior / pole side).
-  // The normal points toward the pole. d > 0 means center is on the pole side.
-  // The sphere extends from (d-R) to (d+R) along the normal.
-  // Interior cap height = distance from plane to farthest sphere point on pole side = R + d.
+  // The plane normal points TOWARD the pole (interior of the cup).
+  // d = signed distance from sphere center to plane along the normal.
+  // d > 0: center is on the pole (interior) side.
+  // d < 0: center is on the exterior (rim-opening) side.
+  //
+  // computeMeshEnclosedVolume sums volume on the h > 0 (interior/pole) side.
+  // The matching sphere cap is therefore the portion of the sphere on that same side.
+  //
+  // Cap height (extent of sphere on the interior side of the plane):
+  //   - If center is on interior side (d > 0): the sphere reaches d+R into the interior,
+  //     so the far cap height = R + d and the SMALL cap on the other side = R - d.
+  //     We want the portion on the interior side, which is the large piece:  h = R + d.
+  //
+  // BUT: for a hemispherical acetabular cup the sphere center is deep inside the cup
+  // (on the interior side) and d >> 0 → h ≈ 2R → almost the full sphere.
+  // That is correct only when the rim plane is at (or below) the equator so it cuts off
+  // just a thin rim sliver. The trimmed inner mesh volume should equal roughly that.
+  //
+  // Summary: h = R + d   →   cap on the INTERIOR (pole) side.
   const h = radius + d;
 
   if (h <= 0) return 0;                         // sphere entirely on the exterior side

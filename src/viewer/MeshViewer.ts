@@ -29,6 +29,7 @@ export class MeshViewer {
   private rimNormalArrow: THREE.ArrowHelper | null = null;
   private poleMarker: THREE.Mesh | null = null;
   private volumePreviewGroup: THREE.Group | null = null;
+  private repairedHolesOverlay: THREE.Mesh | null = null;
 
   // Display decimation state
   private _vertexMap: Uint32Array | null = null; // full vertex → decimated vertex
@@ -1264,6 +1265,57 @@ export class MeshViewer {
     }
   }
 
+  /**
+   * Overlay the faces that were filled during hole repair with an amber-orange tint,
+   * so the user can visually distinguish repaired holes from original scan geometry.
+   * The overlay is a separate mesh sitting on top of the inner mesh.
+   * @param meshData  The repaired inner mesh (includes both original and filled faces)
+   * @param filledFaceStart  Index of the first filled face (= original faceCount before repair)
+   */
+  public displayRepairedHolesOverlay(meshData: MeshData, filledFaceStart: number): void {
+    this.removeRepairedHolesOverlay();
+
+    const filledFaceCount = meshData.faceCount - filledFaceStart;
+    if (filledFaceCount <= 0) return;
+
+    // Extract only the index slice for the filled faces
+    const filledIndices = meshData.indices.slice(filledFaceStart * 3, meshData.faceCount * 3);
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(meshData.positions, 3));
+    geo.setIndex(new THREE.Uint32BufferAttribute(filledIndices, 1));
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+
+    // Amber-orange: distinct but not distracting
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xff8c00,
+      metalness: 0.0,
+      roughness: 0.55,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85,
+      depthTest: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.name = 'repaired-holes-overlay';
+    mesh.renderOrder = 2;
+    this.repairedHolesOverlay = mesh;
+    this.originalGroup.add(mesh);
+    console.log(`[MeshViewer] Repaired holes overlay: ${filledFaceCount} face(s) filled.`);
+    this.sceneManager.requestRender();
+  }
+
+  /** Remove the repaired-holes overlay if present. */
+  public removeRepairedHolesOverlay(): void {
+    this.removeNamedObject('repaired-holes-overlay');
+    this.repairedHolesOverlay = null;
+  }
+
   /** Clear zone spheres, commercial sphere, rim plane, and volume preview */
   public clearZoneSpheres(): void {
     for (const name of ['commercial-sphere', 'worn-sphere', 'unworn-sphere', 'rim-plane', 'wear-plane', 'volume-preview']) {
@@ -1541,6 +1593,7 @@ export class MeshViewer {
     this.rimPlaneObject = null;
     this.wearPlaneObject = null;
     this.volumePreviewGroup = null;
+    this.repairedHolesOverlay = null;
   }
 
   public dispose(): void {
