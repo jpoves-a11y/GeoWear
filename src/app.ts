@@ -417,8 +417,10 @@ export class App {
       // Show/hide the compare-mode visualisation selector depending on the mode.
       if (results.analysisMode === 'compare-all-modes') {
         this.compareVisualizationMode = 'sphere-bestfit';
+        this.controls.showVisualizationControls('sphere-bestfit');
         this.controls.showCompareSelector((mode) => this.setCompareVisualizationMode(mode));
       } else {
+        this.controls.showVisualizationControls(results.analysisMode);
         this.controls.hideCompareSelector();
       }
       this.applyVisualization();
@@ -825,6 +827,7 @@ export class App {
       this.status.setStatus(`Geodesics: ${regularCount} regular, ${irregularCount} irregular`);
       this.hideLoading();
       this.controls.markStepCompleted('geodesics');
+      this.controls.showVisualizationControls('pure-geodesic');
       this.applyVisibilityFromParams();
       
       // Enable section profile mode
@@ -923,6 +926,7 @@ export class App {
       this.status.setStatus(`Analysis complete: ${p.state.results?.totalAnomalyPoints || 0} anomaly points`);
       this.hideLoading();
       this.controls.markStepCompleted('analyze');
+      this.controls.showVisualizationControls('pure-geodesic');
       this.applyVisibilityFromParams();
       this.scene.requestRender();
     } catch (e) {
@@ -1108,6 +1112,7 @@ export class App {
       this.currentResults = p.state.results;
       this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(p.state.results!);
+      this.controls.showVisualizationControls('sphere-bestfit');
       this.applyVisibilityFromParams();
       this.scene.requestRender();
     } catch (e) {
@@ -1188,6 +1193,7 @@ export class App {
       this.currentResults = p.state.results;
       this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(p.state.results!);
+      this.controls.showVisualizationControls('sphere-bestfit');
       this.applyVisibilityFromParams();
       this.scene.requestRender();
     } catch (e) {
@@ -1205,6 +1211,7 @@ export class App {
     this.resultsPanel.hide();
     this.profileWindows.closeAll();
     this.disableSectionModeButton();
+    this.controls.hideVisualizationControls();
     this.scene.requestRender();
   }
 

@@ -70,7 +70,9 @@ export class ControlPanel {
   private doubleSphereControllers: any[] = [];
   // Controllers visible in BOTH sphere-bestfit AND double-sphere-metrics
   private dualModeVisControllers: any[] = [];
-  // Visualization-section mode-aware controller groups
+  // Visualization sub-folders (hidden until analysis results are available)
+  private visRenderFolder: GUI | null = null;
+  private visOverlayFolder: GUI | null = null;
   private visGeodesicsControllers: any[] = [];   // hidden for double-sphere
   private visAnnotationsControllers: any[] = []; // shown only for pure-geodesic
   private visCompareSelectorCtrl: any = null;    // inline compare sub-mode picker
@@ -348,6 +350,7 @@ export class ControlPanel {
 
     // --- Rendering sub-folder ---
     const renderFolder = folder.addFolder('Rendering');
+    this.visRenderFolder = renderFolder;
     renderFolder.add(this.params, 'showWireframe')
       .name('Wireframe')
       .onChange((v: boolean) => this.callbacks.onToggleWireframe(v));
@@ -369,9 +372,11 @@ export class ControlPanel {
     this.visAnnotationsControllers.push(annotationsCtrl);
 
     renderFolder.open();
+    renderFolder.hide(); // hidden until analysis runs
 
     // --- Overlays sub-folder (spheres, planes, volumes) ---
     const overlayFolder = folder.addFolder('Overlays');
+    this.visOverlayFolder = overlayFolder;
     overlayFolder.add(this.params, 'showReferenceShape')
       .name('Reference Sphere')
       .onChange((v: boolean) => this.callbacks.onToggleRefSphere(v));
@@ -422,6 +427,7 @@ export class ControlPanel {
       .onChange((v: boolean) => this.callbacks.onToggleOriginalMesh(v));
 
     overlayFolder.close();
+    overlayFolder.hide(); // hidden until analysis runs
 
     folder.open();
   }
@@ -649,6 +655,28 @@ export class ControlPanel {
       this.colorRangeMaxController.max(sliderMax);
       this.colorRangeMaxController.updateDisplay();
     }
+  }
+
+  /**
+   * Show visualization controls appropriate for the given analysis mode.
+   * Called by app.ts after analysis completes.
+   */
+  public showVisualizationControls(
+    mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics',
+  ): void {
+    this.visRenderFolder?.show();
+    this.visOverlayFolder?.show();
+    this.updateVisControlsForMode(mode);
+  }
+
+  /**
+   * Hide all analysis-result visualization controls.
+   * Called when a new STL is loaded (before analysis runs).
+   */
+  public hideVisualizationControls(): void {
+    this.visRenderFolder?.hide();
+    this.visOverlayFolder?.hide();
+    if (this.visCompareSelectorCtrl) this.visCompareSelectorCtrl.hide();
   }
 
   /**
