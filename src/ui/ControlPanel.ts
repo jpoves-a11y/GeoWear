@@ -70,6 +70,10 @@ export class ControlPanel {
   private doubleSphereControllers: any[] = [];
   // Controllers visible in BOTH sphere-bestfit AND double-sphere-metrics
   private dualModeVisControllers: any[] = [];
+  // Visualization-section mode-aware controller groups
+  private visGeodesicsControllers: any[] = [];   // hidden for double-sphere
+  private visAnnotationsControllers: any[] = []; // shown only for pure-geodesic
+  private visCompareSelectorCtrl: any = null;    // inline compare sub-mode picker
   // Commercial radius proxy for dropdown
   private commercialRadiusProxy = { value: 'Auto' };
   private colorRangeMaxController: any = null;
@@ -97,8 +101,7 @@ export class ControlPanel {
   };
   private analysisModelProxy = { mode: 'Compare All Modes' };
 
-  // Compare-mode visualisation selector (shown only after compare-all-modes analysis)
-  private compareSelectorFolder: GUI | null = null;
+  // Compare-mode visualisation selector (inline inside Visualization folder)
   private compareVisModeProxy = { mode: 'Sphere BestFit' };
   private compareVisModeCallback: ((mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics') => void) | null = null;
   private readonly compareVisModeMap: Record<string, 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics'> = {
@@ -122,7 +125,6 @@ export class ControlPanel {
     this.buildExclusionSection();
     this.buildRimPlaneSection();
     this.buildExportSection();
-    this.buildCompareSelectorSection();
   }
 
   private buildImportSection(): void {
@@ -322,6 +324,20 @@ export class ControlPanel {
     const folder = this.gui.addFolder('👁 Visualization');
     folder.domElement.classList.add('section-visualization');
 
+    // Compare-mode sub-mode selector — shown only after compare-all-modes analysis
+    this.visCompareSelectorCtrl = folder.add(
+      this.compareVisModeProxy,
+      'mode',
+      ['Pure Geodesic', 'Sphere BestFit', 'Double Sphere Metrics'],
+    )
+      .name('🔍 View Mode')
+      .onChange((v: string) => {
+        const mode = this.compareVisModeMap[v];
+        this.updateVisControlsForMode(mode);
+        if (this.compareVisModeCallback) this.compareVisModeCallback(mode);
+      });
+    this.visCompareSelectorCtrl.hide();
+
     // Always-visible at root level
     folder.add(this.params, 'contextOpaque')
       .name('Opaque Context')
@@ -335,15 +351,23 @@ export class ControlPanel {
     renderFolder.add(this.params, 'showWireframe')
       .name('Wireframe')
       .onChange((v: boolean) => this.callbacks.onToggleWireframe(v));
-    renderFolder.add(this.params, 'geodesicDisplayMode', ['all', 'regular', 'irregular', 'none'])
+
+    // Geodesics: hidden for double-sphere (no geodesics computed)
+    const geodesicCtrl = renderFolder.add(this.params, 'geodesicDisplayMode', ['all', 'regular', 'irregular', 'none'])
       .name('Geodesics')
       .onChange((v: string) => this.callbacks.onGeodesicDisplayMode(v));
+    this.visGeodesicsControllers.push(geodesicCtrl);
+
     renderFolder.add(this.params, 'showHeatmap')
       .name('Heat Map')
       .onChange((v: boolean) => this.callbacks.onToggleHeatmap(v));
-    renderFolder.add(this.params, 'showAnnotations')
+
+    // Annotations: only relevant for pure-geodesic (cluster-based)
+    const annotationsCtrl = renderFolder.add(this.params, 'showAnnotations')
       .name('Annotations')
       .onChange((v: boolean) => this.callbacks.onToggleAnnotations(v));
+    this.visAnnotationsControllers.push(annotationsCtrl);
+
     renderFolder.open();
 
     // --- Overlays sub-folder (spheres, planes, volumes) ---
@@ -392,10 +416,10 @@ export class ControlPanel {
       .onChange((v: boolean) => this.callbacks.onToggleWearVolume(v));
     this.dualModeVisControllers.push(wvc);
 
-    const omc = overlayFolder.add(this.params, 'showOriginalMesh')
+    // Full STL Sample: always visible regardless of mode
+    overlayFolder.add(this.params, 'showOriginalMesh')
       .name('Full STL Sample')
       .onChange((v: boolean) => this.callbacks.onToggleOriginalMesh(v));
-    this.dualModeVisControllers.push(omc);
 
     overlayFolder.close();
 
@@ -557,7 +581,35 @@ export class ControlPanel {
   }
 
   /**
-   * Show/hide step buttons based on the current analysis mode.
+   * Update overlay/rendering visibility controls to match the given rendered mode.
+   * Called when analysis mode changes or when the compare sub-mode selector changes.
+   */
+  private updateVisControlsForMode(mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics'): void {
+    const isPure = mode === 'pure-geodesic';
+    const isBestFit = mode === 'sphere-bestfit';
+    const isSphere = isBestFit || mode === 'double-sphere-metrics';
+
+    // Geodesics: pure-geodesic and sphere-bestfit compute geodesics; double-sphere does not
+    for (const ctrl of this.visGeodesicsControllers) {
+      (isPure || isBestFit) ? ctrl.show() : ctrl.hide();
+    }
+    // Annotations: only pure-geodesic produces anomaly clusters
+    for (const ctrl of this.visAnnotationsControllers) {
+      isPure ? ctrl.show() : ctrl.hide();
+    }
+    // bestfitVisControllers: commercial sphere, wear plane (+ filter/coverage params)
+    for (const ctrl of this.bestfitVisControllers) {
+      isBestFit ? ctrl.show() : ctrl.hide();
+    }
+    // dualModeVisControllers: worn/unworn spheres, rim plane, volume overlays
+    for (const ctrl of this.dualModeVisControllers) {
+      isSphere ? ctrl.show() : ctrl.hide();
+    }
+  }
+
+  /**
+   * Show/hide step buttons and initialize visualization controls
+   * based on the currently selected analysis mode.
    */
   private updateStepVisibility(): void {
     const isBestFit = this.params.analysisMode === 'sphere-bestfit';
@@ -565,21 +617,27 @@ export class ControlPanel {
     const isCompareMode = this.params.analysisMode === 'compare-all-modes';
     const isPureOnly = this.params.analysisMode === 'pure-geodesic';
 
+    // Step buttons
     for (const ctrl of this.bestfitStepControllers) {
       isBestFit ? ctrl.show() : ctrl.hide();
     }
     for (const ctrl of this.pureGeodesicStepControllers) {
       isPureOnly ? ctrl.show() : ctrl.hide();
     }
-    for (const ctrl of this.bestfitVisControllers) {
-      isBestFit ? ctrl.show() : ctrl.hide();
-    }
-    for (const ctrl of this.dualModeVisControllers) {
-      (isBestFit || isDoubleSphere || isCompareMode) ? ctrl.show() : ctrl.hide();
-    }
     for (const ctrl of this.doubleSphereControllers) {
       (isDoubleSphere || isCompareMode) ? ctrl.show() : ctrl.hide();
     }
+
+    // Compare sub-mode selector: only shown after analysis via showCompareSelector()
+    if (this.visCompareSelectorCtrl) this.visCompareSelectorCtrl.hide();
+
+    // Visualization overlays: preview controls for the expected rendered mode
+    const renderedMode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' =
+      isCompareMode ? 'sphere-bestfit'
+      : isBestFit   ? 'sphere-bestfit'
+      : isDoubleSphere ? 'double-sphere-metrics'
+      : 'pure-geodesic';
+    this.updateVisControlsForMode(renderedMode);
   }
 
   /**
@@ -593,41 +651,26 @@ export class ControlPanel {
     }
   }
 
-  /** Build the compare-mode visualisation selector folder (initially hidden). */
-  private buildCompareSelectorSection(): void {
-    this.compareSelectorFolder = this.gui.addFolder('🔍 View Compare Mode');
-    this.compareSelectorFolder.add(
-      this.compareVisModeProxy,
-      'mode',
-      ['Pure Geodesic', 'Sphere BestFit', 'Double Sphere Metrics'],
-    )
-      .name('Visualize Mode')
-      .onChange((v: string) => {
-        if (this.compareVisModeCallback) {
-          this.compareVisModeCallback(this.compareVisModeMap[v]);
-        }
-      });
-    this.compareSelectorFolder.hide();
-  }
-
   /**
-   * Show the compare-mode visualisation selector and register the callback that
-   * is called when the user picks a different mode to display.
+   * Show the compare sub-mode selector inside the Visualization folder and
+   * register the callback invoked when the user picks a mode to display.
+   * Also updates the visualization controls to match the initial sphere-bestfit view.
    */
   public showCompareSelector(
     onChange: (mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics') => void,
   ): void {
     this.compareVisModeCallback = onChange;
     this.compareVisModeProxy.mode = 'Sphere BestFit';
-    if (this.compareSelectorFolder) {
-      this.compareSelectorFolder.controllers.forEach(c => c.updateDisplay());
-      this.compareSelectorFolder.show();
+    if (this.visCompareSelectorCtrl) {
+      this.visCompareSelectorCtrl.updateDisplay();
+      this.visCompareSelectorCtrl.show();
     }
+    this.updateVisControlsForMode('sphere-bestfit');
   }
 
-  /** Hide the compare-mode visualisation selector. */
+  /** Hide the compare sub-mode selector. */
   public hideCompareSelector(): void {
-    if (this.compareSelectorFolder) this.compareSelectorFolder.hide();
+    if (this.visCompareSelectorCtrl) this.visCompareSelectorCtrl.hide();
   }
 
   dispose(): void {
