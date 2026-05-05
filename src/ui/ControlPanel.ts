@@ -149,9 +149,17 @@ export class ControlPanel {
     const runBtn = runAllCtrl.domElement.querySelector('button');
     if (runBtn) runBtn.classList.add('btn-run-analysis');
 
+    const holeMaxCtrl = this.processingFolder.add(this.params, 'holeRepairMaxLoopSize', 3, 5000, 1)
+      .name('Max Hole Size (verts)')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    if (!this.params.repairInnerFace) holeMaxCtrl.hide();
+
     this.processingFolder.add(this.params, 'repairInnerFace')
       .name('Repair Inner Face')
-      .onChange(() => this.callbacks.onParamsChange(this.params));
+      .onChange((v: boolean) => {
+        if (v) holeMaxCtrl.show(); else holeMaxCtrl.hide();
+        this.callbacks.onParamsChange(this.params);
+      });
 
     // Step-by-step controls
     const steps = this.processingFolder.addFolder('Step by Step');

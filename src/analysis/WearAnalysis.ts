@@ -131,6 +131,10 @@ export interface PipelineState {
   filledHolesFaceStart: number | null;
   /** Number of holes filled during inner face repair. */
   filledHolesCount: number;
+  /** Same as filledHolesFaceStart but for the trimmed working mesh (repaired after trim). */
+  workingMeshFilledHolesFaceStart: number | null;
+  /** Number of holes filled in the trimmed working mesh. */
+  workingMeshFilledHolesCount: number;
 }
 
 export class WearAnalysisPipeline {
@@ -178,6 +182,8 @@ export class WearAnalysisPipeline {
     geodesicCupAxis: undefined,
     filledHolesFaceStart: null,
     filledHolesCount: 0,
+    workingMeshFilledHolesFaceStart: null,
+    workingMeshFilledHolesCount: 0,
   };
 
   private onProgress?: (stage: string, progress: number, message: string) => void;
@@ -246,15 +252,21 @@ export class WearAnalysisPipeline {
 
     // Optional: repair inner face scan defects before trimming/analysis
     if (params.repairInnerFace) {
-      this.progress('repair-inner', 0.06, 'Repairing inner face (smooth + hole fill)...');
-      this.stepRepairInnerFace();
+      this.progress('repair-inner', 0.06, 'Repairing inner face holes...');
+      this.stepRepairInnerFace(2, params.holeRepairMaxLoopSize);
     }
 
     // Step 2: Trim rim
     this.progress('trimming', 0.1, `Trimming rim (${params.rimTrimPercent}%)...`);
     this.stepTrimRim(params.rimTrimPercent);
 
-    // Step 2b: Smooth mesh for geodesic/sphere analysis
+    // Step 2b: Repair working (trimmed) mesh holes after trim
+    if (params.repairInnerFace) {
+      this.progress('repair-working', 0.13, 'Repairing trimmed mesh holes...');
+      this.stepRepairWorkingMesh(2, params.holeRepairMaxLoopSize);
+    }
+
+    // Step 2c: Smooth mesh for geodesic/sphere analysis
     this.progress('smoothing', 0.15, `Smoothing mesh (${params.smoothingIterations} iterations)...`);
     this.stepSmooth(params.smoothingIterations);
 
@@ -385,10 +397,10 @@ export class WearAnalysisPipeline {
     return this.state.separation;
   }
 
-  stepRepairInnerFace(iterations: number = 2): void {
+  stepRepairInnerFace(iterations: number = 2, maxHoleLoopSize: number = 1000): void {
     if (!this.state.separation) throw new Error('Run face separation first');
 
-    const result = repairInnerFaceMesh(this.state.separation.inner, iterations, 1000);
+    const result = repairInnerFaceMesh(this.state.separation.inner, iterations, maxHoleLoopSize);
     this.state.separation = {
       ...this.state.separation,
       inner: result.meshData,
@@ -396,7 +408,19 @@ export class WearAnalysisPipeline {
     this.state.filledHolesFaceStart = result.holeCount > 0 ? result.filledFaceStart : null;
     this.state.filledHolesCount = result.holeCount;
     const newFaces = result.meshData.faceCount - result.filledFaceStart;
-    console.log(`[Repair] Filled ${result.holeCount} hole(s), added ${newFaces} face(s). Inner mesh: ${result.meshData.faceCount} faces total.`);
+    console.log(`[Repair] Filled ${result.holeCount} hole(s) in inner mesh, added ${newFaces} face(s). Total: ${result.meshData.faceCount} faces.`);
+  }
+
+  /** Repair holes in the trimmed working mesh (call after stepTrimRim). */
+  stepRepairWorkingMesh(iterations: number = 2, maxHoleLoopSize: number = 1000): void {
+    if (!this.state.workingMesh) throw new Error('Run trim first');
+
+    const result = repairInnerFaceMesh(this.state.workingMesh, iterations, maxHoleLoopSize);
+    this.state.workingMesh = result.meshData;
+    this.state.workingMeshFilledHolesFaceStart = result.holeCount > 0 ? result.filledFaceStart : null;
+    this.state.workingMeshFilledHolesCount = result.holeCount;
+    const newFaces = result.meshData.faceCount - result.filledFaceStart;
+    console.log(`[Repair] Filled ${result.holeCount} hole(s) in working (trimmed) mesh, added ${newFaces} face(s). Total: ${result.meshData.faceCount} faces.`);
   }
 
   stepTrimRim(rimPercent: number = 5): TrimResult {

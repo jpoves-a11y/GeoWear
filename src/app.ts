@@ -467,7 +467,7 @@ export class App {
       // Clear any overlay from a previous repair before displaying the new mesh
       this.meshViewer.removeRepairedHolesOverlay();
       if (this.params.repairInnerFace) {
-        p.stepRepairInnerFace();
+        p.stepRepairInnerFace(2, this.params.holeRepairMaxLoopSize);
       }
       const sep = p.state.separation!;
       this.meshViewer.displayInnerMesh(sep.inner);
@@ -509,10 +509,25 @@ export class App {
         p.setManualRimBasePoint(null);
       }
       const trim = p.stepTrimRim(this.params.rimTrimPercent);
-      this.meshViewer.displayInnerMesh(trim.mesh);
+      // Repair holes in the trimmed working mesh (post-trim repair is more accurate:
+      // largest boundary loop = artificial trim boundary, not the real rim)
+      this.meshViewer.removeRepairedHolesOverlay();
+      if (this.params.repairInnerFace) {
+        p.stepRepairWorkingMesh(2, this.params.holeRepairMaxLoopSize);
+      }
+      const displayMesh = p.state.workingMesh ?? trim.mesh;
+      this.meshViewer.displayInnerMesh(displayMesh);
       this.meshViewer.displayGhostMesh(trim.rimMesh);
       this.meshViewer.hideOriginal();
-      this.status.setStatus(`Trimmed: ${(trim.rimPercentRemoved).toFixed(1)}% rim removed`);
+      if (this.params.repairInnerFace && p.state.workingMeshFilledHolesFaceStart !== null) {
+        this.meshViewer.displayRepairedHolesOverlay(displayMesh, p.state.workingMeshFilledHolesFaceStart);
+        this.status.setStatus(
+          `Trimmed: ${trim.rimPercentRemoved.toFixed(1)}% rim removed` +
+          ` · ${p.state.workingMeshFilledHolesCount} hole(s) repaired (orange)`
+        );
+      } else {
+        this.status.setStatus(`Trimmed: ${(trim.rimPercentRemoved).toFixed(1)}% rim removed`);
+      }
       this.controls.markStepCompleted('trim');
       this.applyVisibilityFromParams();
       this.scene.requestRender();
@@ -977,9 +992,9 @@ export class App {
       this.meshViewer.displayInnerMesh(p.state.workingMesh);
     }
 
-    // Repaired holes overlay (amber patch on filled holes from inner face repair)
-    if (this.params.repairInnerFace && p.state.filledHolesFaceStart !== null && p.state.separation) {
-      this.meshViewer.displayRepairedHolesOverlay(p.state.separation.inner, p.state.filledHolesFaceStart);
+    // Repaired holes overlay on trimmed working mesh (post-trim repair)
+    if (this.params.repairInnerFace && p.state.workingMeshFilledHolesFaceStart !== null && p.state.workingMesh) {
+      this.meshViewer.displayRepairedHolesOverlay(p.state.workingMesh, p.state.workingMeshFilledHolesFaceStart);
     } else {
       this.meshViewer.removeRepairedHolesOverlay();
     }

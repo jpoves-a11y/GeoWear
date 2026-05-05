@@ -322,6 +322,7 @@ export interface AnalysisParams {
   geodesicCount: number;       // default 360
   rimTrimPercent: number;      // default 16
   repairInnerFace: boolean;    // optional inner-face cleanup before trimming/analysis
+  holeRepairMaxLoopSize: number; // max boundary loop size (vertices) to fill; larger = repairs bigger holes
   smoothingIterations: number; // Taubin smoothing iterations, default 3
   thresholdMicrons: number;    // default 1.0
   colorMapName: string;        // 'rainbow' | 'cooltowarm'
@@ -364,6 +365,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   geodesicCount: 360,
   rimTrimPercent: 16,
   repairInnerFace: true,
+  holeRepairMaxLoopSize: 1000,
   smoothingIterations: 3,
   thresholdMicrons: 1.0,
   colorMapName: 'rainbow',
