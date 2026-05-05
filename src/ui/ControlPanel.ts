@@ -73,6 +73,7 @@ export class ControlPanel {
   // Visualization sub-folders (hidden until analysis results are available)
   private visRenderFolder: GUI | null = null;
   private visOverlayFolder: GUI | null = null;
+  private visRimPlaneCtrl: any = null;          // always visible (rim preview works pre-analysis)
   private visGeodesicsControllers: any[] = [];   // hidden for double-sphere
   private visAnnotationsControllers: any[] = []; // shown only for pure-geodesic
   private visCompareSelectorCtrl: any = null;    // inline compare sub-mode picker
@@ -348,6 +349,12 @@ export class ControlPanel {
     const resultsBtn = { 'Show Results Panel': () => this.callbacks.onShowResults() };
     folder.add(resultsBtn, 'Show Results Panel');
 
+    // Rim Plane toggle: always visible so the rim preview can be toggled
+    // before analysis runs. Hidden post-analysis for pure-geodesic mode.
+    this.visRimPlaneCtrl = folder.add(this.params, 'showRimPlane')
+      .name('Rim Plane')
+      .onChange((v: boolean) => this.callbacks.onToggleRimPlane(v));
+
     // --- Rendering sub-folder ---
     const renderFolder = folder.addFolder('Rendering');
     this.visRenderFolder = renderFolder;
@@ -396,10 +403,7 @@ export class ControlPanel {
       .onChange((v: boolean) => this.callbacks.onToggleUnwornSphere(v));
     this.dualModeVisControllers.push(usc);
 
-    const rpc = overlayFolder.add(this.params, 'showRimPlane')
-      .name('Rim Plane')
-      .onChange((v: boolean) => this.callbacks.onToggleRimPlane(v));
-    this.dualModeVisControllers.push(rpc);
+    // Rim Plane is at root level (see above) — not duplicated here
 
     const wpc = overlayFolder.add(this.params, 'showWearPlane')
       .name('Wear Section Plane')
@@ -595,6 +599,11 @@ export class ControlPanel {
     const isBestFit = mode === 'sphere-bestfit';
     const isSphere = isBestFit || mode === 'double-sphere-metrics';
 
+    // Rim Plane toggle (root-level, always visible) — hide only for pure-geodesic
+    if (this.visRimPlaneCtrl) {
+      isSphere ? this.visRimPlaneCtrl.show() : this.visRimPlaneCtrl.hide();
+    }
+
     // Geodesics: pure-geodesic and sphere-bestfit compute geodesics; double-sphere does not
     for (const ctrl of this.visGeodesicsControllers) {
       (isPure || isBestFit) ? ctrl.show() : ctrl.hide();
@@ -607,7 +616,7 @@ export class ControlPanel {
     for (const ctrl of this.bestfitVisControllers) {
       isBestFit ? ctrl.show() : ctrl.hide();
     }
-    // dualModeVisControllers: worn/unworn spheres, rim plane, volume overlays
+    // dualModeVisControllers: worn/unworn spheres, volume overlays
     for (const ctrl of this.dualModeVisControllers) {
       isSphere ? ctrl.show() : ctrl.hide();
     }
