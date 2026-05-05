@@ -97,6 +97,16 @@ export class ControlPanel {
   };
   private analysisModelProxy = { mode: 'Compare All Modes' };
 
+  // Compare-mode visualisation selector (shown only after compare-all-modes analysis)
+  private compareSelectorFolder: GUI | null = null;
+  private compareVisModeProxy = { mode: 'Sphere BestFit' };
+  private compareVisModeCallback: ((mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics') => void) | null = null;
+  private readonly compareVisModeMap: Record<string, 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics'> = {
+    'Pure Geodesic': 'pure-geodesic',
+    'Sphere BestFit': 'sphere-bestfit',
+    'Double Sphere Metrics': 'double-sphere-metrics',
+  };
+
   constructor(callbacks: ControlCallbacks) {
     this.callbacks = callbacks;
     this.params = { ...DEFAULT_PARAMS };
@@ -112,6 +122,7 @@ export class ControlPanel {
     this.buildExclusionSection();
     this.buildRimPlaneSection();
     this.buildExportSection();
+    this.buildCompareSelectorSection();
   }
 
   private buildImportSection(): void {
@@ -580,6 +591,43 @@ export class ControlPanel {
       this.colorRangeMaxController.max(sliderMax);
       this.colorRangeMaxController.updateDisplay();
     }
+  }
+
+  /** Build the compare-mode visualisation selector folder (initially hidden). */
+  private buildCompareSelectorSection(): void {
+    this.compareSelectorFolder = this.gui.addFolder('🔍 View Compare Mode');
+    this.compareSelectorFolder.add(
+      this.compareVisModeProxy,
+      'mode',
+      ['Pure Geodesic', 'Sphere BestFit', 'Double Sphere Metrics'],
+    )
+      .name('Visualize Mode')
+      .onChange((v: string) => {
+        if (this.compareVisModeCallback) {
+          this.compareVisModeCallback(this.compareVisModeMap[v]);
+        }
+      });
+    this.compareSelectorFolder.hide();
+  }
+
+  /**
+   * Show the compare-mode visualisation selector and register the callback that
+   * is called when the user picks a different mode to display.
+   */
+  public showCompareSelector(
+    onChange: (mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics') => void,
+  ): void {
+    this.compareVisModeCallback = onChange;
+    this.compareVisModeProxy.mode = 'Sphere BestFit';
+    if (this.compareSelectorFolder) {
+      this.compareSelectorFolder.controllers.forEach(c => c.updateDisplay());
+      this.compareSelectorFolder.show();
+    }
+  }
+
+  /** Hide the compare-mode visualisation selector. */
+  public hideCompareSelector(): void {
+    if (this.compareSelectorFolder) this.compareSelectorFolder.hide();
   }
 
   dispose(): void {

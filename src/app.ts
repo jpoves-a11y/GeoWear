@@ -52,6 +52,8 @@ export class App {
   private pipeline: WearAnalysisPipeline | null = null;
   private currentMeshData: MeshData | null = null;
   private currentResults: AnalysisRunResult | null = null;
+  /** Which sub-mode is currently rendered when analysisMode === 'compare-all-modes'. */
+  private compareVisualizationMode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' = 'sphere-bestfit';
   private fileName: string = '';
   private isRunning = false;
   private stlWorker: Worker | null = null;
@@ -412,6 +414,13 @@ export class App {
       // Enable rim pick mode after analysis (inner mesh is available)
       this.rimPickBtn.disabled = false;
       this.currentResults = results;
+      // Show/hide the compare-mode visualisation selector depending on the mode.
+      if (results.analysisMode === 'compare-all-modes') {
+        this.compareVisualizationMode = 'sphere-bestfit';
+        this.controls.showCompareSelector((mode) => this.setCompareVisualizationMode(mode));
+      } else {
+        this.controls.hideCompareSelector();
+      }
       this.applyVisualization();
       this.applyVisibilityFromParams();
       // Cancel any pending preview debounce so it doesn't overwrite the analysis result.
@@ -924,6 +933,24 @@ export class App {
 
   // ---- Visualization ----
 
+  /**
+   * Switch which sub-mode is rendered in compare-all-modes.
+   * Swaps pipeline.state to the selected mode's sub-pipeline state and re-renders.
+   */
+  public setCompareVisualizationMode(mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics'): void {
+    if (!this.pipeline || !this.pipeline.compareModePipelineStates) return;
+    this.compareVisualizationMode = mode;
+    const stateMap = {
+      'pure-geodesic': this.pipeline.compareModePipelineStates.pureGeodesic,
+      'sphere-bestfit': this.pipeline.compareModePipelineStates.sphereBestfit,
+      'double-sphere-metrics': this.pipeline.compareModePipelineStates.doubleSphereMetrics,
+    };
+    this.pipeline.state = stateMap[mode];
+    this.autoScaleColorRange();
+    this.applyVisualization();
+    this.updateRimDiscOnly();
+  }
+
   private applyVisualization(): void {
     if (!this.pipeline || !this.pipeline.state.results) return;
     const p = this.pipeline;
@@ -1298,6 +1325,12 @@ export class App {
   }
 
   private applyVisibilityFromParams(): void {
+    // Determine the active analysis mode for the currently-rendered state.
+    const mode = this.pipeline?.state.results?.analysisMode ?? null;
+    // Sphere-mode-only elements (commercial/worn/unworn spheres, wear plane, volume
+    // overlays) must be hidden when rendering pure-geodesic or double-sphere states.
+    const isSphereModeViz = mode === 'sphere-bestfit' || mode === 'double-sphere-metrics';
+
     this.toggleHeatMap(this.params.showHeatmap);
     this.annotations.setVisible(this.params.showAnnotations);
     this.meshViewer.setContextOpaque(this.params.contextOpaque);
@@ -1306,14 +1339,14 @@ export class App {
     }
     this.meshViewer.setWireframe(this.params.showWireframe);
     this.meshViewer.setReferenceSphereVisible(this.params.showReferenceShape);
-    this.meshViewer.setCommercialSphereVisible(this.params.showCommercialSphere);
-    this.meshViewer.setWornSphereVisible(this.params.showWornSphere);
-    this.meshViewer.setUnwornSphereVisible(this.params.showUnwornSphere);
-    this.meshViewer.setRimPlaneVisible(this.params.showRimPlane);
-    this.meshViewer.setWearPlaneVisible(this.params.showWearPlane);
-    this.meshViewer.setMeshVolumeVisible(this.params.showMeshVolume);
-    this.meshViewer.setSphereCapVisible(this.params.showSphereCapVolume);
-    this.meshViewer.setWearVolumeVisible(this.params.showWearVolume);
+    this.meshViewer.setCommercialSphereVisible(isSphereModeViz && this.params.showCommercialSphere);
+    this.meshViewer.setWornSphereVisible(isSphereModeViz && this.params.showWornSphere);
+    this.meshViewer.setUnwornSphereVisible(isSphereModeViz && this.params.showUnwornSphere);
+    this.meshViewer.setRimPlaneVisible(isSphereModeViz && this.params.showRimPlane);
+    this.meshViewer.setWearPlaneVisible(isSphereModeViz && this.params.showWearPlane);
+    this.meshViewer.setMeshVolumeVisible(isSphereModeViz && this.params.showMeshVolume);
+    this.meshViewer.setSphereCapVisible(isSphereModeViz && this.params.showSphereCapVolume);
+    this.meshViewer.setWearVolumeVisible(isSphereModeViz && this.params.showWearVolume);
     this.meshViewer.setOriginalVisible(this.params.showOriginalMesh);
   }
 

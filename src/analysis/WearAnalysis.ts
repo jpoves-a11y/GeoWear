@@ -130,6 +130,14 @@ export interface PipelineState {
 }
 
 export class WearAnalysisPipeline {
+  /** Populated after a 'compare-all-modes' run; holds each sub-pipeline's state
+   *  so the caller can swap to any mode's 3D visualisation on demand. */
+  public compareModePipelineStates: {
+    pureGeodesic: PipelineState;
+    sphereBestfit: PipelineState;
+    doubleSphereMetrics: PipelineState;
+  } | null = null;
+
   public state: PipelineState = {
     originalMesh: null,
     separation: null,
@@ -335,7 +343,13 @@ export class WearAnalysisPipeline {
     const bestfit = bestfitRun.result;
     const doubleMetrics = doubleRun.result;
 
-    // Keep bestfit state for 3D visualization after compare mode execution.
+    // Store all three sub-pipeline states so the caller can switch 3D visualisation.
+    this.compareModePipelineStates = {
+      pureGeodesic: pureRun.pipeline.state,
+      sphereBestfit: bestfitRun.pipeline.state,
+      doubleSphereMetrics: doubleRun.pipeline.state,
+    };
+    // Default 3D visualisation: sphere-bestfit (richest visual output).
     this.state = bestfitRun.pipeline.state;
 
     const processingTimeMs = performance.now() - startTime;
