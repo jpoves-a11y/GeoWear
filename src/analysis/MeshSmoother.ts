@@ -118,30 +118,101 @@ export function smoothMesh(
   };
 }
 
+/** Compute the total perimeter length of a closed boundary loop (3-D). */
+function computeLoopPerimeter(loop: number[], positions: Float32Array): number {
+  let perimeter = 0;
+  const n = loop.length;
+  for (let i = 0; i < n; i++) {
+    const a = loop[i];
+    const b = loop[(i + 1) % n];
+    const dx = positions[a * 3] - positions[b * 3];
+    const dy = positions[a * 3 + 1] - positions[b * 3 + 1];
+    const dz = positions[a * 3 + 2] - positions[b * 3 + 2];
+    perimeter += Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  return perimeter;
+}
+
+/**
+ * Extract all closed boundary loops by greedily walking boundary adjacency.
+ *
+ * Each vertex is visited at most once globally. The algorithm handles:
+ *  - degree-2 vertices (normal closed loops) correctly
+ *  - degree-1 endpoints (open chains): returned as-is, the caller closes them via modulo
+ *  - degree-3+ T-junctions: picks the first unvisited non-prev neighbour and continues
+ *
+ * This replaces the old two-phase (DFS component + ordering) approach that could
+ * silently discard loops when the greedy walk happened to terminate early.
+ */
+function extractBoundaryLoops(adj: Map<number, Set<number>>): number[][] {
+  const loops: number[][] = [];
+  const globalVisited = new Set<number>();
+
+  for (const start of adj.keys()) {
+    if (globalVisited.has(start)) continue;
+
+    const loop: number[] = [];
+    const loopSet  = new Set<number>();
+    let prev = -1;
+    let curr = start;
+
+    for (let step = 0; step <= adj.size + 1; step++) {
+      if (globalVisited.has(curr)) break;   // merges into an already-traced loop
+
+      loop.push(curr);
+      loopSet.add(curr);
+      globalVisited.add(curr);
+
+      const nbs = adj.get(curr);
+      if (!nbs) break;
+
+      let next = -1;
+      for (const nb of nbs) {
+        if (nb === prev) continue;
+        // Allow closing back to the start vertex (loop complete)
+        if (nb === start && loop.length >= 3) { next = -2; break; }
+        if (loopSet.has(nb) || globalVisited.has(nb)) continue;
+        next = nb;
+        break;
+      }
+
+      if (next < 0) break;   // −1 = dead end / open chain,  −2 = loop closed
+      prev = curr;
+      curr = next;
+    }
+
+    if (loop.length >= 3) loops.push(loop);
+  }
+
+  return loops;
+}
+
 /**
  * Fill small boundary holes by triangulating boundary loops with a fan.
- * The largest boundary loop is assumed to be the cup rim and is never filled.
+ *
+ * KEY IMPROVEMENT: the rim loop is now identified by the LARGEST PERIMETER (mm),
+ * not the largest vertex count. This is critical because a dense interior hole can
+ * have more boundary vertices than a coarsely-meshed artificial trim boundary —
+ * causing the old code to skip the hole instead of the rim.
+ *
  * Returns the repaired mesh together with metadata needed for hole visualisation.
  */
 function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): RepairResult {
   const { positions, normals, indices, vertexCount, faceCount } = meshData;
 
-  // Count edge usage.
+  // --- Build boundary edge adjacency (edges used exactly once = boundary) ---
   const edgeUsage = new Map<string, { a: number; b: number; count: number }>();
   for (let f = 0; f < faceCount; f++) {
     for (let e = 0; e < 3; e++) {
       const a = indices[f * 3 + e];
       const b = indices[f * 3 + ((e + 1) % 3)];
-      const min = Math.min(a, b);
-      const max = Math.max(a, b);
-      const key = `${min}_${max}`;
-      const existing = edgeUsage.get(key);
-      if (existing) existing.count++;
+      const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+      const ex = edgeUsage.get(key);
+      if (ex) ex.count++;
       else edgeUsage.set(key, { a, b, count: 1 });
     }
   }
 
-  // Boundary adjacency from edges used by exactly one face.
   const boundaryAdj = new Map<number, Set<number>>();
   for (const [, edge] of edgeUsage) {
     if (edge.count !== 1) continue;
@@ -151,116 +222,57 @@ function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): Re
     boundaryAdj.get(edge.b)!.add(edge.a);
   }
 
-  if (boundaryAdj.size === 0) {
-    return {
-      meshData: { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices), vertexCount, faceCount },
-      filledFaceStart: faceCount,
-      holeCount: 0,
-    };
+  const noRepairResult: RepairResult = {
+    meshData: {
+      positions: new Float32Array(positions),
+      normals:   new Float32Array(normals),
+      indices:   new Uint32Array(indices),
+      vertexCount,
+      faceCount,
+    },
+    filledFaceStart: faceCount,
+    holeCount: 0,
+  };
+
+  if (boundaryAdj.size === 0) return noRepairResult;
+
+  // --- Extract all closed boundary loops ---
+  const loops = extractBoundaryLoops(boundaryAdj);
+  if (loops.length === 0) return noRepairResult;
+
+  // --- Identify rim = loop with the LARGEST PERIMETER ---
+  // Using actual 3-D perimeter is more reliable than vertex count:
+  // the rim spans the full cup opening (~160-190 mm for typical cups),
+  // while any interior hole is far smaller (<60 mm for worst-case large defects).
+  let rimLoopIdx = 0;
+  let maxPerimeter = -1;
+  for (let i = 0; i < loops.length; i++) {
+    const perim = computeLoopPerimeter(loops[i], positions);
+    if (perim > maxPerimeter) { maxPerimeter = perim; rimLoopIdx = i; }
   }
 
-  const loops: number[][] = [];
-  const visited = new Set<number>();
-
-  // Build ordered boundary loops/components.
-  for (const start of boundaryAdj.keys()) {
-    if (visited.has(start)) continue;
-
-    // Collect component vertices first.
-    const component: number[] = [];
-    const stack = [start];
-    visited.add(start);
-    while (stack.length > 0) {
-      const v = stack.pop()!;
-      component.push(v);
-      const nbs = boundaryAdj.get(v);
-      if (!nbs) continue;
-      for (const nb of nbs) {
-        if (!visited.has(nb)) {
-          visited.add(nb);
-          stack.push(nb);
-        }
-      }
-    }
-
-    if (component.length < 3) continue;
-
-    // Order the component as a chain/loop.
-    const compSet = new Set(component);
-    let orderedStart = component[0];
-    for (const v of component) {
-      const deg = Array.from(boundaryAdj.get(v) || []).filter(nb => compSet.has(nb)).length;
-      if (deg === 1) {
-        orderedStart = v;
-        break;
-      }
-    }
-
-    const ordered: number[] = [];
-    let prev = -1;
-    let curr = orderedStart;
-    const guardMax = component.length + 4;
-
-    for (let guard = 0; guard < guardMax; guard++) {
-      ordered.push(curr);
-      const nbs = Array.from(boundaryAdj.get(curr) || []).filter(nb => compSet.has(nb));
-      let next = -1;
-      if (nbs.length === 0) break;
-      if (nbs.length === 1) {
-        next = nbs[0] === prev ? -1 : nbs[0];
-      } else {
-        next = nbs[0] === prev ? nbs[1] : nbs[0];
-      }
-      if (next < 0 || next === orderedStart) break;
-      prev = curr;
-      curr = next;
-    }
-
-    if (ordered.length >= 3) loops.push(ordered);
-  }
-
-  if (loops.length === 0) {
-    return {
-      meshData: { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices), vertexCount, faceCount },
-      filledFaceStart: faceCount,
-      holeCount: 0,
-    };
-  }
-
-  // Skip the largest boundary loop (real cup rim opening).
-  let largestLoopIdx = 0;
-  for (let i = 1; i < loops.length; i++) {
-    if (loops[i].length > loops[largestLoopIdx].length) largestLoopIdx = i;
-  }
-
+  // --- Fan-fill all non-rim loops within the user-specified vertex-count limit ---
   const posOut = Array.from(positions);
   const idxOut = Array.from(indices);
-  // Record the face index at which new (filled) faces begin
   const filledFaceStart = faceCount;
   let holeCount = 0;
 
   for (let li = 0; li < loops.length; li++) {
-    if (li === largestLoopIdx) continue;
+    if (li === rimLoopIdx) continue;
     const loop = loops[li];
     if (loop.length < 3 || loop.length > maxHoleLoopSize) continue;
 
+    // Centroid of boundary loop
     let cx = 0, cy = 0, cz = 0;
     let nx = 0, ny = 0, nz = 0;
     for (const v of loop) {
-      cx += positions[v * 3];
-      cy += positions[v * 3 + 1];
-      cz += positions[v * 3 + 2];
-      nx += normals[v * 3];
-      ny += normals[v * 3 + 1];
-      nz += normals[v * 3 + 2];
+      cx += positions[v * 3];     cy += positions[v * 3 + 1];     cz += positions[v * 3 + 2];
+      nx += normals[v * 3];       ny += normals[v * 3 + 1];       nz += normals[v * 3 + 2];
     }
-    cx /= loop.length;
-    cy /= loop.length;
-    cz /= loop.length;
+    const nv = loop.length;
+    cx /= nv; cy /= nv; cz /= nv;
 
-    // Project centroid outward along the average boundary normal to better
-    // approximate the underlying sphere curvature (avoids a flat inset patch).
-    // Estimate: shift by half the average distance from centroid to boundary.
+    // Offset centroid outward along average normal to follow sphere curvature
     let avgDist = 0;
     for (const v of loop) {
       const dx = positions[v * 3] - cx;
@@ -268,51 +280,35 @@ function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): Re
       const dz = positions[v * 3 + 2] - cz;
       avgDist += Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
-    avgDist /= loop.length;
+    avgDist /= nv;
     const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
-    // offset ≈ avgDist²/(2R), approximated as avgDist * 0.04 for typical 15 mm cups
-    const offset = (avgDist * avgDist) / (2 * 15.0); // 15 mm nominal sphere radius
+    const offset = (avgDist * avgDist) / (2 * 15.0);   // r²/(2R), R≈15 mm nominal
     cx += (nx / nLen) * offset;
     cy += (ny / nLen) * offset;
     cz += (nz / nLen) * offset;
 
-    // Orient loop consistently with average boundary normal.
+    // Orient fan triangles to face the same way as the surrounding surface
     let lnx = 0, lny = 0, lnz = 0;
     for (let i = 0; i < loop.length; i++) {
       const a = loop[i];
       const b = loop[(i + 1) % loop.length];
-      const ax = positions[a * 3] - cx;
-      const ay = positions[a * 3 + 1] - cy;
-      const az = positions[a * 3 + 2] - cz;
-      const bx = positions[b * 3] - cx;
-      const by = positions[b * 3 + 1] - cy;
-      const bz = positions[b * 3 + 2] - cz;
+      const ax = positions[a * 3] - cx, ay = positions[a * 3 + 1] - cy, az = positions[a * 3 + 2] - cz;
+      const bx = positions[b * 3] - cx, by = positions[b * 3 + 1] - cy, bz = positions[b * 3 + 2] - cz;
       lnx += ay * bz - az * by;
       lny += az * bx - ax * bz;
       lnz += ax * by - ay * bx;
     }
-    const dot = lnx * nx + lny * ny + lnz * nz;
-    if (dot < 0) loop.reverse();
+    if (lnx * nx + lny * ny + lnz * nz < 0) loop.reverse();
 
     const centerIdx = posOut.length / 3;
     posOut.push(cx, cy, cz);
-
     for (let i = 0; i < loop.length; i++) {
-      const a = loop[i];
-      const b = loop[(i + 1) % loop.length];
-      idxOut.push(a, b, centerIdx);
+      idxOut.push(loop[i], loop[(i + 1) % loop.length], centerIdx);
     }
-
     holeCount++;
   }
 
-  if (holeCount === 0) {
-    return {
-      meshData: { positions: new Float32Array(positions), normals: new Float32Array(normals), indices: new Uint32Array(indices), vertexCount, faceCount },
-      filledFaceStart: faceCount,
-      holeCount: 0,
-    };
-  }
+  if (holeCount === 0) return noRepairResult;
 
   const posArr = new Float32Array(posOut);
   const idxArr = new Uint32Array(idxOut);
