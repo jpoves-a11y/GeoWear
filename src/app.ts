@@ -20,6 +20,7 @@ import { ProfileWindowManager } from './ui/ProfileWindowManager';
 import { WearAnalysisPipeline } from './analysis/WearAnalysis';
 import { LassoSelectionManager } from './viewer/LassoSelectionManager';
 import { RimPlanePickManager } from './viewer/RimPlanePickManager';
+import { HoleSeedPickManager } from './viewer/HoleSeedPickManager';
 import { trimRim, computeRimAnchor, rimAnchorToPlanePoint, type RimAnchor } from './analysis/MeshProcessor';
 import { computeTiltedRimNormal, fitPlaneFromPoints, decomposeNormalToInclination } from './utils/geometry';
 
@@ -47,6 +48,11 @@ export class App {
   private rimPickBtn!: HTMLButtonElement;
   private rimPickManager: RimPlanePickManager | null = null;
   private rimPickActive = false;
+
+  // Manual hole seed pick mode
+  private holeSeedManager: HoleSeedPickManager | null = null;
+  private holeSeedActive = false;
+  private manualHoleSeeds: THREE.Vector3[] = [];
 
   // State
   private pipeline: WearAnalysisPipeline | null = null;
@@ -178,6 +184,9 @@ export class App {
       onRimPickConfirm: () => this.confirmRimPlane(),
       onRimPickRevertAuto: () => this.revertRimToAuto(),
       onRimPickDefinePole: () => this.definePole(),
+      // --- Hole seed pick ---
+      onEnableHoleSeedMode: () => this.enableHoleSeedMode(),
+      onClearHoleSeeds: () => this.clearHoleSeeds(),
     };
     this.controls = new ControlPanel(callbacks);
 
@@ -811,6 +820,70 @@ export class App {
     this.meshViewer.setExcludedVerticesHighlight(null, null);
     this.controls.updateExclusionCount(0);
     this.scene.requestRender();
+  }
+
+  // ---- Manual Hole Seed Pick Mode ----
+
+  private ensureHoleSeedManager(): void {
+    if (this.holeSeedManager) return;
+    this.holeSeedManager = new HoleSeedPickManager(
+      this.scene.renderer.domElement,
+      this.scene.scene,
+    );
+    this.holeSeedManager.setCallbacks({
+      onSeedsChanged: (seeds: THREE.Vector3[]) => {
+        this.manualHoleSeeds = seeds;
+        this.controls.updateHoleSeedUI(true, seeds.length);
+        // Propagate seeds to pipeline state immediately so they're used on next run
+        if (this.pipeline) {
+          this.pipeline.setManualHoleSeeds(
+            seeds.map(s => [s.x, s.y, s.z] as [number, number, number]),
+          );
+        }
+        this.scene.requestRender();
+      },
+      onCancel: () => {
+        this.exitHoleSeedMode();
+      },
+    });
+  }
+
+  private enableHoleSeedMode(): void {
+    const innerMesh = this.meshViewer.getInnerMesh();
+    if (!innerMesh) {
+      this.status.setStatus('Run face separation first before seeding holes.');
+      return;
+    }
+    this.ensureHoleSeedManager();
+    this.holeSeedActive = true;
+    // Disable orbit controls so clicks register as seeds, not camera pans
+    this.scene.controls.enabled = false;
+    const offset = this.meshViewer.getGroupOffset();
+    this.holeSeedManager!.enable(innerMesh, this.scene.camera, offset);
+    this.controls.updateHoleSeedUI(true, this.manualHoleSeeds.length);
+    this.status.setStatus('Seed mode: click inside a hole to mark it for filling. Right-click to undo. Esc to exit.');
+  }
+
+  private exitHoleSeedMode(): void {
+    if (!this.holeSeedActive) return;
+    this.holeSeedActive = false;
+    this.holeSeedManager?.disable();
+    this.scene.controls.enabled = true;
+    this.controls.updateHoleSeedUI(false, this.manualHoleSeeds.length);
+    this.status.setStatus(
+      this.manualHoleSeeds.length === 0
+        ? 'Seed mode exited.'
+        : `Seed mode exited — ${this.manualHoleSeeds.length} seed(s) active. Re-run analysis to apply.`,
+    );
+  }
+
+  private clearHoleSeeds(): void {
+    this.manualHoleSeeds = [];
+    this.holeSeedManager?.clear();
+    if (this.pipeline) this.pipeline.setManualHoleSeeds([]);
+    this.controls.updateHoleSeedUI(false, 0);
+    this.scene.requestRender();
+    this.status.setStatus('Hole seeds cleared.');
   }
 
   private toggleExcludedHighlight(visible: boolean): void {

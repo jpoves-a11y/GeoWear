@@ -21,13 +21,18 @@ export interface RepairResult {
  * 2) apply a light Taubin smoothing to soften scan texture.
  *
  * maxHoleLoopSize raised to 1000 (from 300) to handle larger scanning artefacts.
+ *
+ * @param seeds  Optional mesh-local seed points. Each seed forces the hole whose
+ *               boundary centroid is closest to it to be filled, even when the
+ *               loop exceeds maxHoleLoopSize. Useful for large artefact holes.
  */
 export function repairInnerFaceMesh(
   meshData: MeshData,
   smoothingIterations: number = 2,
   maxHoleLoopSize: number = 1000,
+  seeds?: [number, number, number][],
 ): RepairResult {
-  const result = fillSmallBoundaryHoles(meshData, maxHoleLoopSize);
+  const result = fillSmallBoundaryHoles(meshData, maxHoleLoopSize, seeds);
   if (smoothingIterations <= 0) return result;
   const smoothedData = smoothMesh(result.meshData, smoothingIterations);
   return { ...result, meshData: smoothedData };
@@ -197,7 +202,11 @@ function extractBoundaryLoops(adj: Map<number, Set<number>>): number[][] {
  *
  * Returns the repaired mesh together with metadata needed for hole visualisation.
  */
-function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): RepairResult {
+function fillSmallBoundaryHoles(
+  meshData: MeshData,
+  maxHoleLoopSize: number,
+  seeds?: [number, number, number][],
+): RepairResult {
   const { positions, normals, indices, vertexCount, faceCount } = meshData;
 
   // --- Build boundary edge adjacency (edges used exactly once = boundary) ---
@@ -252,15 +261,47 @@ function fillSmallBoundaryHoles(meshData: MeshData, maxHoleLoopSize: number): Re
   }
 
   // --- Fan-fill all non-rim loops within the user-specified vertex-count limit ---
+  // A loop is also filled when a user seed point is closest to its centroid.
   const posOut = Array.from(positions);
   const idxOut = Array.from(indices);
   const filledFaceStart = faceCount;
   let holeCount = 0;
 
+  // Pre-compute loop centroids once (needed for seed matching)
+  const loopCentroids: [number, number, number][] = loops.map((loop) => {
+    let cx = 0, cy = 0, cz = 0;
+    for (const v of loop) {
+      cx += positions[v * 3];
+      cy += positions[v * 3 + 1];
+      cz += positions[v * 3 + 2];
+    }
+    const n = loop.length;
+    return [cx / n, cy / n, cz / n];
+  });
+
+  // For each seed, mark the closest non-rim loop (by centroid distance) as forced.
+  const forcedBySeeds = new Set<number>();
+  if (seeds && seeds.length > 0) {
+    for (const seed of seeds) {
+      let bestDist = Infinity;
+      let bestIdx = -1;
+      for (let li = 0; li < loops.length; li++) {
+        if (li === rimLoopIdx) continue;
+        const [cx, cy, cz] = loopCentroids[li];
+        const dx = seed[0] - cx, dy = seed[1] - cy, dz = seed[2] - cz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestDist) { bestDist = d2; bestIdx = li; }
+      }
+      if (bestIdx >= 0) forcedBySeeds.add(bestIdx);
+    }
+  }
+
   for (let li = 0; li < loops.length; li++) {
     if (li === rimLoopIdx) continue;
     const loop = loops[li];
-    if (loop.length < 3 || loop.length > maxHoleLoopSize) continue;
+    if (loop.length < 3) continue;
+    // Fill if within size limit OR if a seed forced this loop
+    if (loop.length > maxHoleLoopSize && !forcedBySeeds.has(li)) continue;
 
     // Centroid of boundary loop
     let cx = 0, cy = 0, cz = 0;

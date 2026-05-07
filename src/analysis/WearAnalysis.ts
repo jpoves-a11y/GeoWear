@@ -24,6 +24,17 @@ import { analyzeDeviations, computeVertexDeviations } from './DeviationAnalyzer'
 import { clusterAnomalies, findPrimaryWearZone } from './AnomalyRegistry';
 import { computeDefectVolumes, computeWearVector, computeMeshEnclosedVolume, computeSphereCap } from './VolumeComputer';
 
+/** Shallow-clone a MeshData, creating independent typed-array copies. */
+function cloneMeshData(m: MeshData): MeshData {
+  return {
+    positions: new Float32Array(m.positions),
+    normals: new Float32Array(m.normals),
+    indices: new Uint32Array(m.indices),
+    vertexCount: m.vertexCount,
+    faceCount: m.faceCount,
+  };
+}
+
 /**
  * Compute the eigenvector corresponding to the smallest eigenvalue
  * of a 3×3 symmetric matrix [[cxx,cxy,cxz],[cxy,cyy,cyz],[cxz,cyz,czz]].
@@ -135,6 +146,19 @@ export interface PipelineState {
   workingMeshFilledHolesFaceStart: number | null;
   /** Number of holes filled in the trimmed working mesh. */
   workingMeshFilledHolesCount: number;
+  /**
+   * Snapshot of the inner mesh used exclusively for volumetric computation (SBF + DSM).
+   * Filled holes topologically (smoothingIterations = 0) but no Taubin smoothing applied,
+   * so measured geometry is not displaced by the repair pass.
+   * Created in stepSeparateFaces and updated in stepRepairInnerFace.
+   */
+  innerMeshForVolume: MeshData | null;
+  /**
+   * Manual seed points (mesh-local coordinates) placed by the user inside large holes
+   * so that those holes are filled even when they exceed holeRepairMaxLoopSize.
+   * Set via setManualHoleSeeds(). Cleared on a new stepSeparateFaces.
+   */
+  manualHoleSeeds: [number, number, number][];
 }
 
 export class WearAnalysisPipeline {
@@ -184,6 +208,8 @@ export class WearAnalysisPipeline {
     filledHolesCount: 0,
     workingMeshFilledHolesFaceStart: null,
     workingMeshFilledHolesCount: 0,
+    innerMeshForVolume: null,
+    manualHoleSeeds: [],
   };
 
   private onProgress?: (stage: string, progress: number, message: string) => void;
@@ -230,6 +256,15 @@ export class WearAnalysisPipeline {
    */
   public setManualRimBasePoint(pt: [number, number, number] | null): void {
     this.state.manualRimBasePoint = pt;
+  }
+
+  /**
+   * Set manual seed points (mesh-local coordinates) that override the maxHoleLoopSize
+   * limit: the hole whose boundary centroid is closest to each seed is filled regardless
+   * of how many vertices its boundary loop contains.
+   */
+  public setManualHoleSeeds(seeds: [number, number, number][]): void {
+    this.state.manualHoleSeeds = seeds;
   }
 
   /**
@@ -394,13 +429,31 @@ export class WearAnalysisPipeline {
     if (!data) throw new Error('No mesh data loaded');
 
     this.state.separation = separateFaces(data);
+    // Keep a clean snapshot for volumetric computation — no smoothing, just topology.
+    this.state.innerMeshForVolume = cloneMeshData(this.state.separation.inner);
+    this.state.manualHoleSeeds = [];
     return this.state.separation;
   }
 
   stepRepairInnerFace(iterations: number = 2, maxHoleLoopSize: number = 1000): void {
     if (!this.state.separation) throw new Error('Run face separation first');
 
-    const result = repairInnerFaceMesh(this.state.separation.inner, iterations, maxHoleLoopSize);
+    const seeds = this.state.manualHoleSeeds;
+
+    // ── Volumetric copy: fill only, zero smoothing so vertex positions are untouched ──
+    if (this.state.innerMeshForVolume) {
+      const volResult = repairInnerFaceMesh(
+        this.state.innerMeshForVolume,
+        0,            // no Taubin smoothing — preserve measured geometry
+        maxHoleLoopSize,
+        seeds,
+      );
+      this.state.innerMeshForVolume = volResult.meshData;
+      console.log(`[Repair/Volume] Filled ${volResult.holeCount} hole(s) in volumetric copy.`);
+    }
+
+    // ── Working copy: fill + Taubin smooth for sphere fit / geodesics ──
+    const result = repairInnerFaceMesh(this.state.separation.inner, iterations, maxHoleLoopSize, seeds);
     this.state.separation = {
       ...this.state.separation,
       inner: result.meshData,
@@ -817,7 +870,9 @@ export class WearAnalysisPipeline {
     // The rim plane is computed here so its direction is independent of RANSAC.
     // normalVec is oriented toward the inner mesh centroid (always INTO the cup).
     // distToPole is the true max extent, so 100% trim puts the plane at the pole.
-    const innerMesh = this.state.separation.inner;
+    // Use the volumetric copy (hole-filled, zero-smoothing) for rim topology so the
+    // boundary loop detection is also based on the topologically-closed mesh.
+    const innerMesh = this.state.innerMeshForVolume ?? this.state.separation.inner;
 
     // Boundary edges (shared by exactly 1 triangle) → build adjacency for loops
     const innerFcPre = innerMesh.indices.length / 3;
@@ -1729,8 +1784,9 @@ export class WearAnalysisPipeline {
     const capCenter = this.state.commercialSphere.center;
     const capRadius = this.state.commercialSphere.commercialRadius;
 
-    // Volume enclosed between the untrimmed inner face and the rim plane
-    const innerMesh = this.state.separation!.inner;
+    // Use the volumetric copy (hole-filled, zero-smoothing) when available;
+    // fall back to separation.inner for backward compatibility.
+    const innerMesh = this.state.innerMeshForVolume ?? this.state.separation!.inner;
     const meshEnclosedVolume = computeMeshEnclosedVolume(
       innerMesh,
       planePoint,

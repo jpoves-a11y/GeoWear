@@ -53,6 +53,9 @@ export interface ControlCallbacks {
   onRimPickConfirm: () => void;
   onRimPickRevertAuto: () => void;
   onRimPickDefinePole: () => void;
+  // Manual hole seed pick
+  onEnableHoleSeedMode: () => void;
+  onClearHoleSeeds: () => void;
 }
 
 export class ControlPanel {
@@ -89,6 +92,10 @@ export class ControlPanel {
   private rimPickClearController: any = null;
   private rimPickConfirmController: any = null;
   private rimPickPoleController: any = null;
+  // Hole seed pick mode controllers
+  private holeSeedStatusProxy: { info: string } = { info: 'No seeds placed' };
+  private holeSeedStatusController: any = null;
+  private holeSeedClearController: any = null;
   // Analysis mode display name mapping
   private readonly modeLabelMap: Record<string, string> = {
     'Pure Geodesic': 'pure-geodesic',
@@ -160,6 +167,20 @@ export class ControlPanel {
         if (v) holeMaxCtrl.show(); else holeMaxCtrl.hide();
         this.callbacks.onParamsChange(this.params);
       });
+
+    // --- Manual hole seed mode ---
+    const holeActions = {
+      'Seed Holes Manually': () => this.callbacks.onEnableHoleSeedMode(),
+      'Clear Seeds': () => this.callbacks.onClearHoleSeeds(),
+    };
+    this.processingFolder.add(holeActions, 'Seed Holes Manually')
+      .name('🕳 Seed Holes Manually');
+    this.holeSeedClearController = this.processingFolder.add(holeActions, 'Clear Seeds')
+      .name('Clear Seeds');
+    this.holeSeedStatusController = this.processingFolder
+      .add(this.holeSeedStatusProxy, 'info')
+      .name('Seeds')
+      .disable();
 
     // Step-by-step controls
     const steps = this.processingFolder.addFolder('Step by Step');
@@ -560,6 +581,24 @@ export class ControlPanel {
     if (!this.rimPickPoleController) return;
     if (enabled) this.rimPickPoleController.enable();
     else this.rimPickPoleController.disable();
+  }
+
+  /**
+   * Update the hole seed UI to reflect the current seed count and pick-mode state.
+   * @param inSeedMode  Whether seed pick mode is currently active.
+   * @param seedCount   Number of seeds currently placed.
+   */
+  public updateHoleSeedUI(inSeedMode: boolean, seedCount: number): void {
+    let text: string;
+    if (inSeedMode) {
+      text = seedCount === 0
+        ? 'Click inside a hole to seed it'
+        : `${seedCount} seed(s) — right-click to undo`;
+    } else {
+      text = seedCount === 0 ? 'No seeds placed' : `${seedCount} seed(s) set`;
+    }
+    this.holeSeedStatusProxy.info = text;
+    this.holeSeedStatusController?.updateDisplay();
   }
 
   private buildExportSection(): void {
