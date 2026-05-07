@@ -14,12 +14,12 @@ import type {
 } from '../types';
 import { COMMERCIAL_RADII } from '../types';
 import { separateFaces, trimRim, computeRimAnchor } from './MeshProcessor';
-import { smoothMesh, repairInnerFaceMesh } from './MeshSmoother';
+import { smoothMesh, repairInnerFaceMesh, type GeodesicRepairData } from './MeshSmoother';
 import { computeTiltedRimNormal } from '../utils/geometry';
 import { fitSphereRobust, fitSphereFixedRadius, fitSphereFixedRadiusRobust } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
 import { MeshGraph } from '../math/MeshGraph';
-import { computeGeodesics } from './GeodesicSolver';
+import { computeGeodesics, buildLocalFrame, extractMeridianPolylines } from './GeodesicSolver';
 import { analyzeDeviations, computeVertexDeviations } from './DeviationAnalyzer';
 import { clusterAnomalies, findPrimaryWearZone } from './AnomalyRegistry';
 import { computeDefectVolumes, computeWearVector, computeMeshEnclosedVolume, computeSphereCap } from './VolumeComputer';
@@ -439,6 +439,41 @@ export class WearAnalysisPipeline {
     if (!this.state.separation) throw new Error('Run face separation first');
 
     const seeds = this.state.manualHoleSeeds;
+    const inner = this.state.separation.inner;
+
+    // ── Preliminary sphere fit for geodesic-guided center placement ──
+    // Use the inner mesh (before repair) so the meridians show gaps at hole locations.
+    const prelimSphere = fitSphereRobust(inner.positions, inner.vertexCount, 3);
+    const sc = prelimSphere.center;
+    const cupAxis = this.state.separation.cupAxis; // unit vector rim→pole
+    const [ax, ay, az] = cupAxis;
+
+    // Cup-axis s-range: poleS = max s, rimS = min s over all inner mesh vertices
+    let poleS = -Infinity, rimS = Infinity;
+    for (let i = 0; i < inner.vertexCount; i++) {
+      const s = (inner.positions[i * 3] - sc.x) * ax
+              + (inner.positions[i * 3 + 1] - sc.y) * ay
+              + (inner.positions[i * 3 + 2] - sc.z) * az;
+      if (s > poleS) poleS = s;
+      if (s < rimS)  rimS  = s;
+    }
+
+    const frame = buildLocalFrame(cupAxis);
+    const sphereCenter: [number, number, number] = [sc.x, sc.y, sc.z];
+
+    const meridianLines = extractMeridianPolylines(
+      inner.positions, inner.indices, inner.vertexCount, inner.faceCount,
+      sphereCenter, cupAxis, 360,
+    );
+
+    const geoData: GeodesicRepairData = {
+      meridianLines, nAngles: 360,
+      sphereCenter, R: prelimSphere.radius,
+      cupAxis, frameU: frame.U, frameV: frame.V,
+      poleS, rimS,
+    };
+
+    console.log(`[Repair] Preliminary sphere: R=${prelimSphere.radius.toFixed(2)} mm, poleS=${poleS.toFixed(2)}, rimS=${rimS.toFixed(2)}`);
 
     // ── Volumetric copy: fill only, zero smoothing so vertex positions are untouched ──
     if (this.state.innerMeshForVolume) {
@@ -447,13 +482,14 @@ export class WearAnalysisPipeline {
         0,            // no Taubin smoothing — preserve measured geometry
         maxHoleLoopSize,
         seeds,
+        geoData,
       );
       this.state.innerMeshForVolume = volResult.meshData;
       console.log(`[Repair/Volume] Filled ${volResult.holeCount} hole(s) in volumetric copy.`);
     }
 
     // ── Working copy: fill + Taubin smooth for sphere fit / geodesics ──
-    const result = repairInnerFaceMesh(this.state.separation.inner, iterations, maxHoleLoopSize, seeds);
+    const result = repairInnerFaceMesh(this.state.separation.inner, iterations, maxHoleLoopSize, seeds, geoData);
     this.state.separation = {
       ...this.state.separation,
       inner: result.meshData,

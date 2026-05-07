@@ -124,7 +124,7 @@ export function computeVertexAngles(
  * Build an equatorial coordinate system (U, V, W) for the cup.
  * W = cup axis, U and V span the equatorial plane.
  */
-function buildLocalFrame(cupAxis: [number, number, number]): {
+export function buildLocalFrame(cupAxis: [number, number, number]): {
   U: [number, number, number];
   V: [number, number, number];
   W: [number, number, number];
@@ -776,4 +776,134 @@ export function computeGeodesics(
   }
 
   return geodesics;
+}
+
+/**
+ * Lightweight meridian extraction for geodesic-guided hole repair.
+ *
+ * For each of the nAngles meridians, returns the sorted list of
+ * mesh-plane intersection points (pole-end first, high cup-axis projection first).
+ * Gaps in the mesh (holes) appear as sudden jumps in that sorted list.
+ *
+ * Unlike computeGeodesics, this skips deviation computation, segment chaining,
+ * and common-pole consolidation — it is only meant to supply trajectory shapes
+ * for the extrapolation-based hole-fill algorithm.
+ */
+export function extractMeridianPolylines(
+  positions: Float32Array,
+  indices: Uint32Array,
+  vertexCount: number,
+  faceCount: number,
+  sphereCenter: [number, number, number],
+  cupAxis: [number, number, number],
+  nAngles: number = 360,
+): Array<Array<[number, number, number]>> {
+  const frame = buildLocalFrame(cupAxis);
+  const [ux, uy, uz] = frame.U;
+  const [vx, vy, vz] = frame.V;
+  const [wx, wy, wz] = frame.W;
+  const [cx, cy, cz] = sphereCenter;
+
+  // Precompute per-vertex longitude for face culling
+  const lonPerVertex = new Float64Array(vertexCount);
+  for (let i = 0; i < vertexCount; i++) {
+    const dx = positions[i * 3] - cx;
+    const dy = positions[i * 3 + 1] - cy;
+    const dz = positions[i * 3 + 2] - cz;
+    let lon = Math.atan2(dx * vx + dy * vy + dz * vz, dx * ux + dy * uy + dz * uz);
+    if (lon < 0) lon += 2 * Math.PI;
+    lonPerVertex[i] = lon;
+  }
+
+  // Precompute per-face centroid longitude and angular radius
+  const faceCentLon = new Float64Array(faceCount);
+  const faceAngRad = new Float64Array(faceCount);
+  for (let f = 0; f < faceCount; f++) {
+    const i0 = indices[f * 3], i1 = indices[f * 3 + 1], i2 = indices[f * 3 + 2];
+    const l0 = lonPerVertex[i0], l1 = lonPerVertex[i1], l2 = lonPerVertex[i2];
+    let cLon = Math.atan2(
+      Math.sin(l0) + Math.sin(l1) + Math.sin(l2),
+      Math.cos(l0) + Math.cos(l1) + Math.cos(l2),
+    );
+    if (cLon < 0) cLon += 2 * Math.PI;
+    faceCentLon[f] = cLon;
+    let maxD = 0;
+    for (const l of [l0, l1, l2]) {
+      let d = Math.abs(l - cLon);
+      if (d > Math.PI) d = 2 * Math.PI - d;
+      if (d > maxD) maxD = d;
+    }
+    faceAngRad[f] = maxD;
+  }
+
+  const MARGIN = Math.PI / 36; // 5° longitude safety margin
+  const SD_EPS = 1e-10;
+  const angStep = (2 * Math.PI) / nAngles;
+
+  const result: Array<Array<[number, number, number]>> = new Array(nAngles);
+
+  for (let g = 0; g < nAngles; g++) {
+    const theta = g * angStep;
+    const cosT = Math.cos(theta), sinT = Math.sin(theta);
+
+    // Meridian half-plane normal (same formula as in computeGeodesics)
+    const nx = (uy * cosT + vy * sinT) * wz - (uz * cosT + vz * sinT) * wy;
+    const ny = (uz * cosT + vz * sinT) * wx - (ux * cosT + vx * sinT) * wz;
+    const nz = (ux * cosT + vx * sinT) * wy - (uy * cosT + vy * sinT) * wx;
+
+    const pts: { pos: [number, number, number]; lat: number }[] = [];
+
+    for (let f = 0; f < faceCount; f++) {
+      // Longitude culling
+      let dLon = Math.abs(faceCentLon[f] - theta);
+      if (dLon > Math.PI) dLon = 2 * Math.PI - dLon;
+      if (dLon > faceAngRad[f] + MARGIN) continue;
+
+      const i0 = indices[f * 3], i1 = indices[f * 3 + 1], i2 = indices[f * 3 + 2];
+      let sd0 = (positions[i0 * 3] - cx) * nx + (positions[i0 * 3 + 1] - cy) * ny + (positions[i0 * 3 + 2] - cz) * nz;
+      let sd1 = (positions[i1 * 3] - cx) * nx + (positions[i1 * 3 + 1] - cy) * ny + (positions[i1 * 3 + 2] - cz) * nz;
+      let sd2 = (positions[i2 * 3] - cx) * nx + (positions[i2 * 3 + 1] - cy) * ny + (positions[i2 * 3 + 2] - cz) * nz;
+      if (Math.abs(sd0) < SD_EPS) sd0 = sd0 >= 0 ? SD_EPS : -SD_EPS;
+      if (Math.abs(sd1) < SD_EPS) sd1 = sd1 >= 0 ? SD_EPS : -SD_EPS;
+      if (Math.abs(sd2) < SD_EPS) sd2 = sd2 >= 0 ? SD_EPS : -SD_EPS;
+
+      const crossings: { pos: [number, number, number]; lat: number }[] = [];
+      const edges: [number, number, number, number][] = [
+        [i0, i1, sd0, sd1],
+        [i1, i2, sd1, sd2],
+        [i2, i0, sd2, sd0],
+      ];
+      for (const [ia, ib, sda, sdb] of edges) {
+        if (sda * sdb < 0) {
+          const t = sda / (sda - sdb);
+          const px = positions[ia * 3] + t * (positions[ib * 3] - positions[ia * 3]);
+          const py = positions[ia * 3 + 1] + t * (positions[ib * 3 + 1] - positions[ia * 3 + 1]);
+          const pz = positions[ia * 3 + 2] + t * (positions[ib * 3 + 2] - positions[ia * 3 + 2]);
+          const lat = (px - cx) * wx + (py - cy) * wy + (pz - cz) * wz;
+          crossings.push({ pos: [px, py, pz], lat });
+        }
+      }
+
+      if (crossings.length >= 2) {
+        // Half-plane check: midpoint must be on the correct longitude side
+        const mx = (crossings[0].pos[0] + crossings[1].pos[0]) / 2;
+        const my = (crossings[0].pos[1] + crossings[1].pos[1]) / 2;
+        const mz = (crossings[0].pos[2] + crossings[1].pos[2]) / 2;
+        let mLon = Math.atan2(
+          (mx - cx) * vx + (my - cy) * vy + (mz - cz) * vz,
+          (mx - cx) * ux + (my - cy) * uy + (mz - cz) * uz,
+        );
+        if (mLon < 0) mLon += 2 * Math.PI;
+        let lonDiff = Math.abs(mLon - theta);
+        if (lonDiff > Math.PI) lonDiff = 2 * Math.PI - lonDiff;
+        if (lonDiff < Math.PI / 2) pts.push(...crossings);
+      }
+    }
+
+    // Sort by cup-axis projection descending: pole-end (high lat) first
+    pts.sort((a, b) => b.lat - a.lat);
+    result[g] = pts.map(p => p.pos);
+  }
+
+  return result;
 }
