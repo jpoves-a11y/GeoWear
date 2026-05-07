@@ -849,6 +849,11 @@ export class App {
   }
 
   private enableHoleSeedMode(): void {
+    // Toggle: if already active, exit instead
+    if (this.holeSeedActive) {
+      this.exitHoleSeedMode();
+      return;
+    }
     const innerMesh = this.meshViewer.getInnerMesh();
     if (!innerMesh) {
       this.status.setStatus('Run face separation first before seeding holes.');

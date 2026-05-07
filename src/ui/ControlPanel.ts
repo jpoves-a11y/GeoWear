@@ -94,6 +94,8 @@ export class ControlPanel {
   private rimPickPoleController: any = null;
   // Hole seed pick mode controllers
   private holeSeedStatusProxy: { info: string } = { info: 'No seeds placed' };
+  private holeSeedToggleProxy: { action: () => void } = { action: () => {} };
+  private holeSeedToggleController: any = null;
   private holeSeedStatusController: any = null;
   private holeSeedClearController: any = null;
   // Analysis mode display name mapping
@@ -169,13 +171,12 @@ export class ControlPanel {
       });
 
     // --- Manual hole seed mode ---
-    const holeActions = {
-      'Seed Holes Manually': () => this.callbacks.onEnableHoleSeedMode(),
-      'Clear Seeds': () => this.callbacks.onClearHoleSeeds(),
-    };
-    this.processingFolder.add(holeActions, 'Seed Holes Manually')
+    this.holeSeedToggleProxy.action = () => this.callbacks.onEnableHoleSeedMode();
+    this.holeSeedToggleController = this.processingFolder
+      .add(this.holeSeedToggleProxy, 'action')
       .name('🕳 Seed Holes Manually');
-    this.holeSeedClearController = this.processingFolder.add(holeActions, 'Clear Seeds')
+    const clearActions = { 'Clear Seeds': () => this.callbacks.onClearHoleSeeds() };
+    this.holeSeedClearController = this.processingFolder.add(clearActions, 'Clear Seeds')
       .name('Clear Seeds');
     this.holeSeedStatusController = this.processingFolder
       .add(this.holeSeedStatusProxy, 'info')
@@ -589,6 +590,16 @@ export class ControlPanel {
    * @param seedCount   Number of seeds currently placed.
    */
   public updateHoleSeedUI(inSeedMode: boolean, seedCount: number): void {
+    // Update toggle button label + action
+    if (inSeedMode) {
+      this.holeSeedToggleProxy.action = () => this.callbacks.onEnableHoleSeedMode(); // still toggles in app
+      this.holeSeedToggleController?.name('⏹ Exit Seed Mode');
+    } else {
+      this.holeSeedToggleProxy.action = () => this.callbacks.onEnableHoleSeedMode();
+      this.holeSeedToggleController?.name('🕳 Seed Holes Manually');
+    }
+
+    // Update status text
     let text: string;
     if (inSeedMode) {
       text = seedCount === 0
