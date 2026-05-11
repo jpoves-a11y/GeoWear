@@ -34,9 +34,9 @@ export interface GeodesicRepairData {
  *
  * maxHoleLoopSize raised to 1000 (from 300) to handle larger scanning artefacts.
  *
- * @param seeds  Optional mesh-local seed points. Each seed forces the hole whose
- *               boundary centroid is closest to it to be filled, even when the
- *               loop exceeds maxHoleLoopSize. Useful for large artefact holes.
+ * @param seeds  Optional mesh-local seed points. Each seed should be placed on the
+ *               border/edge of the hole. The hole whose boundary vertex is closest
+ *               to the seed is force-filled, even when the loop exceeds maxHoleLoopSize.
  */
 export function repairInnerFaceMesh(
   meshData: MeshData,
@@ -296,7 +296,9 @@ function fillSmallBoundaryHoles(
     return [cx / n, cy / n, cz / n];
   });
 
-  // For each seed, mark the closest non-rim loop (by centroid distance) as forced.
+  // For each seed, mark the loop whose boundary is closest to the seed as forced.
+  // Matching by minimum vertex distance (not centroid) so that a click placed on
+  // the hole edge always resolves to the correct loop regardless of hole size.
   const forcedBySeeds = new Set<number>();
   if (seeds && seeds.length > 0) {
     for (const seed of seeds) {
@@ -304,10 +306,14 @@ function fillSmallBoundaryHoles(
       let bestIdx = -1;
       for (let li = 0; li < loops.length; li++) {
         if (li === rimLoopIdx) continue;
-        const [cx, cy, cz] = loopCentroids[li];
-        const dx = seed[0] - cx, dy = seed[1] - cy, dz = seed[2] - cz;
-        const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 < bestDist) { bestDist = d2; bestIdx = li; }
+        // Find minimum squared distance from seed to any boundary vertex of this loop
+        for (const v of loops[li]) {
+          const dx = seed[0] - positions[v * 3];
+          const dy = seed[1] - positions[v * 3 + 1];
+          const dz = seed[2] - positions[v * 3 + 2];
+          const d2 = dx * dx + dy * dy + dz * dz;
+          if (d2 < bestDist) { bestDist = d2; bestIdx = li; }
+        }
       }
       if (bestIdx >= 0) forcedBySeeds.add(bestIdx);
     }

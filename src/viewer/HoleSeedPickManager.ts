@@ -1,8 +1,9 @@
 // ============================================================
 // GeoWear — HoleSeedPickManager
-// Click-to-seed mode: the user clicks inside large holes so that
-// fillSmallBoundaryHoles can fill them even when they exceed the
-// maxHoleLoopSize auto-fill limit.
+// Click-to-seed mode: the user clicks on the BORDER/EDGE of a large hole so that
+// fillSmallBoundaryHoles can fill it even when it exceeds the
+// maxHoleLoopSize auto-fill limit. The seed should land on or near a boundary
+// vertex of the hole — matching is done by minimum boundary-vertex distance.
 //
 // Usage:
 //   manager.enable(innerMeshTHREE, camera, groupOffset)
