@@ -19,7 +19,7 @@ import { computeTiltedRimNormal } from '../utils/geometry';
 import { fitSphereRobust, fitSphereFixedRadius, fitSphereFixedRadiusRobust } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
 import { MeshGraph } from '../math/MeshGraph';
-import { computeGeodesics, buildLocalFrame, extractMeridianPolylines } from './GeodesicSolver';
+import { computeGeodesics } from './GeodesicSolver';
 import { analyzeDeviations, computeVertexDeviations } from './DeviationAnalyzer';
 import { clusterAnomalies, findPrimaryWearZone } from './AnomalyRegistry';
 import { computeDefectVolumes, computeWearVector, computeMeshEnclosedVolume, computeSphereCap } from './VolumeComputer';
@@ -441,39 +441,18 @@ export class WearAnalysisPipeline {
     const seeds = this.state.manualHoleSeeds;
     const inner = this.state.separation.inner;
 
-    // ── Preliminary sphere fit for geodesic-guided center placement ──
-    // Use the inner mesh (before repair) so the meridians show gaps at hole locations.
+    // ── Preliminary sphere fit: center vertex of each fan-fill is projected
+    //    radially onto this sphere, guaranteeing it stays within the cup. ──
     const prelimSphere = fitSphereRobust(inner.positions, inner.vertexCount, 3);
     const sc = prelimSphere.center;
-    const cupAxis = this.state.separation.cupAxis; // unit vector rim→pole
-    const [ax, ay, az] = cupAxis;
-
-    // Cup-axis s-range: poleS = max s, rimS = min s over all inner mesh vertices
-    let poleS = -Infinity, rimS = Infinity;
-    for (let i = 0; i < inner.vertexCount; i++) {
-      const s = (inner.positions[i * 3] - sc.x) * ax
-              + (inner.positions[i * 3 + 1] - sc.y) * ay
-              + (inner.positions[i * 3 + 2] - sc.z) * az;
-      if (s > poleS) poleS = s;
-      if (s < rimS)  rimS  = s;
-    }
-
-    const frame = buildLocalFrame(cupAxis);
     const sphereCenter: [number, number, number] = [sc.x, sc.y, sc.z];
 
-    const meridianLines = extractMeridianPolylines(
-      inner.positions, inner.indices, inner.vertexCount, inner.faceCount,
-      sphereCenter, cupAxis, 360,
-    );
-
     const geoData: GeodesicRepairData = {
-      meridianLines, nAngles: 360,
-      sphereCenter, R: prelimSphere.radius,
-      cupAxis, frameU: frame.U, frameV: frame.V,
-      poleS, rimS,
+      sphereCenter,
+      R: prelimSphere.radius,
     };
 
-    console.log(`[Repair] Preliminary sphere: R=${prelimSphere.radius.toFixed(2)} mm, poleS=${poleS.toFixed(2)}, rimS=${rimS.toFixed(2)}`);
+    console.log(`[Repair] Preliminary sphere: R=${prelimSphere.radius.toFixed(2)} mm, center=(${sc.x.toFixed(1)}, ${sc.y.toFixed(1)}, ${sc.z.toFixed(1)})`);
 
     // ── Volumetric copy: fill only, zero smoothing so vertex positions are untouched ──
     if (this.state.innerMeshForVolume) {

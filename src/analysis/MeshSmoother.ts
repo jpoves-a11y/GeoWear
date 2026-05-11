@@ -16,29 +16,15 @@ export interface RepairResult {
 }
 
 /**
- * Pre-computed geodesic data used to guide hole fill center-vertex placement.
- * Built from a preliminary sphere fit and meridian extraction in WearAnalysis
- * before the repair pass, so the fill follows the actual scan trajectory.
+ * Sphere-fit data used to guide hole fill center-vertex placement.
+ * The center vertex of each fan-fill is placed on the fitted sphere surface,
+ * guaranteeing it is always within the cup geometry.
  */
 export interface GeodesicRepairData {
-  /** Meridian polylines indexed by angle g (0..nAngles-1). Sorted pole-first (high cup-axis projection first). */
-  meridianLines: Array<Array<[number, number, number]>>;
-  /** Number of meridian angles (== meridianLines.length). */
-  nAngles: number;
   /** Preliminary fitted sphere center (mesh-local coordinates). */
   sphereCenter: [number, number, number];
   /** Preliminary fitted sphere radius (mm). */
   R: number;
-  /** Cup axis unit vector (from rim toward pole). */
-  cupAxis: [number, number, number];
-  /** U basis vector of the equatorial frame. */
-  frameU: [number, number, number];
-  /** V basis vector of the equatorial frame. */
-  frameV: [number, number, number];
-  /** Cup-axis projection of the pole (max s). Fill vertices must not exceed this. */
-  poleS: number;
-  /** Cup-axis projection of the rim level (min s). Fill vertices must not go below this. */
-  rimS: number;
 }
 
 /**
@@ -402,160 +388,32 @@ function fillSmallBoundaryHoles(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Geodesic-guided hole fill helpers
+// Sphere-surface hole fill helper
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Compute the best center-vertex position for fan-triangulating a hole using
- * the preliminary geodesic meridian trajectories.
+ * Compute the center-vertex position for fan-triangulating a hole by projecting
+ * the hole centroid radially onto the fitted sphere surface.
  *
- * Algorithm:
- *  1. Identify the hole centroid's (theta, s) parametric coordinates.
- *  2. Find the meridian line closest to theta.
- *  3. Split it into pre-hole (pole-side, s > s_max_hole) and
- *     post-hole (rim-side, s < s_min_hole) segments.
- *  4. Linear-extrapolate the 5 points nearest to each hole edge to s_target.
- *  5. Average the two extrapolations (or use whichever side is available).
- *  6. Clamp result to [rimS, poleS] along the cup axis.
- *  7. Fall back to sphere-surface projection when no meridian data is near.
+ * This replaces the previous meridian-extrapolation approach, which could produce
+ * wildly out-of-bounds positions when meridian data near the hole was sparse or
+ * noisy (unstable regression slope → large lateral drift uncaught by s-clamp).
+ *
+ * The radial projection is guaranteed to land exactly on the sphere surface and
+ * can never exceed the geometry bounds regardless of hole size or scan quality.
  */
 function computeGeodesicHoleCenter(
-  loop: number[],
-  positions: Float32Array,
+  _loop: number[],
+  _positions: Float32Array,
   hcx: number, hcy: number, hcz: number, // pre-computed hole centroid
   g: GeodesicRepairData,
 ): [number, number, number] {
-  const { meridianLines, nAngles, sphereCenter: sc, R,
-          cupAxis: ca, frameU: fu, frameV: fv, poleS, rimS } = g;
-  const [scx, scy, scz] = sc;
-  const [ax, ay, az] = ca;
-  const [ux, uy, uz] = fu;
-  const [vx, vy, vz] = fv;
-
-  // Parametric coords of hole centroid
+  const [scx, scy, scz] = g.sphereCenter;
   const dx = hcx - scx, dy = hcy - scy, dz = hcz - scz;
-  const s_c = dx * ax + dy * ay + dz * az;
-
-  // Clamp target s to valid cup range
-  const s_target = Math.max(rimS, Math.min(poleS, s_c));
-
-  // Longitude of hole centroid
-  let theta_c = Math.atan2(dx * vx + dy * vy + dz * vz, dx * ux + dy * uy + dz * uz);
-  if (theta_c < 0) theta_c += 2 * Math.PI;
-
-  // s-extent of hole boundary
-  let s_min_hole = Infinity, s_max_hole = -Infinity;
-  for (const v of loop) {
-    const sv = (positions[v * 3] - scx) * ax + (positions[v * 3 + 1] - scy) * ay + (positions[v * 3 + 2] - scz) * az;
-    if (sv < s_min_hole) s_min_hole = sv;
-    if (sv > s_max_hole) s_max_hole = sv;
-  }
-
-  // Map centroid angle to nearest meridian index
-  const gi = (((Math.round((theta_c / (2 * Math.PI)) * nAngles)) % nAngles) + nAngles) % nAngles;
-  const meridian = meridianLines[gi];
-  if (!meridian || meridian.length < 2) {
-    return sphereSurfaceAtParam(scx, scy, scz, R, ax, ay, az, ux, uy, uz, vx, vy, vz, theta_c, s_target);
-  }
-
-  // Compute s-projection for each meridian point
-  const mS = meridian.map(([px, py, pz]) =>
-    (px - scx) * ax + (py - scy) * ay + (pz - scz) * az,
-  );
-
-  // Pre-hole = meridian points on the pole side (s > s_max_hole)
-  // Post-hole = meridian points on the rim side (s < s_min_hole)
-  const preHole: { pos: [number, number, number]; s: number }[] = [];
-  const postHole: { pos: [number, number, number]; s: number }[] = [];
-  for (let i = 0; i < meridian.length; i++) {
-    const sv = mS[i];
-    if (sv > s_max_hole)      preHole.push({ pos: meridian[i], s: sv });
-    else if (sv < s_min_hole) postHole.push({ pos: meridian[i], s: sv });
-  }
-
-  // Pre-hole: sort ascending so the LAST elements are closest to the hole edge
-  preHole.sort((a, b) => a.s - b.s);
-  // Post-hole: sort descending so the FIRST elements are closest to the hole edge
-  postHole.sort((a, b) => b.s - a.s);
-
-  const N = 5;
-  const prePts  = preHole.slice(Math.max(0, preHole.length - N));
-  const postPts = postHole.slice(0, N);
-
-  const posFromPre  = prePts.length  >= 2 ? extrapolateLinear3D(prePts.map(p  => ({ pos: p.pos, t: p.s })), s_target) : null;
-  const posFromPost = postPts.length >= 2 ? extrapolateLinear3D(postPts.map(p => ({ pos: p.pos, t: p.s })), s_target) : null;
-
-  let result: [number, number, number];
-  if (posFromPre && posFromPost) {
-    result = [
-      (posFromPre[0] + posFromPost[0]) / 2,
-      (posFromPre[1] + posFromPost[1]) / 2,
-      (posFromPre[2] + posFromPost[2]) / 2,
-    ];
-  } else if (posFromPre) {
-    result = posFromPre;
-  } else if (posFromPost) {
-    result = posFromPost;
-  } else {
-    return sphereSurfaceAtParam(scx, scy, scz, R, ax, ay, az, ux, uy, uz, vx, vy, vz, theta_c, s_target);
-  }
-
-  // Final s-clamp: if extrapolation drifted out of [rimS, poleS], fall back to sphere surface
-  const s_result = (result[0] - scx) * ax + (result[1] - scy) * ay + (result[2] - scz) * az;
-  if (s_result < rimS || s_result > poleS) {
-    return sphereSurfaceAtParam(scx, scy, scz, R, ax, ay, az, ux, uy, uz, vx, vy, vz, theta_c, s_target);
-  }
-
-  return result;
-}
-
-/**
- * Linear-regression extrapolation of 3-D positions parameterised by scalar t.
- * Returns null when the point list is empty.
- */
-function extrapolateLinear3D(
-  pts: Array<{ pos: [number, number, number]; t: number }>,
-  targetT: number,
-): [number, number, number] | null {
-  const n = pts.length;
-  if (n === 0) return null;
-  if (n === 1) return pts[0].pos;
-
-  let sumT = 0, sumT2 = 0, sumX = 0, sumY = 0, sumZ = 0;
-  let sumXT = 0, sumYT = 0, sumZT = 0;
-  for (const { pos, t } of pts) {
-    sumT  += t;     sumT2 += t * t;
-    sumX  += pos[0]; sumY += pos[1]; sumZ += pos[2];
-    sumXT += pos[0] * t; sumYT += pos[1] * t; sumZT += pos[2] * t;
-  }
-  const det = n * sumT2 - sumT * sumT;
-  if (Math.abs(det) < 1e-12) return [sumX / n, sumY / n, sumZ / n];
-  const bx = (n * sumXT - sumT * sumX) / det, ax0 = (sumX - bx * sumT) / n;
-  const by = (n * sumYT - sumT * sumY) / det, ay0 = (sumY - by * sumT) / n;
-  const bz = (n * sumZT - sumT * sumZ) / det, az0 = (sumZ - bz * sumT) / n;
-  return [ax0 + bx * targetT, ay0 + by * targetT, az0 + bz * targetT];
-}
-
-/**
- * Project a parametric (theta, s) coordinate onto the sphere surface.
- * s is the cup-axis projection; theta is the longitude angle.
- */
-function sphereSurfaceAtParam(
-  scx: number, scy: number, scz: number,
-  R: number,
-  ax: number, ay: number, az: number,
-  ux: number, uy: number, uz: number,
-  vx: number, vy: number, vz: number,
-  theta: number,
-  s: number,
-): [number, number, number] {
-  const r = Math.sqrt(Math.max(0, R * R - s * s));
-  const cosT = Math.cos(theta), sinT = Math.sin(theta);
-  return [
-    scx + s * ax + r * (cosT * ux + sinT * vx),
-    scy + s * ay + r * (cosT * uy + sinT * vy),
-    scz + s * az + r * (cosT * uz + sinT * vz),
-  ];
+  const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (len < 1e-9) return [scx, scy, scz]; // degenerate: centroid at sphere center
+  const scale = g.R / len;
+  return [scx + dx * scale, scy + dy * scale, scz + dz * scale];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
