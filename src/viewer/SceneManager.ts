@@ -7,7 +7,13 @@ import * as THREE from 'three';
 import { Timer } from 'three';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { ArcballControls } from 'three/addons/controls/ArcballControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+
+// @types/three omits the `target` property from ArcballControls even though
+// the runtime implementation has it (three/examples/jsm/controls/ArcballControls.js
+// line 138: `this.target = new Vector3()`). Extend locally to restore type safety.
+type ArcballControlsExt = ArcballControls & { target: THREE.Vector3 };
 
 export type ControlMode = 'basic' | 'alternative';
 
@@ -19,24 +25,13 @@ export class SceneManager {
 
   // ---- Dual control mode support ----
   private _trackballControls!: TrackballControls;
-  private _orbitControls!: OrbitControls;
+  private _arcballControls!: ArcballControlsExt;
   private _controlMode: ControlMode = 'basic';
 
-  /** Returns the currently active controls (either TrackballControls or OrbitControls). */
-  public get controls(): TrackballControls | OrbitControls {
-    return this._controlMode === 'basic' ? this._trackballControls : this._orbitControls;
+  /** Returns the currently active controls (either TrackballControls or ArcballControls). */
+  public get controls(): TrackballControls | ArcballControlsExt {
+    return this._controlMode === 'basic' ? this._trackballControls : this._arcballControls;
   }
-
-  /**
-   * Drain residual OrbitControls damping velocity (sphericalDelta) before each
-   * new mouse interaction. Without this, clicking while the previous orbit is
-   * still decelerating causes a visible position jump on the first frame.
-   */
-  private _drainOrbitDamping = (): void => {
-    this._orbitControls.enableDamping = false;
-    this._orbitControls.update();        // zeros out _sphericalDelta in one call
-    this._orbitControls.enableDamping = true;
-  };
 
   /** Arrow handler for middle-click pivot in alternative mode — bound once, added/removed dynamically. */
   private _altModeMouseDown = (e: MouseEvent): void => {
@@ -52,8 +47,8 @@ export class SceneManager {
     this.scene.traverse(obj => { if ((obj as THREE.Mesh).isMesh && obj.visible) meshes.push(obj); });
     const hits = raycaster.intersectObjects(meshes, false);
     if (hits.length > 0) {
-      this._orbitControls.target.copy(hits[0].point);
-      this._orbitControls.update();
+      this._arcballControls.target.copy(hits[0].point);
+      this._arcballControls.update();
       this._needsRender = true;
     }
   };
@@ -138,33 +133,39 @@ export class SceneManager {
       }
     });
 
-    // ---- Controls: Alternative (OrbitControls) ----
-    this._orbitControls = new OrbitControls(this.camera, this.renderer.domElement);
-    this._orbitControls.rotateSpeed = 2.5;
-    this._orbitControls.zoomSpeed = 2.0;         // more relaxed zoom
-    this._orbitControls.panSpeed = 0.8;
-    this._orbitControls.enableDamping = true;
-    this._orbitControls.dampingFactor = 0.1;
-    this._orbitControls.minDistance = 5;
-    this._orbitControls.maxDistance = 400;        // wider zoom range
-    this._orbitControls.minPolarAngle = 0;        // free vertical rotation
-    this._orbitControls.maxPolarAngle = Math.PI;  // free vertical rotation
-    this._orbitControls.mouseButtons = {
-      LEFT:   THREE.MOUSE.ROTATE,
-      MIDDLE: THREE.MOUSE.ROTATE, // middle = orbit around clicked point (pivot set by _altModeMouseDown)
-      RIGHT:  THREE.MOUSE.PAN,
-    };
-    this._orbitControls.target.set(0, 0, 0);
-    this._orbitControls.enabled = false; // starts disabled
+    // ---- Controls: Alternative (ArcballControls) ----
+    // Quaternion-based arcball rotation: fully free, no gimbal lock, always
+    // orbiting around the target center.
+    this._arcballControls = new ArcballControls(
+      this.camera, this.renderer.domElement, this.scene
+    ) as ArcballControlsExt;
+    this._arcballControls.setGizmosVisible(false);
+    this._arcballControls.enableAnimations = false; // instant stop; avoids a second rAF loop
+    this._arcballControls.enableFocus = false;      // disable double-click re-focus
+    this._arcballControls.minDistance = 5;
+    this._arcballControls.maxDistance = 400;
+    this._arcballControls.enablePan = true;
+    this._arcballControls.enableRotate = true;
+    this._arcballControls.enableZoom = true;
+    this._arcballControls.rotateSpeed = 2.0;
+    // Configure mouse buttons via the typed setMouseAction() API:
+    // Left=rotate (arcball), Middle=rotate (pivot set by _altModeMouseDown), Right=pan
+    this._arcballControls.unsetMouseAction(1);            // remove default middle=zoom
+    this._arcballControls.setMouseAction('ROTATE', 1);    // middle = rotate (after pivot is set)
+    // Right=pan and Left=rotate are already the defaults; set explicitly for clarity
+    this._arcballControls.setMouseAction('ROTATE', 0);
+    this._arcballControls.setMouseAction('PAN', 2);
+    this._arcballControls.target.set(0, 0, 0);
+    this._arcballControls.enabled = false; // starts disabled
 
-    this._orbitControls.addEventListener('change', () => { this._needsRender = true; });
-    this._orbitControls.addEventListener('start', () => {
+    this._arcballControls.addEventListener('change', () => { this._needsRender = true; });
+    this._arcballControls.addEventListener('start', () => {
       if (this._largeScene && this._fullPixelRatio > 1) {
         this.renderer.setPixelRatio(1);
         this.onResize();
       }
     });
-    this._orbitControls.addEventListener('end', () => {
+    this._arcballControls.addEventListener('end', () => {
       if (this._largeScene) {
         this.renderer.setPixelRatio(this._fullPixelRatio);
         this.onResize();
@@ -251,15 +252,15 @@ export class SceneManager {
     this._trackballControls.minDistance = minDist;
     this._trackballControls.maxDistance = maxDistBasic;
     this._trackballControls.target.copy(center);
-    this._orbitControls.minDistance = minDist;
-    this._orbitControls.maxDistance = maxDistAlt;
-    this._orbitControls.target.copy(center);
+    this._arcballControls.minDistance = minDist;
+    this._arcballControls.maxDistance = maxDistAlt;
+    this._arcballControls.target.copy(center);
 
     this.camera.position.copy(
       center.clone().add(new THREE.Vector3(0, distance * 0.5, distance))
     );
     this._trackballControls.update();
-    this._orbitControls.update();
+    this._arcballControls.update();
     this._needsRender = true;
 
     // Adjust fog — color must match scene background for correct blending
@@ -268,7 +269,7 @@ export class SceneManager {
   }
 
   /**
-   * Switch between 'basic' (TrackballControls) and 'alternative' (OrbitControls) mode.
+   * Switch between 'basic' (TrackballControls) and 'alternative' (ArcballControls) mode.
    * Syncs the orbit target so the camera pivot is preserved on switch.
    */
   public setControlMode(mode: ControlMode): void {
@@ -276,22 +277,19 @@ export class SceneManager {
     this._controlMode = mode;
 
     if (mode === 'alternative') {
-      // Sync orbit target from trackball, then swap active control
-      this._orbitControls.target.copy(this._trackballControls.target);
-      this._orbitControls.update();
+      // Sync arcball target from trackball, then swap active control
+      this._arcballControls.target.copy(this._trackballControls.target);
+      this._arcballControls.update();
       this._trackballControls.enabled = false;
-      this._orbitControls.enabled = true;
-      // Drain damping on each click (capture phase, fires before OrbitControls)
-      this.canvas.addEventListener('mousedown', this._drainOrbitDamping, true);
-      // Capture middle-click BEFORE OrbitControls handles it (capture phase)
+      this._arcballControls.enabled = true;
+      // Capture middle-click BEFORE ArcballControls handles it (capture phase)
       this.canvas.addEventListener('mousedown', this._altModeMouseDown, true);
     } else {
-      // Sync trackball target from orbit, then swap active control
-      this._trackballControls.target.copy(this._orbitControls.target);
+      // Sync trackball target from arcball, then swap active control
+      this._trackballControls.target.copy(this._arcballControls.target);
       this._trackballControls.update();
-      this._orbitControls.enabled = false;
+      this._arcballControls.enabled = false;
       this._trackballControls.enabled = true;
-      this.canvas.removeEventListener('mousedown', this._drainOrbitDamping, true);
       this.canvas.removeEventListener('mousedown', this._altModeMouseDown, true);
     }
     this._needsRender = true;
@@ -333,11 +331,11 @@ export class SceneManager {
     const dt = this.timer.getDelta();
 
     // Update active controls every frame (TrackballControls needs it for inertia;
-    // OrbitControls needs it when enableDamping=true)
+    // ArcballControls needs it even with enableAnimations=false to process input)
     if (this._controlMode === 'basic') {
       this._trackballControls.update();
     } else {
-      this._orbitControls.update();
+      this._arcballControls.update();
     }
 
     // Run frame callbacks
@@ -386,9 +384,8 @@ export class SceneManager {
   public dispose(): void {
     cancelAnimationFrame(this.animationId);
     this._trackballControls.dispose();
-    this._orbitControls.dispose();
+    this._arcballControls.dispose();
     if (this._controlMode === 'alternative') {
-      this.canvas.removeEventListener('mousedown', this._drainOrbitDamping, true);
       this.canvas.removeEventListener('mousedown', this._altModeMouseDown, true);
     }
     this.renderer.dispose();
