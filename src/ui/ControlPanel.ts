@@ -238,7 +238,12 @@ export class ControlPanel {
         this.updateStepVisibility();
       });
 
-    wearModel.add(this.commercialRadiusProxy, 'value', ['Auto', '14 mm', '16 mm', '18 mm', '20 mm'])
+    wearModel.add(this.commercialRadiusProxy, 'value', [
+      'Auto',
+      '10 mm', '12 mm', '14 mm', '16 mm', '18 mm', '20 mm',
+      '22 mm', '24 mm', '26 mm', '28 mm', '30 mm', '32 mm',
+      '34 mm', '36 mm', '38 mm', '40 mm',
+    ])
       .name('Commercial Radius')
       .onChange((v: string) => {
         if (v === 'Auto') {

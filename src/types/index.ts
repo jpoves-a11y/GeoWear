@@ -4,8 +4,14 @@
 
 import * as THREE from 'three';
 
-/** Known commercial femoral head radii (mm) */
-export const COMMERCIAL_RADII: number[] = [14, 16, 18, 20];
+/** Generate the list of commercial femoral head radii (even mm values) up to a given maximum */
+export function commercialRadiiUpTo(maxR: number): number[] {
+  const list: number[] = [];
+  for (let r = 10; r <= maxR; r += 2) list.push(r);
+  return list;
+}
+/** Known commercial femoral head radii (mm) — kept for backward compatibility */
+export const COMMERCIAL_RADII: number[] = commercialRadiiUpTo(40);
 
 /** Raw vertex data transferred between main thread and workers */
 export interface MeshData {

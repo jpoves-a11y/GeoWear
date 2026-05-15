@@ -12,7 +12,6 @@ import type {
   LinearWearFilter, AnalysisRunResult, DoubleSphereMetricsResult,
   DoubleSphereSweepCellResult
 } from '../types';
-import { COMMERCIAL_RADII } from '../types';
 import { separateFaces, trimRim, computeRimAnchor } from './MeshProcessor';
 import { smoothMesh, repairInnerFaceMesh, type GeodesicRepairData } from './MeshSmoother';
 import { computeTiltedRimNormal } from '../utils/geometry';
@@ -1320,7 +1319,8 @@ export class WearAnalysisPipeline {
   /**
    * Determine the commercial sphere radius.
    * Uses the geodesic sphere fit center; snaps radius DOWN to nearest
-   * commercial value in [14, 16, 18, 20] mm, or uses the manual value.
+   * even integer (mm), or snaps UP if within 0.2 mm of the next even value.
+   * Accepts any positive even manual override.
    */
   stepDetermineCommercialRadius(manualRadius: number = 0): CommercialSphereInfo {
     if (!this.state.sphereFit) throw new Error('Run sphere fit first');
@@ -1329,24 +1329,14 @@ export class WearAnalysisPipeline {
     let commercialRadius: number;
     let autoDetected: boolean;
 
-    if (manualRadius > 0 && COMMERCIAL_RADII.includes(manualRadius)) {
+    if (manualRadius > 0 && manualRadius % 2 === 0) {
       commercialRadius = manualRadius;
       autoDetected = false;
     } else {
-      // Round DOWN to nearest commercial radius, but snap UP if within 0.2mm of the next one
-      const sorted = [...COMMERCIAL_RADII].sort((a, b) => a - b); // ascending
-      commercialRadius = sorted[0]; // smallest as default
-      for (let i = 0; i < sorted.length; i++) {
-        if (geodesicRadius >= sorted[i]) {
-          commercialRadius = sorted[i];
-        } else if (sorted[i] - geodesicRadius <= 0.2) {
-          // Within 0.2mm of the next commercial radius → snap up
-          commercialRadius = sorted[i];
-          break;
-        } else {
-          break;
-        }
-      }
+      // Round DOWN to nearest even integer, snap UP if within 0.2 mm of the next even value
+      const lower = Math.floor(geodesicRadius / 2) * 2;
+      const upper = lower + 2;
+      commercialRadius = (upper - geodesicRadius <= 0.2) ? upper : lower;
       autoDetected = true;
     }
 
