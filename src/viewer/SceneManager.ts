@@ -27,6 +27,17 @@ export class SceneManager {
     return this._controlMode === 'basic' ? this._trackballControls : this._orbitControls;
   }
 
+  /**
+   * Drain residual OrbitControls damping velocity (sphericalDelta) before each
+   * new mouse interaction. Without this, clicking while the previous orbit is
+   * still decelerating causes a visible position jump on the first frame.
+   */
+  private _drainOrbitDamping = (): void => {
+    this._orbitControls.enableDamping = false;
+    this._orbitControls.update();        // zeros out _sphericalDelta in one call
+    this._orbitControls.enableDamping = true;
+  };
+
   /** Arrow handler for middle-click pivot in alternative mode — bound once, added/removed dynamically. */
   private _altModeMouseDown = (e: MouseEvent): void => {
     if (e.button !== 1) return; // middle button only
@@ -270,6 +281,8 @@ export class SceneManager {
       this._orbitControls.update();
       this._trackballControls.enabled = false;
       this._orbitControls.enabled = true;
+      // Drain damping on each click (capture phase, fires before OrbitControls)
+      this.canvas.addEventListener('mousedown', this._drainOrbitDamping, true);
       // Capture middle-click BEFORE OrbitControls handles it (capture phase)
       this.canvas.addEventListener('mousedown', this._altModeMouseDown, true);
     } else {
@@ -278,6 +291,7 @@ export class SceneManager {
       this._trackballControls.update();
       this._orbitControls.enabled = false;
       this._trackballControls.enabled = true;
+      this.canvas.removeEventListener('mousedown', this._drainOrbitDamping, true);
       this.canvas.removeEventListener('mousedown', this._altModeMouseDown, true);
     }
     this._needsRender = true;
@@ -374,6 +388,7 @@ export class SceneManager {
     this._trackballControls.dispose();
     this._orbitControls.dispose();
     if (this._controlMode === 'alternative') {
+      this.canvas.removeEventListener('mousedown', this._drainOrbitDamping, true);
       this.canvas.removeEventListener('mousedown', this._altModeMouseDown, true);
     }
     this.renderer.dispose();
