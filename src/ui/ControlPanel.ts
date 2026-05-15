@@ -56,6 +56,7 @@ export interface ControlCallbacks {
   // Manual hole seed pick
   onEnableHoleSeedMode: () => void;
   onClearHoleSeeds: () => void;
+  onViewerControlsChange: (mode: 'basic' | 'alternative') => void;
 }
 
 export class ControlPanel {
@@ -81,7 +82,8 @@ export class ControlPanel {
   private visAnnotationsControllers: any[] = []; // shown only for pure-geodesic
   private visCompareSelectorCtrl: any = null;    // inline compare sub-mode picker
   // Commercial radius proxy for dropdown
-  private commercialRadiusProxy = { value: 'Auto' };
+  private commercialRadiusProxy = { value: 'Auto', customValue: 28 };
+  private customRadiusController: any = null;
   private colorRangeMaxController: any = null;
   private rimInclinationController: any = null;
   private rimAzimuthController: any = null;
@@ -243,16 +245,33 @@ export class ControlPanel {
       '10 mm', '12 mm', '14 mm', '16 mm', '18 mm', '20 mm',
       '22 mm', '24 mm', '26 mm', '28 mm', '30 mm', '32 mm',
       '34 mm', '36 mm', '38 mm', '40 mm',
+      'Other...',
     ])
       .name('Commercial Radius')
       .onChange((v: string) => {
         if (v === 'Auto') {
           this.params.commercialRadius = 0;
+          this.customRadiusController?.hide();
+        } else if (v === 'Other...') {
+          this.customRadiusController?.show();
+          // Don't change params yet — user will type in the box
+          return;
         } else {
           this.params.commercialRadius = parseInt(v);
+          this.customRadiusController?.hide();
         }
         this.callbacks.onParamsChange(this.params);
       });
+
+    this.customRadiusController = wearModel.add(this.commercialRadiusProxy, 'customValue')
+      .name('Custom Radius (mm)')
+      .onChange((v: number) => {
+        if (v > 0) {
+          this.params.commercialRadius = v;
+          this.callbacks.onParamsChange(this.params);
+        }
+      });
+    this.customRadiusController.hide();
 
     const filterLabelMap: Record<string, string> = {
       'None': 'none',
@@ -375,6 +394,15 @@ export class ControlPanel {
         if (this.compareVisModeCallback) this.compareVisModeCallback(mode);
       });
     this.visCompareSelectorCtrl.hide();
+
+    // 3D viewer controls mode selector
+    const ctrlModeProxy = { mode: 'Basic (Trackball)' };
+    folder.add(ctrlModeProxy, 'mode', ['Basic (Trackball)', 'Alternative (Orbit)'])
+      .name('🖱 3D Controls')
+      .onChange((v: string) => {
+        const mode = v === 'Alternative (Orbit)' ? 'alternative' : 'basic';
+        this.callbacks.onViewerControlsChange(mode);
+      });
 
     // Always-visible at root level
     folder.add(this.params, 'contextOpaque')

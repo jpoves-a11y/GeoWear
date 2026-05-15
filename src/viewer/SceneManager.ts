@@ -6,14 +6,46 @@
 import * as THREE from 'three';
 import { Timer } from 'three';
 import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+
+export type ControlMode = 'basic' | 'alternative';
 
 export class SceneManager {
   public scene: THREE.Scene;
   public camera: THREE.PerspectiveCamera;
   public renderer: THREE.WebGLRenderer;
   public cssRenderer: CSS2DRenderer;
-  public controls: TrackballControls;
+
+  // ---- Dual control mode support ----
+  private _trackballControls!: TrackballControls;
+  private _orbitControls!: OrbitControls;
+  private _controlMode: ControlMode = 'basic';
+
+  /** Returns the currently active controls (either TrackballControls or OrbitControls). */
+  public get controls(): TrackballControls | OrbitControls {
+    return this._controlMode === 'basic' ? this._trackballControls : this._orbitControls;
+  }
+
+  /** Arrow handler for middle-click pivot in alternative mode — bound once, added/removed dynamically. */
+  private _altModeMouseDown = (e: MouseEvent): void => {
+    if (e.button !== 1) return; // middle button only
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(ndc, this.camera);
+    const meshes: THREE.Object3D[] = [];
+    this.scene.traverse(obj => { if ((obj as THREE.Mesh).isMesh && obj.visible) meshes.push(obj); });
+    const hits = raycaster.intersectObjects(meshes, false);
+    if (hits.length > 0) {
+      this._orbitControls.target.copy(hits[0].point);
+      this._orbitControls.update();
+      this._needsRender = true;
+    }
+  };
 
   private canvas: HTMLCanvasElement;
   private container: HTMLElement;
@@ -70,27 +102,58 @@ export class SceneManager {
     const overlay = document.getElementById('annotations-overlay')!;
     overlay.appendChild(this.cssRenderer.domElement);
 
-    // ---- Controls ----
-    this.controls = new TrackballControls(this.camera, this.renderer.domElement);
-    this.controls.rotateSpeed = 3.0;
-    this.controls.zoomSpeed = 1.2;
-    this.controls.panSpeed = 0.6;
-    this.controls.dynamicDampingFactor = 0.15;
-    this.controls.minDistance = 5;
-    this.controls.maxDistance = 200;
-    this.controls.target.set(0, 0, 0);
+    // ---- Controls: Basic (TrackballControls) ----
+    this._trackballControls = new TrackballControls(this.camera, this.renderer.domElement);
+    this._trackballControls.rotateSpeed = 3.0;
+    this._trackballControls.zoomSpeed = 1.2;
+    this._trackballControls.panSpeed = 0.6;
+    this._trackballControls.dynamicDampingFactor = 0.15;
+    this._trackballControls.minDistance = 5;
+    this._trackballControls.maxDistance = 200;
+    this._trackballControls.target.set(0, 0, 0);
 
-    // Render-on-demand: only render when camera changes
-    this.controls.addEventListener('change', () => { this._needsRender = true; });
-
-    // Adaptive quality: lower pixel ratio during interaction on large scenes
-    this.controls.addEventListener('start', () => {
+    this._trackballControls.addEventListener('change', () => { this._needsRender = true; });
+    this._trackballControls.addEventListener('start', () => {
       if (this._largeScene && this._fullPixelRatio > 1) {
         this.renderer.setPixelRatio(1);
         this.onResize();
       }
     });
-    this.controls.addEventListener('end', () => {
+    this._trackballControls.addEventListener('end', () => {
+      if (this._largeScene) {
+        this.renderer.setPixelRatio(this._fullPixelRatio);
+        this.onResize();
+        this._needsRender = true;
+      }
+    });
+
+    // ---- Controls: Alternative (OrbitControls) ----
+    this._orbitControls = new OrbitControls(this.camera, this.renderer.domElement);
+    this._orbitControls.rotateSpeed = 2.5;
+    this._orbitControls.zoomSpeed = 2.0;         // more relaxed zoom
+    this._orbitControls.panSpeed = 0.8;
+    this._orbitControls.enableDamping = true;
+    this._orbitControls.dampingFactor = 0.1;
+    this._orbitControls.minDistance = 5;
+    this._orbitControls.maxDistance = 400;        // wider zoom range
+    this._orbitControls.minPolarAngle = 0;        // free vertical rotation
+    this._orbitControls.maxPolarAngle = Math.PI;  // free vertical rotation
+    this._orbitControls.mouseButtons = {
+      LEFT:   THREE.MOUSE.ROTATE,
+      MIDDLE: THREE.MOUSE.ROTATE, // middle = orbit around clicked point (pivot set by _altModeMouseDown)
+      RIGHT:  THREE.MOUSE.PAN,
+    };
+    this._orbitControls.target.set(0, 0, 0);
+    this._orbitControls.enabled = false; // starts disabled
+
+    this._orbitControls.addEventListener('change', () => { this._needsRender = true; });
+    this._orbitControls.addEventListener('start', () => {
+      if (this._largeScene && this._fullPixelRatio > 1) {
+        this.renderer.setPixelRatio(1);
+        this.onResize();
+      }
+    });
+    this._orbitControls.addEventListener('end', () => {
       if (this._largeScene) {
         this.renderer.setPixelRatio(this._fullPixelRatio);
         this.onResize();
@@ -170,18 +233,54 @@ export class SceneManager {
     this.camera.far = distance * 20;
     this.camera.updateProjectionMatrix();
 
-    this.controls.minDistance = distance * 0.1;
-    this.controls.maxDistance = distance * 10;
-    this.controls.target.copy(center);
+    // Update both controls so switching mode doesn't reset the camera
+    const minDist = distance * 0.1;
+    const maxDistBasic  = distance * 10;
+    const maxDistAlt    = Math.max(distance * 10, 400);
+    this._trackballControls.minDistance = minDist;
+    this._trackballControls.maxDistance = maxDistBasic;
+    this._trackballControls.target.copy(center);
+    this._orbitControls.minDistance = minDist;
+    this._orbitControls.maxDistance = maxDistAlt;
+    this._orbitControls.target.copy(center);
+
     this.camera.position.copy(
       center.clone().add(new THREE.Vector3(0, distance * 0.5, distance))
     );
-    this.controls.update();
+    this._trackballControls.update();
+    this._orbitControls.update();
     this._needsRender = true;
-    
+
     // Adjust fog — color must match scene background for correct blending
     const bgColor = (this.scene.background as THREE.Color)?.getHex?.() ?? 0xe8e8e8;
     this.scene.fog = new THREE.FogExp2(bgColor, 0.5 / distance);
+  }
+
+  /**
+   * Switch between 'basic' (TrackballControls) and 'alternative' (OrbitControls) mode.
+   * Syncs the orbit target so the camera pivot is preserved on switch.
+   */
+  public setControlMode(mode: ControlMode): void {
+    if (mode === this._controlMode) return;
+    this._controlMode = mode;
+
+    if (mode === 'alternative') {
+      // Sync orbit target from trackball, then swap active control
+      this._orbitControls.target.copy(this._trackballControls.target);
+      this._orbitControls.update();
+      this._trackballControls.enabled = false;
+      this._orbitControls.enabled = true;
+      // Capture middle-click BEFORE OrbitControls handles it (capture phase)
+      this.canvas.addEventListener('mousedown', this._altModeMouseDown, true);
+    } else {
+      // Sync trackball target from orbit, then swap active control
+      this._trackballControls.target.copy(this._orbitControls.target);
+      this._trackballControls.update();
+      this._orbitControls.enabled = false;
+      this._trackballControls.enabled = true;
+      this.canvas.removeEventListener('mousedown', this._altModeMouseDown, true);
+    }
+    this._needsRender = true;
   }
 
   /** Get a screenshot as data URL */
@@ -219,7 +318,13 @@ export class SceneManager {
     this.timer.update();
     const dt = this.timer.getDelta();
 
-    this.controls.update(); // always update for damping
+    // Update active controls every frame (TrackballControls needs it for inertia;
+    // OrbitControls needs it when enableDamping=true)
+    if (this._controlMode === 'basic') {
+      this._trackballControls.update();
+    } else {
+      this._orbitControls.update();
+    }
 
     // Run frame callbacks
     for (const cb of this.frameCallbacks) {
@@ -266,7 +371,11 @@ export class SceneManager {
   /** Dispose of all resources */
   public dispose(): void {
     cancelAnimationFrame(this.animationId);
-    this.controls.dispose();
+    this._trackballControls.dispose();
+    this._orbitControls.dispose();
+    if (this._controlMode === 'alternative') {
+      this.canvas.removeEventListener('mousedown', this._altModeMouseDown, true);
+    }
     this.renderer.dispose();
     window.removeEventListener('resize', this.onResize.bind(this));
   }

@@ -187,6 +187,7 @@ export class App {
       // --- Hole seed pick ---
       onEnableHoleSeedMode: () => this.enableHoleSeedMode(),
       onClearHoleSeeds: () => this.clearHoleSeeds(),
+      onViewerControlsChange: (mode: 'basic' | 'alternative') => this.scene.setControlMode(mode),
     };
     this.controls = new ControlPanel(callbacks);
 
@@ -271,9 +272,9 @@ export class App {
         this.status.setStatus(`Auto-scaled from ${workerResult.scaleFactor === 0.001 ? 'μm' : 'm'} to mm`);
       }
 
+      // Clear all per-sample state before loading the new mesh
+      this.clearSampleState();
       this.currentMeshData = meshData;
-      this.currentResults = null;
-      this.pipeline = null;
 
       // Clear previous visualization
       this.clearVisualization();
@@ -1324,6 +1325,72 @@ export class App {
     this.disableSectionModeButton();
     this.controls.hideVisualizationControls();
     this.scene.requestRender();
+  }
+
+  /**
+   * Clear all per-sample analysis state before loading a new STL.
+   * Ensures no rim plane, exclusion mask, or analysis data from the
+   * previous sample bleeds into the new one.
+   */
+  private clearSampleState(): void {
+    // ---- Cancel active pick modes ----
+    if (this.rimPickActive) {
+      this.rimPickManager?.disable();
+      this.rimPickManager?.clear();
+      this.rimPickActive = false;
+      this.rimPickBtn?.classList.remove('active');
+      this.scene.controls.enabled = true;
+    }
+    if (this.holeSeedActive) {
+      this.holeSeedActive = false;
+      this.holeSeedManager?.disable();
+      this.scene.controls.enabled = true;
+    }
+    // Cancel pending pole click
+    if (this._onPoleClick) {
+      this.scene.renderer.domElement.removeEventListener('click', this._onPoleClick, true);
+      this._onPoleClick = null;
+      this._polePickActive = false;
+    }
+
+    // ---- Clear rim plane state ----
+    this._manualRimNormal = null;
+    this._manualRimCenter = null;
+    this._confirmedManualNormal = null;
+    this._normalFlipped = false;
+    this._polePoint = null;
+    this._rimAnchorCache = null;
+    if (this._rimMeshDebounce !== null) {
+      clearTimeout(this._rimMeshDebounce);
+      this._rimMeshDebounce = null;
+    }
+    this.meshViewer.clearRimNormalArrow();
+    this.meshViewer.clearPoleMarker();
+
+    // ---- Reset rim inclination params to default ----
+    this.params.rimInclinationAngle = 0;
+    this.params.rimInclinationAzimuth = 0;
+    this._prePickInclination = 0;
+    this._prePickAzimuth = 0;
+
+    // ---- Clear exclusion zone ----
+    this.excludedInnerMeshVertices.clear();
+    this.lassoManager = null;
+
+    // ---- Clear hole seeds ----
+    this.manualHoleSeeds = [];
+    this.holeSeedManager?.clear();
+
+    // ---- Clear pipeline and results ----
+    this.pipeline = null;
+    this.currentResults = null;
+
+    // ---- Update UI ----
+    this.controls.refreshRimSliders();
+    this.controls.updateRimPickUI(false, 0, false);
+    this.controls.updateExclusionCount(0);
+    this.controls.updateHoleSeedUI(false, 0);
+    this.rimPickBtn.disabled = true; // re-enabled after face separation
   }
 
   private toggleHeatMap(visible: boolean): void {
