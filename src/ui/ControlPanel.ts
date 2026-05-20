@@ -254,8 +254,9 @@ export class ControlPanel {
           this.customRadiusController?.hide();
         } else if (v === 'Other...') {
           this.customRadiusController?.show();
-          // Don't change params yet — user will type in the box
-          return;
+          // Immediately apply the current value shown in the box
+          const cur = Number(this.commercialRadiusProxy.customValue);
+          if (cur > 0) this.params.commercialRadius = cur;
         } else {
           this.params.commercialRadius = parseInt(v);
           this.customRadiusController?.hide();
@@ -266,8 +267,9 @@ export class ControlPanel {
     this.customRadiusController = wearModel.add(this.commercialRadiusProxy, 'customValue')
       .name('Custom Radius (mm)')
       .onChange((v: number) => {
-        if (v > 0) {
-          this.params.commercialRadius = v;
+        const numV = Number(v);
+        if (numV > 0) {
+          this.params.commercialRadius = numV;
           this.callbacks.onParamsChange(this.params);
         }
       });
@@ -543,11 +545,13 @@ export class ControlPanel {
 
   /**
    * Called when a new sample is loaded.
-   * Resets the commercial-radius proxy to 'Auto' and refreshes every
-   * controller so the GUI reflects the freshly-reset DEFAULT_PARAMS.
+   * Resets ControlPanel.params AND the commercial-radius proxy to defaults,
+   * then refreshes every controller so the GUI reflects DEFAULT_PARAMS.
    */
   public resetParamsUI(): void {
+    Object.assign(this.params, DEFAULT_PARAMS);
     this.commercialRadiusProxy.value = 'Auto';
+    this.commercialRadiusProxy.customValue = 28;
     this.customRadiusController?.hide();
     this.gui.controllersRecursive().forEach(c => c.updateDisplay());
   }
