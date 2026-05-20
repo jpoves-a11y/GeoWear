@@ -1329,7 +1329,7 @@ export class WearAnalysisPipeline {
     let commercialRadius: number;
     let autoDetected: boolean;
 
-    if (manualRadius > 0 && manualRadius % 2 === 0) {
+    if (manualRadius > 0) {
       commercialRadius = manualRadius;
       autoDetected = false;
     } else {
