@@ -1367,9 +1367,8 @@ export class App {
     this.meshViewer.clearRimNormalArrow();
     this.meshViewer.clearPoleMarker();
 
-    // ---- Reset rim inclination params to default ----
-    this.params.rimInclinationAngle = 0;
-    this.params.rimInclinationAzimuth = 0;
+    // ---- Reset all analysis params to defaults ----
+    Object.assign(this.params, DEFAULT_PARAMS);
     this._prePickInclination = 0;
     this._prePickAzimuth = 0;
 
@@ -1386,10 +1385,11 @@ export class App {
     this.currentResults = null;
 
     // ---- Update UI ----
-    this.controls.refreshRimSliders();
+    this.controls.resetParamsUI();
     this.controls.updateRimPickUI(false, 0, false);
     this.controls.updateExclusionCount(0);
     this.controls.updateHoleSeedUI(false, 0);
+    this.resultsPanel.hide();
     this.rimPickBtn.disabled = true; // re-enabled after face separation
   }
 

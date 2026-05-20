@@ -541,6 +541,17 @@ export class ControlPanel {
     this.rimAzimuthController?.updateDisplay();
   }
 
+  /**
+   * Called when a new sample is loaded.
+   * Resets the commercial-radius proxy to 'Auto' and refreshes every
+   * controller so the GUI reflects the freshly-reset DEFAULT_PARAMS.
+   */
+  public resetParamsUI(): void {
+    this.commercialRadiusProxy.value = 'Auto';
+    this.customRadiusController?.hide();
+    this.gui.controllersRecursive().forEach(c => c.updateDisplay());
+  }
+
   private buildRimPlaneSection(): void {
     const folder = this.gui.addFolder('📐 Rim Plane');
     folder.domElement.classList.add('section-rimplane');
