@@ -33,26 +33,6 @@ export class SceneManager {
     return this._controlMode === 'basic' ? this._trackballControls : this._arcballControls;
   }
 
-  /** Arrow handler for middle-click pivot in alternative mode — bound once, added/removed dynamically. */
-  private _altModeMouseDown = (e: MouseEvent): void => {
-    if (e.button !== 1) return; // middle button only
-    const rect = this.canvas.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(ndc, this.camera);
-    const meshes: THREE.Object3D[] = [];
-    this.scene.traverse(obj => { if ((obj as THREE.Mesh).isMesh && obj.visible) meshes.push(obj); });
-    const hits = raycaster.intersectObjects(meshes, false);
-    if (hits.length > 0) {
-      this._arcballControls.target.copy(hits[0].point);
-      this._arcballControls.update();
-      this._needsRender = true;
-    }
-  };
-
   private canvas: HTMLCanvasElement;
   private container: HTMLElement;
   private timer = new Timer();
@@ -282,15 +262,12 @@ export class SceneManager {
       this._arcballControls.update();
       this._trackballControls.enabled = false;
       this._arcballControls.enabled = true;
-      // Capture middle-click BEFORE ArcballControls handles it (capture phase)
-      this.canvas.addEventListener('mousedown', this._altModeMouseDown, true);
     } else {
       // Sync trackball target from arcball, then swap active control
       this._trackballControls.target.copy(this._arcballControls.target);
       this._trackballControls.update();
       this._arcballControls.enabled = false;
       this._trackballControls.enabled = true;
-      this.canvas.removeEventListener('mousedown', this._altModeMouseDown, true);
     }
     this._needsRender = true;
   }
@@ -385,9 +362,6 @@ export class SceneManager {
     cancelAnimationFrame(this.animationId);
     this._trackballControls.dispose();
     this._arcballControls.dispose();
-    if (this._controlMode === 'alternative') {
-      this.canvas.removeEventListener('mousedown', this._altModeMouseDown, true);
-    }
     this.renderer.dispose();
     window.removeEventListener('resize', this.onResize.bind(this));
   }
