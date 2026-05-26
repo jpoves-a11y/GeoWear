@@ -118,6 +118,8 @@ export interface PipelineState {
   dsRimNormal: THREE.Vector3 | null;
   dsDistToPole: number | null;
   dsRimVertices: number[] | null;
+  // Commercial radius snapped from sphere1 fit in DSM mode (used for cap volume and unwornSphere.radius)
+  dsCommercialRadius: number | null;
   // User-defined vertex exclusion mask (indices into separation.inner)
   excludedInnerMeshVertices: Set<number>;
   // User-defined rim plane normal (overrides cup axis when set)
@@ -197,6 +199,7 @@ export class WearAnalysisPipeline {
     dsRimNormal: null,
     dsDistToPole: null,
     dsRimVertices: null,
+    dsCommercialRadius: null,
     excludedInnerMeshVertices: new Set<number>(),
     rimPlaneNormal: undefined,
     rimInclinationAngleDeg: 0,
@@ -1206,6 +1209,28 @@ export class WearAnalysisPipeline {
       bestCell,
     };
 
+    // Snap the unworn sphere (sphere1) radius to the nearest commercial value,
+    // identical to the Sphere BestFit snap logic: round DOWN to the nearest even
+    // integer mm, snap UP if within 0.2 mm of the next even value.
+    // A manual commercialRadius param (> 0) overrides the auto-detection.
+    let commercialR1: number;
+    if (bestCell) {
+      const r1 = bestCell.radius1Mean;
+      if (params.commercialRadius > 0) {
+        commercialR1 = params.commercialRadius;
+        console.log(`[DS Unworn Sphere] manual override: radius1Mean=${r1.toFixed(3)}mm → commercial=${commercialR1}mm`);
+      } else {
+        const lower = Math.floor(r1 / 2) * 2;
+        const upper = lower + 2;
+        commercialR1 = (upper - r1 <= 0.2) ? upper : lower;
+        console.log(`[DS Unworn Sphere] radius1Mean=${r1.toFixed(3)}mm → commercial=${commercialR1}mm (auto)`);
+      }
+      this.state.dsCommercialRadius = commercialR1;
+    } else {
+      commercialR1 = 0;
+      this.state.dsCommercialRadius = null;
+    }
+
     if (bestCell) {
       this.state.zoneSpheres = {
         wornSphere: {
@@ -1215,7 +1240,7 @@ export class WearAnalysisPipeline {
         },
         unwornSphere: {
           center: new THREE.Vector3(bestCell.center1Mean[0], bestCell.center1Mean[1], bestCell.center1Mean[2]),
-          radius: bestCell.radius1Mean,
+          radius: commercialR1,
           rmsError: bestCell.radius1Std,
         },
       };
@@ -1237,13 +1262,13 @@ export class WearAnalysisPipeline {
       const sphere1Center = new THREE.Vector3(
         bestCell.center1Mean[0], bestCell.center1Mean[1], bestCell.center1Mean[2]);
       const meshEnclosedVolume = computeMeshEnclosedVolume(innerMesh, planePoint, normalVecPre);
-      const sphereCapVolume = computeSphereCap(sphere1Center, bestCell.radius1Mean, planePoint, normalVecPre);
+      const sphereCapVolume = computeSphereCap(sphere1Center, commercialR1, planePoint, normalVecPre);
       const wearVolume = Math.max(0, meshEnclosedVolume - sphereCapVolume);
 
       dsWearVolumeResult = { meshEnclosedVolume, sphereCapVolume, wearVolume };
       this.state.wearVolume = dsWearVolumeResult;
 
-      console.log(`[DS Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, cap=${sphereCapVolume.toFixed(4)}mm³, wear=${wearVolume.toFixed(4)}mm³`);
+      console.log(`[DS Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, cap=${sphereCapVolume.toFixed(4)}mm³ (R=${commercialR1}mm), wear=${wearVolume.toFixed(4)}mm³`);
     }
 
     this.state.results = {
@@ -1301,8 +1326,9 @@ export class WearAnalysisPipeline {
 
     const sphere1Center = new THREE.Vector3(
       bestCell.center1Mean[0], bestCell.center1Mean[1], bestCell.center1Mean[2]);
+    const capR1 = this.state.dsCommercialRadius ?? bestCell.radius1Mean;
     const meshEnclosedVolume = computeMeshEnclosedVolume(innerMesh, planePoint, normalVec);
-    const sphereCapVolume = computeSphereCap(sphere1Center, bestCell.radius1Mean, planePoint, normalVec);
+    const sphereCapVolume = computeSphereCap(sphere1Center, capR1, planePoint, normalVec);
     const wearVolume = Math.max(0, meshEnclosedVolume - sphereCapVolume);
     const dsWearVolumeResult: WearVolumeResult = { meshEnclosedVolume, sphereCapVolume, wearVolume };
     this.state.wearVolume = dsWearVolumeResult;
@@ -1311,7 +1337,7 @@ export class WearAnalysisPipeline {
     results.wearVolumeResult = dsWearVolumeResult;
     results.totalWearVolume = wearVolume;
 
-    console.log(`[DS RimPlane Live] rimTrim=${rimTrimPercent}%, mesh=${meshEnclosedVolume.toFixed(4)}, cap=${sphereCapVolume.toFixed(4)}, wear=${wearVolume.toFixed(4)}mm³`);
+    console.log(`[DS RimPlane Live] rimTrim=${rimTrimPercent}%, mesh=${meshEnclosedVolume.toFixed(4)}, cap=${sphereCapVolume.toFixed(4)} (R=${capR1}mm), wear=${wearVolume.toFixed(4)}mm³`);
   }
 
   // ======== Sphere BestFit pipeline steps ========
