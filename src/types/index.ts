@@ -185,6 +185,7 @@ export type AnalysisMode =
   | 'pure-geodesic'
   | 'sphere-bestfit'
   | 'double-sphere-metrics'
+  | 'manual-geodesic'
   | 'compare-all-modes';
 
 export interface DoubleSphereSweepCellResult {

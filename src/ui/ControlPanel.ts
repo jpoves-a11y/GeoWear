@@ -46,6 +46,9 @@ export interface ControlCallbacks {
   onEnableLassoMode: () => void;
   onClearExclusions: () => void;
   onToggleExcludedHighlight: (v: boolean) => void;
+  // Manual non-worn zone (Manual Geodesic mode)
+  onEnableManualNonWornLassoMode: () => void;
+  onClearManualNonWornSelection: () => void;
   // Manual rim plane pick
   onRimPickUndo: () => void;
   onRimPickFlipNormal: () => void;
@@ -100,17 +103,23 @@ export class ControlPanel {
   private holeSeedToggleController: any = null;
   private holeSeedStatusController: any = null;
   private holeSeedClearController: any = null;
+  // Manual non-worn zone section (Manual Geodesic mode)
+  private manualNonWornFolder: GUI | null = null;
+  private manualNonWornCountProxy: { info: string } = { info: 'No vertices selected' };
+  private manualNonWornCountController: any = null;
   // Analysis mode display name mapping
   private readonly modeLabelMap: Record<string, string> = {
     'Pure Geodesic': 'pure-geodesic',
     'Sphere BestFit': 'sphere-bestfit',
     'Double Sphere Metrics': 'double-sphere-metrics',
+    'Manual Geodesic': 'manual-geodesic',
     'Compare All Modes': 'compare-all-modes',
   };
   private readonly modeReverseMap: Record<string, string> = {
     'pure-geodesic': 'Pure Geodesic',
     'sphere-bestfit': 'Sphere BestFit',
     'double-sphere-metrics': 'Double Sphere Metrics',
+    'manual-geodesic': 'Manual Geodesic',
     'compare-all-modes': 'Compare All Modes',
   };
   private analysisModelProxy = { mode: 'Compare All Modes' };
@@ -137,6 +146,7 @@ export class ControlPanel {
     this.buildParametersSection();
     this.buildVisualizationSection();
     this.buildExclusionSection();
+    this.buildManualSelectionSection();
     this.buildRimPlaneSection();
     this.buildExportSection();
   }
@@ -533,6 +543,33 @@ export class ControlPanel {
     if (this.exclusionCountController) this.exclusionCountController.updateDisplay();
   }
 
+  private buildManualSelectionSection(): void {
+    const folder = this.gui.addFolder('✎ Non-Worn Zone');
+    folder.domElement.classList.add('section-manual-nonworn');
+    this.manualNonWornFolder = folder;
+
+    const actions = {
+      'Select Zone (Lasso)': () => this.callbacks.onEnableManualNonWornLassoMode(),
+      'Clear Selection': () => this.callbacks.onClearManualNonWornSelection(),
+    };
+    folder.add(actions, 'Select Zone (Lasso)');
+    folder.add(actions, 'Clear Selection');
+
+    this.manualNonWornCountProxy = { info: 'No vertices selected' };
+    this.manualNonWornCountController = folder.add(this.manualNonWornCountProxy, 'info').name('Status').disable();
+
+    folder.close();
+    folder.hide(); // only shown when mode is 'manual-geodesic'
+  }
+
+  /** Update the manual non-worn vertex count label in the UI */
+  public updateManualSelectionCount(count: number): void {
+    this.manualNonWornCountProxy.info = count === 0
+      ? 'No vertices selected'
+      : `${count.toLocaleString()} vertices selected`;
+    if (this.manualNonWornCountController) this.manualNonWornCountController.updateDisplay();
+  }
+
   /**
    * Refresh the Rim Inclination and Rim Azimuth slider display.
    * Call this after programmatically writing new values into params
@@ -553,6 +590,7 @@ export class ControlPanel {
     this.commercialRadiusProxy.value = 'Auto';
     this.commercialRadiusProxy.customValue = 28;
     this.customRadiusController?.hide();
+    this.updateManualSelectionCount(0);
     this.gui.controllersRecursive().forEach(c => c.updateDisplay());
   }
 
@@ -700,19 +738,21 @@ export class ControlPanel {
    * Update overlay/rendering visibility controls to match the given rendered mode.
    * Called when analysis mode changes or when the compare sub-mode selector changes.
    */
-  private updateVisControlsForMode(mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics'): void {
+  private updateVisControlsForMode(mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' | 'manual-geodesic'): void {
     const isPure = mode === 'pure-geodesic';
-    const isBestFit = mode === 'sphere-bestfit';
+    const isBestFit = mode === 'sphere-bestfit' || mode === 'manual-geodesic';
     const isSphere = isBestFit || mode === 'double-sphere-metrics';
+    // Geodesics are computed for pure-geodesic and sphere-bestfit, but NOT manual-geodesic
+    const hasGeodesics = mode === 'pure-geodesic' || mode === 'sphere-bestfit';
 
     // Rim Plane toggle (root-level, always visible) — hide only for pure-geodesic
     if (this.visRimPlaneCtrl) {
       isSphere ? this.visRimPlaneCtrl.show() : this.visRimPlaneCtrl.hide();
     }
 
-    // Geodesics: pure-geodesic and sphere-bestfit compute geodesics; double-sphere does not
+    // Geodesics: only shown when geodesics are actually computed
     for (const ctrl of this.visGeodesicsControllers) {
-      (isPure || isBestFit) ? ctrl.show() : ctrl.hide();
+      hasGeodesics ? ctrl.show() : ctrl.hide();
     }
     // Annotations: only pure-geodesic produces anomaly clusters
     for (const ctrl of this.visAnnotationsControllers) {
@@ -737,6 +777,7 @@ export class ControlPanel {
     const isDoubleSphere = this.params.analysisMode === 'double-sphere-metrics';
     const isCompareMode = this.params.analysisMode === 'compare-all-modes';
     const isPureOnly = this.params.analysisMode === 'pure-geodesic';
+    const isManualGeodesic = this.params.analysisMode === 'manual-geodesic';
 
     // Step buttons
     for (const ctrl of this.bestfitStepControllers) {
@@ -749,14 +790,20 @@ export class ControlPanel {
       (isDoubleSphere || isCompareMode) ? ctrl.show() : ctrl.hide();
     }
 
+    // Manual Non-Worn Zone folder: only visible in manual-geodesic mode
+    if (this.manualNonWornFolder) {
+      isManualGeodesic ? this.manualNonWornFolder.show() : this.manualNonWornFolder.hide();
+    }
+
     // Compare sub-mode selector: only shown after analysis via showCompareSelector()
     if (this.visCompareSelectorCtrl) this.visCompareSelectorCtrl.hide();
 
     // Visualization overlays: preview controls for the expected rendered mode
-    const renderedMode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' =
+    const renderedMode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' | 'manual-geodesic' =
       isCompareMode ? 'sphere-bestfit'
       : isBestFit   ? 'sphere-bestfit'
       : isDoubleSphere ? 'double-sphere-metrics'
+      : isManualGeodesic ? 'manual-geodesic'
       : 'pure-geodesic';
     this.updateVisControlsForMode(renderedMode);
   }
@@ -777,7 +824,7 @@ export class ControlPanel {
    * Called by app.ts after analysis completes.
    */
   public showVisualizationControls(
-    mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics',
+    mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' | 'manual-geodesic',
   ): void {
     this.visRenderFolder?.show();
     this.visOverlayFolder?.show();

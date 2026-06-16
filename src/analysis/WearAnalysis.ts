@@ -10,7 +10,7 @@ import type {
   AnalysisParams, CommercialSphereInfo, WearClassification,
   ZoneSphereResult, RimPlaneResult, WearVolumeResult, WearPlaneResult,
   LinearWearFilter, AnalysisRunResult, DoubleSphereMetricsResult,
-  DoubleSphereSweepCellResult
+  DoubleSphereSweepCellResult, AnalysisMode
 } from '../types';
 import { separateFaces, trimRim, computeRimAnchor } from './MeshProcessor';
 import { smoothMesh, repairInnerFaceMesh, type GeodesicRepairData } from './MeshSmoother';
@@ -163,6 +163,10 @@ export interface PipelineState {
 }
 
 export class WearAnalysisPipeline {
+  /** Records the mode currently being executed so shared step methods (e.g.
+   *  stepComputeWearVolumeBestFit) can embed the correct analysisMode in results. */
+  private _activeMode: Exclude<AnalysisMode, 'compare-all-modes'> = 'pure-geodesic';
+
   /** Populated after a 'compare-all-modes' run; holds each sub-pipeline's state
    *  so the caller can swap to any mode's 3D visualisation on demand. */
   public compareModePipelineStates: {
@@ -269,6 +273,41 @@ export class WearAnalysisPipeline {
     this.state.manualHoleSeeds = seeds;
   }
 
+  /** Manually selected non-worn vertex indices (into separation.inner.positions).
+   *  Used by the 'manual-geodesic' mode instead of geodesic-based classification. */
+  private manualUnwornVertexIndices: Set<number> | null = null;
+
+  /** Provide the set of vertex indices (into separation.inner) that represent
+   *  the non-worn reference zone, selected manually by the user via lasso. */
+  public setManualUnwornVertices(indices: Set<number>): void {
+    this.manualUnwornVertexIndices = indices;
+  }
+
+  /** Fit a reference sphere using the manually selected non-worn vertices.
+   *  Reads positions directly from separation.inner so no index translation is needed. */
+  stepFitSphereManual(): SphereFitResult {
+    if (!this.state.separation) throw new Error('No separation result available');
+    const count = this.manualUnwornVertexIndices?.size ?? 0;
+    if (!this.manualUnwornVertexIndices || count < 100) {
+      throw new Error(
+        `Manual non-worn selection too small (${count} vertices). ` +
+        'Please select at least 100 non-worn vertices with the lasso before running analysis.'
+      );
+    }
+    const srcPositions = this.state.separation.inner.positions;
+    const indices = Array.from(this.manualUnwornVertexIndices);
+    const pts = new Float32Array(indices.length * 3);
+    for (let i = 0; i < indices.length; i++) {
+      const vi = indices[i];
+      pts[i * 3]     = srcPositions[vi * 3];
+      pts[i * 3 + 1] = srcPositions[vi * 3 + 1];
+      pts[i * 3 + 2] = srcPositions[vi * 3 + 2];
+    }
+    console.log(`Manual sphere fit: ${indices.length} manually selected non-worn vertices`);
+    this.state.sphereFit = fitSphereRobust(pts, indices.length);
+    return this.state.sphereFit;
+  }
+
   /**
    * Run the complete analysis pipeline.
    * Branches after sphere fit based on analysisMode.
@@ -278,6 +317,7 @@ export class WearAnalysisPipeline {
       return this.runAllModesIndependent(meshData, params);
     }
 
+    this._activeMode = params.analysisMode as Exclude<AnalysisMode, 'compare-all-modes'>;
     const startTime = performance.now();
 
     // Step 1: Separate faces (skipped if a separation was pre-injected via setSeparation)
@@ -311,6 +351,10 @@ export class WearAnalysisPipeline {
       // Double-sphere does not need geodesics — fit sphere directly with all vertices
       this.progress('fitting', 0.8, 'Fitting reference sphere (all vertices)...');
       this.stepFitSphere();
+    } else if (params.analysisMode === 'manual-geodesic') {
+      // Manual Geodesic: skip geodesics, fit sphere from user-selected non-worn vertices
+      this.progress('fitting', 0.8, 'Fitting reference sphere (manually selected non-worn vertices)...');
+      this.stepFitSphereManual();
     } else {
       // Step 3: Build graph and compute geodesics (before sphere fit)
       this.progress('geodesics', 0.2, `Computing ${params.geodesicCount} geodesics...`);
@@ -321,8 +365,8 @@ export class WearAnalysisPipeline {
       this.stepFitSphere();
     }
 
-    if (params.analysisMode === 'sphere-bestfit') {
-      // --- Sphere BestFit pipeline ---
+    if (params.analysisMode === 'sphere-bestfit' || params.analysisMode === 'manual-geodesic') {
+      // --- Sphere BestFit / Manual Geodesic pipeline ---
       this.progress('commercial', 0.83, 'Determining commercial radius...');
       this.stepDetermineCommercialRadius(params.commercialRadius);
 
@@ -341,7 +385,7 @@ export class WearAnalysisPipeline {
       this.progress('wear-plane', 0.97, 'Computing wear plane...');
       this.stepComputeWearPlane();
     } else if (params.analysisMode === 'pure-geodesic') {
-      // --- Pure Geodesic pipeline ---
+      // --- Pure Geodesic pipeline --- (geodesic-based anomaly detection)
       this.progress('fitting', 0.85, 'Fitting ellipsoid...');
       this.stepFitEllipsoid();
 
@@ -1850,9 +1894,9 @@ export class WearAnalysisPipeline {
       wearVolume,
     };
 
-    // Initialize results for bestfit mode
+    // Initialize results for bestfit / manual-geodesic mode
     this.state.results = {
-      analysisMode: 'sphere-bestfit',
+      analysisMode: this._activeMode,
       sphereFit: this.state.sphereFit,
       ellipsoidFit: null,
       geodesics: this.state.geodesics,

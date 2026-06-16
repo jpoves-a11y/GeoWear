@@ -71,6 +71,10 @@ export class App {
   private excludedInnerMeshVertices: Set<number> = new Set();
   private lassoManager: LassoSelectionManager | null = null;
 
+  // Manual non-worn zone (Manual Geodesic mode)
+  private manualNonWornVertices: Set<number> | null = null;
+  private manualLassoManager: LassoSelectionManager | null = null;
+
   // Rim-plane preview performance: cache mesh geometry stats so the disc
   // can be updated instantly (O(1)) without re-running the O(F) edge map.
   private _rimAnchorCache: RimAnchor | null = null;
@@ -177,6 +181,9 @@ export class App {
       onEnableLassoMode: () => this.enableLassoMode(),
       onClearExclusions: () => this.clearExclusions(),
       onToggleExcludedHighlight: (v: boolean) => this.toggleExcludedHighlight(v),
+      // --- Manual non-worn zone (Manual Geodesic mode) ---
+      onEnableManualNonWornLassoMode: () => this.enableManualNonWornLassoMode(),
+      onClearManualNonWornSelection: () => this.clearManualNonWornSelection(),
       // --- Manual rim plane ---
       onRimPickUndo: () => this.undoLastRimPoint(),
       onRimPickFlipNormal: () => this.flipRimNormal(),
@@ -406,6 +413,16 @@ export class App {
     try {
       this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
       this.pipeline.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
+      // Manual Geodesic mode: require a manual non-worn selection before running
+      if (this.params.analysisMode === 'manual-geodesic') {
+        if (!this.manualNonWornVertices || this.manualNonWornVertices.size < 100) {
+          throw new Error(
+            'Manual Geodesic mode requires a non-worn zone selection. ' +
+            'Use "\u270e Non-Worn Zone → Select Zone (Lasso)" to draw the non-worn area first.'
+          );
+        }
+        this.pipeline.setManualUnwornVertices(this.manualNonWornVertices);
+      }
       // Inject the pre-computed separation BEFORE setRimPlaneNormal so that
       // computeCurrentRimNormal() can access sep.cupAxis in auto mode.
       if (existingSeparation) this.pipeline.setSeparation(existingSeparation);
@@ -820,6 +837,37 @@ export class App {
     this.excludedInnerMeshVertices.clear();
     this.meshViewer.setExcludedVerticesHighlight(null, null);
     this.controls.updateExclusionCount(0);
+    this.scene.requestRender();
+  }
+
+  private ensureManualLassoManager(): void {
+    if (this.manualLassoManager) return;
+    this.manualLassoManager = new LassoSelectionManager(this.scene.renderer.domElement);
+    this.manualLassoManager.setCallbacks({
+      onSelectionComplete: (selected: Set<number>) => {
+        this.manualNonWornVertices = selected;
+        this.scene.controls.enabled = true;
+        this.controls.updateManualSelectionCount(selected.size);
+        this.status.setStatus(
+          `Non-worn zone selected: ${selected.size.toLocaleString()} vertices. Run Full Analysis to proceed.`
+        );
+      },
+    });
+  }
+
+  private enableManualNonWornLassoMode(): void {
+    const sep = this.pipeline?.state.separation;
+    if (!sep) { this.status.setStatus('Run face separation first before selecting the non-worn zone.'); return; }
+    this.ensureManualLassoManager();
+    this.scene.controls.enabled = false;
+    const offset = this.meshViewer.getGroupOffset();
+    this.manualLassoManager!.enable(sep.inner, this.scene.camera, offset);
+    this.status.setStatus('Non-worn lasso active — click to add points, click near start or Enter to close, Esc to cancel');
+  }
+
+  private clearManualNonWornSelection(): void {
+    this.manualNonWornVertices = null;
+    this.controls.updateManualSelectionCount(0);
     this.scene.requestRender();
   }
 
@@ -1376,6 +1424,10 @@ export class App {
     this.excludedInnerMeshVertices.clear();
     this.lassoManager = null;
 
+    // ---- Clear manual non-worn selection ----
+    this.manualNonWornVertices = null;
+    this.manualLassoManager = null;
+
     // ---- Clear hole seeds ----
     this.manualHoleSeeds = [];
     this.holeSeedManager?.clear();
@@ -1389,6 +1441,7 @@ export class App {
     this.controls.updateRimPickUI(false, 0, false);
     this.controls.updateExclusionCount(0);
     this.controls.updateHoleSeedUI(false, 0);
+    this.controls.updateManualSelectionCount(0);
     this.resultsPanel.hide();
     this.rimPickBtn.disabled = true; // re-enabled after face separation
   }
