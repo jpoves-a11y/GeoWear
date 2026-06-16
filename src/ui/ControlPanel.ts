@@ -242,7 +242,7 @@ export class ControlPanel {
 
     // --- Wear Model sub-section ---
     const wearModel = folder.addFolder('Wear Model');
-    wearModel.add(this.analysisModelProxy, 'mode', ['Pure Geodesic', 'Sphere BestFit', 'Double Sphere Metrics', 'Compare All Modes'])
+    wearModel.add(this.analysisModelProxy, 'mode', ['Pure Geodesic', 'Sphere BestFit', 'Double Sphere Metrics', 'Manual Geodesic', 'Compare All Modes'])
       .name('Analysis Mode')
       .onChange((v: string) => {
         this.params.analysisMode = this.modeLabelMap[v] as AnalysisParams['analysisMode'];
