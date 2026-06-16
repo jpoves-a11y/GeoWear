@@ -68,8 +68,8 @@ export class ResultsPanel {
     // Sphere fit section
     this.addSphereFitSection(results);
 
-    if (results.analysisMode === 'sphere-bestfit') {
-      // --- Sphere BestFit mode sections ---
+    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'manual-geodesic') {
+      // --- Sphere BestFit / Manual Geodesic mode sections ---
       if (results.commercialSphere) {
         this.addCommercialSphereSection(results);
       }
@@ -117,9 +117,11 @@ export class ResultsPanel {
     const modeLabel =
       results.analysisMode === 'sphere-bestfit'
         ? 'Sphere BestFit'
-        : results.analysisMode === 'double-sphere-metrics'
-          ? 'Double Sphere Metrics'
-          : 'Pure Geodesic';
+        : results.analysisMode === 'manual-geodesic'
+          ? 'Manual Geodesic'
+          : results.analysisMode === 'double-sphere-metrics'
+            ? 'Double Sphere Metrics'
+            : 'Pure Geodesic';
     this.addMetric(section, 'Mode', modeLabel);
     this.addMetric(section, 'Vertices', results.vertexCount.toLocaleString());
     this.addMetric(section, 'Faces', results.faceCount.toLocaleString());
@@ -298,7 +300,7 @@ export class ResultsPanel {
 
     const cards: Array<{label: string; value: string; unit: string; cls: string; warn?: string}> = [];
 
-    if (results.analysisMode === 'sphere-bestfit') {
+    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'manual-geodesic') {
       // Linear wear
       if (results.zoneSpheres) {
         const lw = results.zoneSpheres.wornSphere.center.distanceTo(results.zoneSpheres.unwornSphere.center) * 1000;

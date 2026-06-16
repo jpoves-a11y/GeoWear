@@ -1252,6 +1252,35 @@ export class MeshViewer {
     this.originalGroup.add(points);
   }
 
+  /** Highlight manually selected non-worn vertices as green dots over the mesh. */
+  public setManualNonWornHighlight(selected: Set<number> | null, innerMesh: { positions: Float32Array } | null): void {
+    this.removeNamedObject('manual-nonworn-highlight');
+
+    if (!selected || selected.size === 0 || !innerMesh) return;
+
+    const pts = new Float32Array(selected.size * 3);
+    let idx = 0;
+    for (const vi of selected) {
+      pts[idx++] = innerMesh.positions[vi * 3];
+      pts[idx++] = innerMesh.positions[vi * 3 + 1];
+      pts[idx++] = innerMesh.positions[vi * 3 + 2];
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+
+    const mat = new THREE.PointsMaterial({
+      color: 0x22cc55,
+      size: 3,
+      sizeAttenuation: false,
+      depthTest: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.name = 'manual-nonworn-highlight';
+    points.renderOrder = 20;
+    this.originalGroup.add(points);
+  }
+
   /** Remove a named object from the group */
   private removeNamedObject(name: string): void {
     const obj = this.originalGroup.getObjectByName(name);

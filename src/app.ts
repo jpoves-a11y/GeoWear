@@ -848,6 +848,10 @@ export class App {
         this.manualNonWornVertices = selected;
         this.scene.controls.enabled = true;
         this.controls.updateManualSelectionCount(selected.size);
+        // Highlight selected non-worn vertices in green
+        const sep = this.pipeline?.state.separation;
+        if (sep) this.meshViewer.setManualNonWornHighlight(selected, sep.inner);
+        this.scene.requestRender();
         this.status.setStatus(
           `Non-worn zone selected: ${selected.size.toLocaleString()} vertices. Run Full Analysis to proceed.`
         );
@@ -867,6 +871,7 @@ export class App {
 
   private clearManualNonWornSelection(): void {
     this.manualNonWornVertices = null;
+    this.meshViewer.setManualNonWornHighlight(null, null);
     this.controls.updateManualSelectionCount(0);
     this.scene.requestRender();
   }
@@ -1155,8 +1160,8 @@ export class App {
       this.meshViewer.displayReferenceSphere(p.state.sphereFit.center, p.state.sphereFit.radius, this.params.showReferenceShape);
     }
 
-    // --- BestFit mode visualization ---
-    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'double-sphere-metrics') {
+    // --- BestFit / Manual Geodesic mode visualization ---
+    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'double-sphere-metrics' || results.analysisMode === 'manual-geodesic') {
       if (results.commercialSphere) {
         this.meshViewer.displayCommercialSphere(
           results.commercialSphere.center,
@@ -1182,7 +1187,7 @@ export class App {
         // Rim plane disc is shown via updateRimPreview() after applyVisualization,
         // so the user-configured inclination/azimuth is always respected.
         // We skip re-drawing it here to avoid overwriting with the algorithm plane.
-      } else if (results.rimPlane && results.analysisMode === 'double-sphere-metrics' && zs) {
+      } else if (results.rimPlane && (results.analysisMode === 'double-sphere-metrics' || results.analysisMode === 'manual-geodesic') && zs) {
         // same: drawn by updateRimPreview
       }
       if (results.wearPlane && results.commercialSphere) {
@@ -1209,8 +1214,8 @@ export class App {
           this.params.showMeshVolume || this.params.showSphereCapVolume || this.params.showWearVolume,
           this.params.repairInnerFace
         );
-      } else if (results.rimPlane && results.analysisMode === 'double-sphere-metrics' && zs && p.state.separation) {
-        // Double-sphere: volume preview uses unworn sphere (sphere 1) as reference
+      } else if (results.rimPlane && (results.analysisMode === 'double-sphere-metrics' || results.analysisMode === 'manual-geodesic') && zs && p.state.separation) {
+        // Manual-geodesic / double-sphere: volume preview uses unworn sphere (sphere 1) as reference
         this.meshViewer.displayVolumePreview(
           p.state.separation.inner,
           zs.unwornSphere.center,
@@ -1427,6 +1432,7 @@ export class App {
     // ---- Clear manual non-worn selection ----
     this.manualNonWornVertices = null;
     this.manualLassoManager = null;
+    this.meshViewer.setManualNonWornHighlight(null, null);
 
     // ---- Clear hole seeds ----
     this.manualHoleSeeds = [];
