@@ -851,6 +851,9 @@ export class App {
     this.manualLassoManager = new LassoSelectionManager(this.scene.renderer.domElement);
     this.manualLassoManager.setCallbacks({
       onSelectionComplete: (selected: Set<number>) => {
+        // Remove vertices that are already excluded (exclusion zone takes precedence)
+        for (const vi of this.excludedInnerMeshVertices) selected.delete(vi);
+
         this.manualNonWornVertices = selected;
         this.scene.controls.enabled = true;
         this.controls.updateManualSelectionCount(selected.size);
