@@ -446,6 +446,9 @@ export class App {
         this.compareVisualizationMode = 'sphere-bestfit';
         this.controls.showVisualizationControls('sphere-bestfit');
         this.controls.showCompareSelector((mode) => this.setCompareVisualizationMode(mode));
+      } else if (results.analysisMode === 'manual-geodesic') {
+        this.controls.showVisualizationControls('manual-geodesic');
+        this.controls.hideCompareSelector();
       } else {
         this.controls.showVisualizationControls(results.analysisMode);
         this.controls.hideCompareSelector();
@@ -1573,7 +1576,7 @@ export class App {
     const mode = this.pipeline?.state.results?.analysisMode ?? null;
     // Sphere-mode-only elements (commercial/worn/unworn spheres, wear plane, volume
     // overlays) must be hidden when rendering pure-geodesic or double-sphere states.
-    const isSphereModeViz = mode === 'sphere-bestfit' || mode === 'double-sphere-metrics';
+    const isSphereModeViz = mode === 'sphere-bestfit' || mode === 'double-sphere-metrics' || mode === 'manual-geodesic';
 
     this.toggleHeatMap(this.params.showHeatmap);
     this.annotations.setVisible(this.params.showAnnotations);

@@ -309,6 +309,99 @@ export class WearAnalysisPipeline {
   }
 
   /**
+   * Detect the real rim boundary and compute the pole position from the untrimmed
+   * inner face. Populates:
+   *   state.realRimCentroid, state.realRimPlaneNormal, state.poleVertex,
+   *   state.polePosition, state.geodesicCupAxis, state.referenceCenter.
+   *
+   * Called automatically by stepComputeGeodesicsAsync and also directly by the
+   * manual-geodesic pipeline (which skips geodesics but still needs rim/pole).
+   */
+  stepDetectRimAndPole(): void {
+    if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.separation) throw new Error('Run separation first');
+
+    const mesh = this.state.smoothedMesh || this.state.workingMesh;
+    const innerMesh = this.state.separation.inner;
+
+    // 1. Boundary edges of untrimmed inner face → rim vertices
+    const innerFc = innerMesh.indices.length / 3;
+    const edgeFaceMap = new Map<string, number>();
+    for (let f = 0; f < innerFc; f++) {
+      for (let e = 0; e < 3; e++) {
+        const a = innerMesh.indices[f * 3 + e];
+        const b = innerMesh.indices[f * 3 + ((e + 1) % 3)];
+        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+        edgeFaceMap.set(key, (edgeFaceMap.get(key) || 0) + 1);
+      }
+    }
+    const rimVerts = new Set<number>();
+    for (const [key, count] of edgeFaceMap) {
+      if (count === 1) {
+        const parts = key.split('_');
+        rimVerts.add(Number(parts[0]));
+        rimVerts.add(Number(parts[1]));
+      }
+    }
+
+    // 2. Rim centroid
+    let rimCx = 0, rimCy = 0, rimCz = 0;
+    for (const v of rimVerts) {
+      rimCx += innerMesh.positions[v * 3];
+      rimCy += innerMesh.positions[v * 3 + 1];
+      rimCz += innerMesh.positions[v * 3 + 2];
+    }
+    if (rimVerts.size > 0) { rimCx /= rimVerts.size; rimCy /= rimVerts.size; rimCz /= rimVerts.size; }
+
+    // 3. PCA plane fit on rim vertices
+    let cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
+    for (const v of rimVerts) {
+      const dx = innerMesh.positions[v * 3]     - rimCx;
+      const dy = innerMesh.positions[v * 3 + 1] - rimCy;
+      const dz = innerMesh.positions[v * 3 + 2] - rimCz;
+      cxx += dx * dx; cxy += dx * dy; cxz += dx * dz;
+      cyy += dy * dy; cyz += dy * dz; czz += dz * dz;
+    }
+    const planeN = smallestEigenvector3x3(cxx, cxy, cxz, cyy, cyz, czz);
+
+    this.state.realRimCentroid = new THREE.Vector3(rimCx, rimCy, rimCz);
+    this.state.realRimPlaneNormal = new THREE.Vector3(planeN[0], planeN[1], planeN[2]);
+
+    // 4. Pole = vertex farthest from rim plane on the interior side
+    let sumSignedDist = 0;
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      const dx = mesh.positions[i * 3] - rimCx;
+      const dy = mesh.positions[i * 3 + 1] - rimCy;
+      const dz = mesh.positions[i * 3 + 2] - rimCz;
+      sumSignedDist += dx * planeN[0] + dy * planeN[1] + dz * planeN[2];
+    }
+    const poleSide = sumSignedDist >= 0 ? 1 : -1;
+    let maxPlaneDist = 0;
+    this.state.poleVertex = 0;
+    for (let i = 0; i < mesh.vertexCount; i++) {
+      const dx = mesh.positions[i * 3] - rimCx;
+      const dy = mesh.positions[i * 3 + 1] - rimCy;
+      const dz = mesh.positions[i * 3 + 2] - rimCz;
+      const signedDist = (dx * planeN[0] + dy * planeN[1] + dz * planeN[2]) * poleSide;
+      if (signedDist > maxPlaneDist) { maxPlaneDist = signedDist; this.state.poleVertex = i; }
+    }
+    this.state.polePosition = new THREE.Vector3(
+      mesh.positions[this.state.poleVertex * 3],
+      mesh.positions[this.state.poleVertex * 3 + 1],
+      mesh.positions[this.state.poleVertex * 3 + 2],
+    );
+
+    // 5. Cup axis: rim centroid → pole
+    let axX = mesh.positions[this.state.poleVertex * 3] - rimCx;
+    let axY = mesh.positions[this.state.poleVertex * 3 + 1] - rimCy;
+    let axZ = mesh.positions[this.state.poleVertex * 3 + 2] - rimCz;
+    const axLen = Math.sqrt(axX * axX + axY * axY + axZ * axZ);
+    if (axLen > 1e-12) { axX /= axLen; axY /= axLen; axZ /= axLen; } else { axX = 0; axY = 1; axZ = 0; }
+    this.state.geodesicCupAxis = [axX, axY, axZ];
+    this.state.referenceCenter = [rimCx, rimCy, rimCz];
+  }
+
+  /**
    * Run the complete analysis pipeline.
    * Branches after sphere fit based on analysisMode.
    */
@@ -352,7 +445,9 @@ export class WearAnalysisPipeline {
       this.progress('fitting', 0.8, 'Fitting reference sphere (all vertices)...');
       this.stepFitSphere();
     } else if (params.analysisMode === 'manual-geodesic') {
-      // Manual Geodesic: skip geodesics, fit sphere from user-selected non-worn vertices
+      // Manual Geodesic: detect rim+pole (no geodesic tracing), then fit sphere from manual selection
+      this.progress('rim-detect', 0.2, 'Detecting rim and pole...');
+      this.stepDetectRimAndPole();
       this.progress('fitting', 0.8, 'Fitting reference sphere (manually selected non-worn vertices)...');
       this.stepFitSphereManual();
     } else {
@@ -667,119 +762,18 @@ export class WearAnalysisPipeline {
     this.progress('geodesics', 0.25, 'Building mesh adjacency graph...');
     this.state.graph = MeshGraph.build(mesh.positions, mesh.indices, mesh.vertexCount);
 
-    // --- Robust pole detection via distance from real rim plane ---
+    // --- Rim + pole detection (shared with manual-geodesic mode) ---
     this.progress('geodesics', 0.3, 'Detecting pole vertex...');
+    this.stepDetectRimAndPole();
 
-    // Use separation.inner (untrimmed inner face) to find the real cup rim boundary
-    const innerMesh = this.state.separation!.inner;
+    // Recover the values stored by stepDetectRimAndPole for use in geodesic computation
+    const rimCx = this.state.realRimCentroid!.x;
+    const rimCy = this.state.realRimCentroid!.y;
+    const rimCz = this.state.realRimCentroid!.z;
+    const cupAxis = this.state.geodesicCupAxis!;
+    const referenceCenter = this.state.referenceCenter!;
 
-    // 1. Find boundary edges → rim vertices (from the real inner face, not the trimmed mesh)
-    const innerFc = innerMesh.indices.length / 3;
-    const edgeFaceMap = new Map<string, number>();
-    for (let f = 0; f < innerFc; f++) {
-      for (let e = 0; e < 3; e++) {
-        const a = innerMesh.indices[f * 3 + e];
-        const b = innerMesh.indices[f * 3 + ((e + 1) % 3)];
-        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
-        edgeFaceMap.set(key, (edgeFaceMap.get(key) || 0) + 1);
-      }
-    }
-    const rimVerts = new Set<number>();
-    for (const [key, count] of edgeFaceMap) {
-      if (count === 1) {
-        const parts = key.split('_');
-        rimVerts.add(Number(parts[0]));
-        rimVerts.add(Number(parts[1]));
-      }
-    }
-
-    // 2. Compute rim centroid (from the real inner face positions)
-    let rimCx = 0, rimCy = 0, rimCz = 0;
-    for (const v of rimVerts) {
-      rimCx += innerMesh.positions[v * 3];
-      rimCy += innerMesh.positions[v * 3 + 1];
-      rimCz += innerMesh.positions[v * 3 + 2];
-    }
-    if (rimVerts.size > 0) {
-      rimCx /= rimVerts.size;
-      rimCy /= rimVerts.size;
-      rimCz /= rimVerts.size;
-    }
-
-    // 3. Fit a plane to real rim vertices using PCA (normal = smallest eigenvector)
-    //    The rim plane passes through rimCentroid with normal = planeN.
-    //    Covariance matrix of rim positions relative to centroid:
-    let cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
-    for (const v of rimVerts) {
-      const dx = innerMesh.positions[v * 3]     - rimCx;
-      const dy = innerMesh.positions[v * 3 + 1] - rimCy;
-      const dz = innerMesh.positions[v * 3 + 2] - rimCz;
-      cxx += dx * dx; cxy += dx * dy; cxz += dx * dz;
-      cyy += dy * dy; cyz += dy * dz; czz += dz * dz;
-    }
-    const planeN = smallestEigenvector3x3(cxx, cxy, cxz, cyy, cyz, czz);
-
-    // Store the real rim geometry for later use in rim plane computation
-    this.state.realRimCentroid = new THREE.Vector3(rimCx, rimCy, rimCz);
-    this.state.realRimPlaneNormal = new THREE.Vector3(planeN[0], planeN[1], planeN[2]);
-
-    // 4. Pole = vertex with maximum perpendicular distance from rim plane
-    //    distance = dot(pos - rimCentroid, planeN), take absolute value
-    //    (the deepest point is the one farthest from the plane, on the interior side)
-    let maxPlaneDist = 0;
-    let poleSide = 1; // track which side the majority of mesh is on
-    this.state.poleVertex = 0;
-
-    // First pass: determine which side of the plane the interior is on
-    let sumSignedDist = 0;
-    for (let i = 0; i < mesh.vertexCount; i++) {
-      const dx = mesh.positions[i * 3]     - rimCx;
-      const dy = mesh.positions[i * 3 + 1] - rimCy;
-      const dz = mesh.positions[i * 3 + 2] - rimCz;
-      sumSignedDist += dx * planeN[0] + dy * planeN[1] + dz * planeN[2];
-    }
-    poleSide = sumSignedDist >= 0 ? 1 : -1;
-
-    // Second pass: find vertex with maximum signed distance on the interior side
-    for (let i = 0; i < mesh.vertexCount; i++) {
-      const dx = mesh.positions[i * 3]     - rimCx;
-      const dy = mesh.positions[i * 3 + 1] - rimCy;
-      const dz = mesh.positions[i * 3 + 2] - rimCz;
-      const signedDist = (dx * planeN[0] + dy * planeN[1] + dz * planeN[2]) * poleSide;
-      if (signedDist > maxPlaneDist) {
-        maxPlaneDist = signedDist;
-        this.state.poleVertex = i;
-      }
-    }
-
-    this.state.polePosition = new THREE.Vector3(
-      mesh.positions[this.state.poleVertex * 3],
-      mesh.positions[this.state.poleVertex * 3 + 1],
-      mesh.positions[this.state.poleVertex * 3 + 2],
-    );
-
-    // 5. Cup axis = normalized direction from rim centroid → pole
-    let axX = mesh.positions[this.state.poleVertex * 3] - rimCx;
-    let axY = mesh.positions[this.state.poleVertex * 3 + 1] - rimCy;
-    let axZ = mesh.positions[this.state.poleVertex * 3 + 2] - rimCz;
-    const axLen = Math.sqrt(axX * axX + axY * axY + axZ * axZ);
-    if (axLen > 1e-12) { axX /= axLen; axY /= axLen; axZ /= axLen; }
-    else { axX = 0; axY = 1; axZ = 0; }
-
-    const cupAxis: [number, number, number] = [axX, axY, axZ];
-    // Store the geodesic-derived axis in its own field so that separation.cupAxis
-    // (the original PCA axis from separateFaces) is NEVER overwritten.
-    // updateRimPreview() reads separation.cupAxis; keeping it unchanged guarantees
-    // the rim-plane preview is identical before and after running analysis with the
-    // same inclination/azimuth parameters.
-    this.state.geodesicCupAxis = cupAxis;
-
-    // Reference center = rim centroid (≈ sphere center for hemispherical cup)
-    const referenceCenter: [number, number, number] = [rimCx, rimCy, rimCz];
-    this.state.referenceCenter = referenceCenter;
-
-    console.log(`[Pole] vertex=${this.state.poleVertex}, maxPlaneDist=${maxPlaneDist.toFixed(4)}, ` +
-      `rimVerts=${rimVerts.size}, planeN=[${planeN.map((v: number) => v.toFixed(4)).join(', ')}], ` +
+    console.log(`[Pole] vertex=${this.state.poleVertex}, ` +
       `axis=[${cupAxis.map(v => v.toFixed(4)).join(', ')}]`);
 
     // Compute geodesics (with yield for UI updates)
