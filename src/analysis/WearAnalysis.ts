@@ -273,38 +273,30 @@ export class WearAnalysisPipeline {
     this.state.manualHoleSeeds = seeds;
   }
 
-  /** Manually selected non-worn vertex indices (into separation.inner.positions).
+  /** Pre-extracted 3D positions of manually selected non-worn vertices (flat xyz Float32Array).
    *  Used by the 'manual-geodesic' mode instead of geodesic-based classification. */
-  private manualUnwornVertexIndices: Set<number> | null = null;
+  private manualUnwornPositions: Float32Array | null = null;
+  private manualUnwornCount: number = 0;
 
-  /** Provide the set of vertex indices (into separation.inner) that represent
-   *  the non-worn reference zone, selected manually by the user via lasso. */
-  public setManualUnwornVertices(indices: Set<number>): void {
-    this.manualUnwornVertexIndices = indices;
+  /** Provide the pre-extracted 3D positions of the non-worn reference vertices,
+   *  selected manually by the user via lasso on the trimmed working mesh. */
+  public setManualUnwornPositions(positions: Float32Array, count: number): void {
+    this.manualUnwornPositions = positions;
+    this.manualUnwornCount = count;
   }
 
   /** Fit a reference sphere using the manually selected non-worn vertices.
-   *  Reads positions directly from separation.inner so no index translation is needed. */
+   *  Positions were pre-extracted from the trimmed working mesh at selection time. */
   stepFitSphereManual(): SphereFitResult {
-    if (!this.state.separation) throw new Error('No separation result available');
-    const count = this.manualUnwornVertexIndices?.size ?? 0;
-    if (!this.manualUnwornVertexIndices || count < 100) {
+    const count = this.manualUnwornCount;
+    if (!this.manualUnwornPositions || count < 100) {
       throw new Error(
         `Manual non-worn selection too small (${count} vertices). ` +
         'Please select at least 100 non-worn vertices with the lasso before running analysis.'
       );
     }
-    const srcPositions = this.state.separation.inner.positions;
-    const indices = Array.from(this.manualUnwornVertexIndices);
-    const pts = new Float32Array(indices.length * 3);
-    for (let i = 0; i < indices.length; i++) {
-      const vi = indices[i];
-      pts[i * 3]     = srcPositions[vi * 3];
-      pts[i * 3 + 1] = srcPositions[vi * 3 + 1];
-      pts[i * 3 + 2] = srcPositions[vi * 3 + 2];
-    }
-    console.log(`Manual sphere fit: ${indices.length} manually selected non-worn vertices`);
-    this.state.sphereFit = fitSphereRobust(pts, indices.length);
+    console.log(`Manual sphere fit: ${count} manually selected non-worn vertices`);
+    this.state.sphereFit = fitSphereRobust(this.manualUnwornPositions, count);
     return this.state.sphereFit;
   }
 

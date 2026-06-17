@@ -72,7 +72,9 @@ export class App {
   private lassoManager: LassoSelectionManager | null = null;
 
   // Manual non-worn zone (Manual Geodesic mode)
-  private manualNonWornVertices: Set<number> | null = null;
+  // Positions are pre-extracted from the trimmed working mesh, stored as flat xyz Float32Array.
+  private manualNonWornPositions: Float32Array | null = null;
+  private manualNonWornCount: number = 0;
   private manualLassoManager: LassoSelectionManager | null = null;
 
   // Rim-plane preview performance: cache mesh geometry stats so the disc
@@ -418,13 +420,13 @@ export class App {
       this.pipeline.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
       // Manual Geodesic mode: require a manual non-worn selection before running
       if (this.params.analysisMode === 'manual-geodesic') {
-        if (!this.manualNonWornVertices || this.manualNonWornVertices.size < 100) {
+        if (!this.manualNonWornPositions || this.manualNonWornCount < 100) {
           throw new Error(
             'Manual Geodesic mode requires a non-worn zone selection. ' +
-            'Use "\u270e Non-Worn Zone → Select Zone (Lasso)" to draw the non-worn area first.'
+            'Use "\u270e Non-Worn Zone \u2192 Select Zone (Lasso)" to draw the non-worn area first.'
           );
         }
-        this.pipeline.setManualUnwornVertices(this.manualNonWornVertices);
+        this.pipeline.setManualUnwornPositions(this.manualNonWornPositions, this.manualNonWornCount);
       }
       // Inject the pre-computed separation BEFORE setRimPlaneNormal so that
       // computeCurrentRimNormal() can access sep.cupAxis in auto mode.
@@ -849,38 +851,75 @@ export class App {
   private ensureManualLassoManager(): void {
     if (this.manualLassoManager) return;
     this.manualLassoManager = new LassoSelectionManager(this.scene.renderer.domElement);
-    this.manualLassoManager.setCallbacks({
-      onSelectionComplete: (selected: Set<number>) => {
-        // Remove vertices that are already excluded (exclusion zone takes precedence)
-        for (const vi of this.excludedInnerMeshVertices) selected.delete(vi);
+  }
 
-        this.manualNonWornVertices = selected;
+  private enableManualNonWornLassoMode(): void {
+    // Sync params from GUI so rim trim% is current
+    const currentParams = { ...this.controls.params };
+    const p = this.ensurePipeline();
+    const sep = p.state.separation;
+    if (!sep) { this.status.setStatus('Run face separation first before selecting the non-worn zone.'); return; }
+
+    // Always (re)compute the trimmed working mesh from the current params so the
+    // lasso operates on exactly the same geometry that is shown opaque in the viewport.
+    try {
+      p.setExclusionMask(this.excludedInnerMeshVertices);
+      p.setRimPlaneNormal(this.computeCurrentRimNormal());
+      p.setRimInclination(currentParams.rimInclinationAngle, currentParams.rimInclinationAzimuth);
+      if (this._manualRimCenter) {
+        p.setManualRimBasePoint([this._manualRimCenter.x, this._manualRimCenter.y, this._manualRimCenter.z]);
+      } else {
+        p.setManualRimBasePoint(null);
+      }
+      p.stepTrimRim(currentParams.rimTrimPercent);
+      if (currentParams.repairInnerFace) {
+        p.stepRepairWorkingMesh(2, currentParams.holeRepairMaxLoopSize);
+      }
+    } catch (e) {
+      this.status.setStatus(`Could not compute trimmed mesh: ${(e as Error).message}`);
+      return;
+    }
+
+    const workingMesh = p.state.workingMesh!;
+    this.ensureManualLassoManager();
+
+    // Re-register callback each time, capturing the current workingMesh in a closure
+    // so positions are extracted from the exact mesh the user drew on.
+    this.manualLassoManager!.setCallbacks({
+      onSelectionComplete: (selected: Set<number>) => {
         this.scene.controls.enabled = true;
+        if (selected.size === 0) return;
+
+        // Extract 3D positions from the trimmed mesh (mesh-local coords, group offset already applied)
+        const pts = new Float32Array(selected.size * 3);
+        let i = 0;
+        for (const vi of selected) {
+          pts[i++] = workingMesh.positions[vi * 3];
+          pts[i++] = workingMesh.positions[vi * 3 + 1];
+          pts[i++] = workingMesh.positions[vi * 3 + 2];
+        }
+        this.manualNonWornPositions = pts;
+        this.manualNonWornCount = selected.size;
+
         this.controls.updateManualSelectionCount(selected.size);
-        // Highlight selected non-worn vertices in green
-        const sep = this.pipeline?.state.separation;
-        if (sep) this.meshViewer.setManualNonWornHighlight(selected, sep.inner);
+        this.meshViewer.setManualNonWornHighlight(pts);
         this.scene.requestRender();
         this.status.setStatus(
           `Non-worn zone selected: ${selected.size.toLocaleString()} vertices. Run Full Analysis to proceed.`
         );
       },
     });
-  }
 
-  private enableManualNonWornLassoMode(): void {
-    const sep = this.pipeline?.state.separation;
-    if (!sep) { this.status.setStatus('Run face separation first before selecting the non-worn zone.'); return; }
-    this.ensureManualLassoManager();
     this.scene.controls.enabled = false;
     const offset = this.meshViewer.getGroupOffset();
-    this.manualLassoManager!.enable(sep.inner, this.scene.camera, offset);
+    this.manualLassoManager!.enable(workingMesh, this.scene.camera, offset);
     this.status.setStatus('Non-worn lasso active — click to add points, click near start or Enter to close, Esc to cancel');
   }
 
   private clearManualNonWornSelection(): void {
-    this.manualNonWornVertices = null;
-    this.meshViewer.setManualNonWornHighlight(null, null);
+    this.manualNonWornPositions = null;
+    this.manualNonWornCount = 0;
+    this.meshViewer.setManualNonWornHighlight(null);
     this.controls.updateManualSelectionCount(0);
     this.scene.requestRender();
   }
@@ -1439,9 +1478,10 @@ export class App {
     this.lassoManager = null;
 
     // ---- Clear manual non-worn selection ----
-    this.manualNonWornVertices = null;
+    this.manualNonWornPositions = null;
+    this.manualNonWornCount = 0;
     this.manualLassoManager = null;
-    this.meshViewer.setManualNonWornHighlight(null, null);
+    this.meshViewer.setManualNonWornHighlight(null);
 
     // ---- Clear hole seeds ----
     this.manualHoleSeeds = [];

@@ -1252,22 +1252,16 @@ export class MeshViewer {
     this.originalGroup.add(points);
   }
 
-  /** Highlight manually selected non-worn vertices as green dots over the mesh. */
-  public setManualNonWornHighlight(selected: Set<number> | null, innerMesh: { positions: Float32Array } | null): void {
+  /** Highlight manually selected non-worn vertices as green dots over the mesh.
+   *  @param positions  Flat Float32Array of xyz triplets (already in mesh-local space).
+   *                    Pass null to clear the highlight. */
+  public setManualNonWornHighlight(positions: Float32Array | null): void {
     this.removeNamedObject('manual-nonworn-highlight');
 
-    if (!selected || selected.size === 0 || !innerMesh) return;
-
-    const pts = new Float32Array(selected.size * 3);
-    let idx = 0;
-    for (const vi of selected) {
-      pts[idx++] = innerMesh.positions[vi * 3];
-      pts[idx++] = innerMesh.positions[vi * 3 + 1];
-      pts[idx++] = innerMesh.positions[vi * 3 + 2];
-    }
+    if (!positions || positions.length === 0) return;
 
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
     const mat = new THREE.PointsMaterial({
       color: 0x22cc55,
