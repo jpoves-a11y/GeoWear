@@ -392,6 +392,9 @@ export class App {
       return;
     }
 
+    // Always sync params from the GUI panel so nothing is stale (e.g. mode dropdown)
+    this.params = { ...this.controls.params };
+
     this.isRunning = true;
     this.showLoading('Running analysis...');
     // Cancel any pending preview debounce — the analysis will provide the authoritative mesh.
