@@ -217,6 +217,14 @@ export class AnnotationManager {
     this.annotationGroup.visible = visible;
   }
 
+  /** Show or hide only the wear vector arrow/line/label (used by the Linear Wear Vector toggle). */
+  setWearVectorVisible(v: boolean): void {
+    if (this.wearArrow) this.wearArrow.visible = v;
+    if (this.wearLine) this.wearLine.visible = v;
+    const marker = this.annotationGroup.getObjectByName('deepest-point-marker');
+    if (marker) marker.visible = v;
+  }
+
   /**
    * Clear all annotations.
    */

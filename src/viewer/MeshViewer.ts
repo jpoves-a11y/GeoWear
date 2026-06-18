@@ -27,6 +27,7 @@ export class MeshViewer {
   private rimPlaneObject: THREE.Mesh | null = null;
   private wearPlaneObject: THREE.Mesh | null = null;
   private rimNormalArrow: THREE.ArrowHelper | null = null;
+  private linearWearArrow: THREE.ArrowHelper | null = null;
   private poleMarker: THREE.Mesh | null = null;
   private volumePreviewGroup: THREE.Group | null = null;
   private repairedHolesOverlay: THREE.Mesh | null = null;
@@ -403,6 +404,95 @@ export class MeshViewer {
       this.rimNormalArrow = null;
       this.sceneManager.requestRender();
     }
+  }
+
+  // ---- Linear Wear Vector ----
+
+  /**
+   * Render an arrow showing the linear wear vector (unworn sphere centre → worn sphere centre).
+   * Both positions are in mesh-local coordinates; the group offset is applied internally.
+   * @param from       Unworn sphere centre (mesh-local).
+   * @param to         Worn sphere centre (mesh-local).
+   * @param magnitudeMm  Distance in mm (used for label and head sizing).
+   * @param visible    Initial visibility.
+   */
+  public displayLinearWearVector(
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    magnitudeMm: number,
+    visible: boolean = true,
+  ): void {
+    // Clear previous
+    if (this.linearWearArrow) {
+      this.originalGroup.remove(this.linearWearArrow);
+      this.linearWearArrow.dispose();
+      this.linearWearArrow = null;
+    }
+    this.removeNamedObject('linear-wear-line');
+    this.removeNamedObject('linear-wear-label-anchor');
+
+    const dir = to.clone().sub(from);
+    const length = dir.length();
+    if (length < 1e-6) return;
+    dir.normalize();
+
+    // Dashed shaft line (gold)
+    const lineMat = new THREE.LineDashedMaterial({ color: 0xffcc00, dashSize: 0.6, gapSize: 0.3 });
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([from.clone(), to.clone()]);
+    const line = new THREE.Line(lineGeo, lineMat);
+    line.computeLineDistances();
+    line.name = 'linear-wear-line';
+    line.visible = visible;
+    this.originalGroup.add(line);
+
+    // Arrow head
+    const headLen = Math.min(length * 0.25, 2.0);
+    const headWidth = headLen * 0.5;
+    this.linearWearArrow = new THREE.ArrowHelper(dir, from, length, 0xffcc00, headLen, headWidth);
+    this.linearWearArrow.name = 'linear-wear-arrow';
+    this.linearWearArrow.visible = visible;
+    this.originalGroup.add(this.linearWearArrow);
+
+    // Small sphere at the "from" point (unworn centre)
+    const fromMarkerGeo = new THREE.SphereGeometry(Math.min(length * 0.07, 0.8), 12, 12);
+    const fromMarkerMat = new THREE.MeshBasicMaterial({ color: 0x44cc88 });
+    const fromMarker = new THREE.Mesh(fromMarkerGeo, fromMarkerMat);
+    fromMarker.position.copy(from);
+    fromMarker.name = 'linear-wear-from-marker';
+    fromMarker.visible = visible;
+    this.originalGroup.add(fromMarker);
+
+    // Small sphere at the "to" point (worn centre)
+    const toMarkerGeo = new THREE.SphereGeometry(Math.min(length * 0.07, 0.8), 12, 12);
+    const toMarkerMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+    const toMarker = new THREE.Mesh(toMarkerGeo, toMarkerMat);
+    toMarker.position.copy(to);
+    toMarker.name = 'linear-wear-to-marker';
+    toMarker.visible = visible;
+    this.originalGroup.add(toMarker);
+
+    console.log(`[LinearWearVector] ${(magnitudeMm * 1000).toFixed(1)} μm, length=${length.toFixed(4)} mm`);
+  }
+
+  public setLinearWearVectorVisible(v: boolean): void {
+    if (this.linearWearArrow) this.linearWearArrow.visible = v;
+    const line = this.originalGroup.getObjectByName('linear-wear-line');
+    if (line) line.visible = v;
+    const fromM = this.originalGroup.getObjectByName('linear-wear-from-marker');
+    if (fromM) fromM.visible = v;
+    const toM = this.originalGroup.getObjectByName('linear-wear-to-marker');
+    if (toM) toM.visible = v;
+  }
+
+  public clearLinearWearVector(): void {
+    if (this.linearWearArrow) {
+      this.originalGroup.remove(this.linearWearArrow);
+      this.linearWearArrow.dispose();
+      this.linearWearArrow = null;
+    }
+    this.removeNamedObject('linear-wear-line');
+    this.removeNamedObject('linear-wear-from-marker');
+    this.removeNamedObject('linear-wear-to-marker');
   }
 
   // ---- Pole marker ----
@@ -1615,6 +1705,7 @@ export class MeshViewer {
     this.unwornSphereObject = null;
     this.rimPlaneObject = null;
     this.wearPlaneObject = null;
+    this.linearWearArrow = null;
     this.volumePreviewGroup = null;
     this.repairedHolesOverlay = null;
   }

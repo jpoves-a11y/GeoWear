@@ -361,6 +361,7 @@ export interface AnalysisParams {
   showMeshVolume: boolean;
   showSphereCapVolume: boolean;
   showWearVolume: boolean;
+  showLinearWearVector: boolean;
   showOriginalMesh: boolean;
   yearsInVivo: number;         // 0 = unknown; if >0, wear rates (mm/year, mm³/year) are shown
   showExcludedVertices: boolean; // highlight excluded vertices in the viewer
@@ -404,6 +405,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showMeshVolume: false,
   showSphereCapVolume: false,
   showWearVolume: false,
+  showLinearWearVector: false,
   showOriginalMesh: true,
   yearsInVivo: 0,
   showExcludedVertices: true,

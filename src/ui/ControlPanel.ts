@@ -31,6 +31,7 @@ export interface ControlCallbacks {
   onToggleUnwornSphere: (v: boolean) => void;
   onToggleRimPlane: (v: boolean) => void;
   onToggleWearPlane: (v: boolean) => void;
+  onToggleLinearWearVector: (v: boolean) => void;
   onToggleMeshVolume: (v: boolean) => void;
   onToggleSphereCapVolume: (v: boolean) => void;
   onToggleWearVolume: (v: boolean) => void;
@@ -504,6 +505,11 @@ export class ControlPanel {
     overlayFolder.add(this.params, 'showOriginalMesh')
       .name('Full STL Sample')
       .onChange((v: boolean) => this.callbacks.onToggleOriginalMesh(v));
+
+    // Linear Wear Vector: visible in all modes that produce zone spheres or a wear vector
+    overlayFolder.add(this.params, 'showLinearWearVector')
+      .name('Linear Wear Vector')
+      .onChange((v: boolean) => this.callbacks.onToggleLinearWearVector(v));
 
     overlayFolder.close();
     overlayFolder.hide(); // hidden until analysis runs

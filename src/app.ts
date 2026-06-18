@@ -155,6 +155,11 @@ export class App {
       onToggleUnwornSphere: (v: boolean) => { this.meshViewer.setUnwornSphereVisible(v); this.scene.requestRender(); },
       onToggleRimPlane: (v: boolean) => { this.meshViewer.setRimPlaneVisible(v); this.scene.requestRender(); },
       onToggleWearPlane: (v: boolean) => { this.meshViewer.setWearPlaneVisible(v); this.scene.requestRender(); },
+      onToggleLinearWearVector: (v: boolean) => {
+        this.meshViewer.setLinearWearVectorVisible(v);
+        this.annotations.setWearVectorVisible(v);
+        this.scene.requestRender();
+      },
       onToggleMeshVolume: (v: boolean) => { this.meshViewer.setMeshVolumeVisible(v); this.scene.requestRender(); },
       onToggleSphereCapVolume: (v: boolean) => { this.meshViewer.setSphereCapVisible(v); this.scene.requestRender(); },
       onToggleWearVolume: (v: boolean) => { this.meshViewer.setWearVolumeVisible(v); this.scene.requestRender(); },
@@ -1301,12 +1306,29 @@ export class App {
     );
     this.annotations.setVisible(this.params.showAnnotations);
 
-    // Wear vector
+    // Wear vector (pure-geodesic) — gated by showLinearWearVector
     if (results.wearVector && p.state.polePosition) {
       const wv = results.wearVector;
       this.annotations.renderWearVector(
         wv.deepestPoint, p.state.polePosition, offset,
         wv.maxDepth, wv.angle
+      );
+    }
+
+    // Linear wear vector (sphere modes) — arrow from unworn sphere centre to worn sphere centre
+    if (
+      (results.analysisMode === 'sphere-bestfit' ||
+       results.analysisMode === 'manual-geodesic' ||
+       results.analysisMode === 'double-sphere-metrics') &&
+      results.zoneSpheres
+    ) {
+      const zs = results.zoneSpheres;
+      const magnitudeMm = zs.wornSphere.center.distanceTo(zs.unwornSphere.center);
+      this.meshViewer.displayLinearWearVector(
+        zs.unwornSphere.center,
+        zs.wornSphere.center,
+        magnitudeMm,
+        this.params.showLinearWearVector,
       );
     }
 
@@ -1641,6 +1663,9 @@ export class App {
     this.meshViewer.setSphereCapVisible(isSphereModeViz && this.params.showSphereCapVolume);
     this.meshViewer.setWearVolumeVisible(isSphereModeViz && this.params.showWearVolume);
     this.meshViewer.setOriginalVisible(this.params.showOriginalMesh);
+    // Linear wear vector: sphere modes use MeshViewer arrow; pure-geodesic uses Annotations wearVector
+    this.meshViewer.setLinearWearVectorVisible(isSphereModeViz && this.params.showLinearWearVector);
+    this.annotations.setWearVectorVisible(!isSphereModeViz && this.params.showLinearWearVector);
   }
 
   // ---- Exports ----
