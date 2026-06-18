@@ -430,6 +430,8 @@ export class MeshViewer {
     }
     this.removeNamedObject('linear-wear-line');
     this.removeNamedObject('linear-wear-label-anchor');
+    this.removeNamedObject('linear-wear-from-marker');
+    this.removeNamedObject('linear-wear-to-marker');
 
     const dir = to.clone().sub(from);
     const length = dir.length();
