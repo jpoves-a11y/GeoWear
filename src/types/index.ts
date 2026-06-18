@@ -372,7 +372,7 @@ export interface AnalysisParams {
 export const DEFAULT_PARAMS: AnalysisParams = {
   geodesicCount: 360,
   rimTrimPercent: 16,
-  repairInnerFace: true,
+  repairInnerFace: false,
   holeRepairMaxLoopSize: 1000,
   smoothingIterations: 3,
   thresholdMicrons: 1.0,
