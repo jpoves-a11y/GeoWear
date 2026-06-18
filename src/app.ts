@@ -160,6 +160,7 @@ export class App {
         this.annotations.setWearVectorVisible(v);
         this.scene.requestRender();
       },
+      onFocusLinearWearVector: () => this.focusLinearWearVector(),
       onToggleMeshVolume: (v: boolean) => { this.meshViewer.setMeshVolumeVisible(v); this.scene.requestRender(); },
       onToggleSphereCapVolume: (v: boolean) => { this.meshViewer.setSphereCapVisible(v); this.scene.requestRender(); },
       onToggleWearVolume: (v: boolean) => { this.meshViewer.setWearVolumeVisible(v); this.scene.requestRender(); },
@@ -1678,6 +1679,26 @@ export class App {
   }
 
   // ---- Exports ----
+
+  private focusLinearWearVector(): void {
+    const results = this.currentResults;
+    if (!results || !('zoneSpheres' in results) || !results.zoneSpheres) {
+      this.status.setStatus('No linear wear vector — run a sphere-mode analysis first');
+      return;
+    }
+    const zs = results.zoneSpheres;
+    const from = zs.unwornSphere.center;
+    const to = zs.wornSphere.center;
+    const mid = from.clone().add(to).multiplyScalar(0.5);
+    // Pad at least 8 mm around the midpoint so the vector is clearly in frame
+    const pad = Math.max(from.distanceTo(to) * 4, 8);
+    const box = new THREE.Box3(
+      mid.clone().subScalar(pad),
+      mid.clone().addScalar(pad),
+    );
+    this.scene.focusOn(box);
+    this.scene.requestRender();
+  }
 
   private exportPNG(): void {
     this.exporter.exportPNG(this.fileName);

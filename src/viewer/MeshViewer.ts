@@ -5,6 +5,7 @@
 
 import * as THREE from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { SceneManager } from './SceneManager';
 import type { MeshData } from '../types';
 
@@ -28,6 +29,7 @@ export class MeshViewer {
   private wearPlaneObject: THREE.Mesh | null = null;
   private rimNormalArrow: THREE.ArrowHelper | null = null;
   private linearWearArrow: THREE.ArrowHelper | null = null;
+  private linearWearLabel: CSS2DObject | null = null;
   private poleMarker: THREE.Mesh | null = null;
   private volumePreviewGroup: THREE.Group | null = null;
   private repairedHolesOverlay: THREE.Mesh | null = null;
@@ -428,6 +430,10 @@ export class MeshViewer {
       this.linearWearArrow.dispose();
       this.linearWearArrow = null;
     }
+    if (this.linearWearLabel) {
+      this.originalGroup.remove(this.linearWearLabel);
+      this.linearWearLabel = null;
+    }
     this.removeNamedObject('linear-wear-line');
     this.removeNamedObject('linear-wear-label-anchor');
     this.removeNamedObject('linear-wear-from-marker');
@@ -438,25 +444,31 @@ export class MeshViewer {
     if (length < 1e-6) return;
     dir.normalize();
 
-    // Dashed shaft line (gold)
+    // Guarantee a minimum visual length so the vector is always easy to see,
+    // even when actual wear is sub-millimetre. The label always shows the real value.
+    const MIN_DISPLAY_LENGTH = 3.0;
+    const displayLength = Math.max(length, MIN_DISPLAY_LENGTH);
+    const displayEnd = from.clone().add(dir.clone().multiplyScalar(displayLength));
+
+    // Dashed shaft line (gold) — drawn to displayEnd
     const lineMat = new THREE.LineDashedMaterial({ color: 0xffcc00, dashSize: 0.6, gapSize: 0.3 });
-    const lineGeo = new THREE.BufferGeometry().setFromPoints([from.clone(), to.clone()]);
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([from.clone(), displayEnd.clone()]);
     const line = new THREE.Line(lineGeo, lineMat);
     line.computeLineDistances();
     line.name = 'linear-wear-line';
     line.visible = visible;
     this.originalGroup.add(line);
 
-    // Arrow head
-    const headLen = Math.min(length * 0.25, 2.0);
+    // Arrow head sized to displayed length
+    const headLen = Math.min(displayLength * 0.25, 2.0);
     const headWidth = headLen * 0.5;
-    this.linearWearArrow = new THREE.ArrowHelper(dir, from, length, 0xffcc00, headLen, headWidth);
+    this.linearWearArrow = new THREE.ArrowHelper(dir, from, displayLength, 0xffcc00, headLen, headWidth);
     this.linearWearArrow.name = 'linear-wear-arrow';
     this.linearWearArrow.visible = visible;
     this.originalGroup.add(this.linearWearArrow);
 
-    // Small sphere at the "from" point (unworn centre)
-    const fromMarkerGeo = new THREE.SphereGeometry(Math.min(length * 0.07, 0.8), 12, 12);
+    // Marker at origin (unworn sphere centre) — always at real "from"
+    const fromMarkerGeo = new THREE.SphereGeometry(Math.min(displayLength * 0.07, 0.8), 12, 12);
     const fromMarkerMat = new THREE.MeshBasicMaterial({ color: 0x44cc88 });
     const fromMarker = new THREE.Mesh(fromMarkerGeo, fromMarkerMat);
     fromMarker.position.copy(from);
@@ -464,20 +476,33 @@ export class MeshViewer {
     fromMarker.visible = visible;
     this.originalGroup.add(fromMarker);
 
-    // Small sphere at the "to" point (worn centre)
-    const toMarkerGeo = new THREE.SphereGeometry(Math.min(length * 0.07, 0.8), 12, 12);
+    // Marker at the tip of the displayed arrow
+    const toMarkerGeo = new THREE.SphereGeometry(Math.min(displayLength * 0.07, 0.8), 12, 12);
     const toMarkerMat = new THREE.MeshBasicMaterial({ color: 0xff4444 });
     const toMarker = new THREE.Mesh(toMarkerGeo, toMarkerMat);
-    toMarker.position.copy(to);
+    toMarker.position.copy(displayEnd);
     toMarker.name = 'linear-wear-to-marker';
     toMarker.visible = visible;
     this.originalGroup.add(toMarker);
 
-    console.log(`[LinearWearVector] ${(magnitudeMm * 1000).toFixed(1)} μm, length=${length.toFixed(4)} mm`);
+    // CSS2D label just beyond the arrow tip — always shows the real wear value
+    const realUm = magnitudeMm * 1000;
+    const labelDiv = document.createElement('div');
+    labelDiv.className = 'linear-wear-label';
+    labelDiv.textContent = `\u2195 ${realUm.toFixed(1)} \u03bcm`;
+    const labelObj = new CSS2DObject(labelDiv);
+    labelObj.position.copy(displayEnd).add(dir.clone().multiplyScalar(headLen * 1.2));
+    labelObj.name = 'linear-wear-label';
+    labelObj.visible = visible;
+    this.originalGroup.add(labelObj);
+    this.linearWearLabel = labelObj;
+
+    console.log(`[LinearWearVector] ${realUm.toFixed(1)} \u03bcm | displayed length: ${displayLength.toFixed(2)} mm`);
   }
 
   public setLinearWearVectorVisible(v: boolean): void {
     if (this.linearWearArrow) this.linearWearArrow.visible = v;
+    if (this.linearWearLabel) this.linearWearLabel.visible = v;
     const line = this.originalGroup.getObjectByName('linear-wear-line');
     if (line) line.visible = v;
     const fromM = this.originalGroup.getObjectByName('linear-wear-from-marker');
@@ -491,6 +516,10 @@ export class MeshViewer {
       this.originalGroup.remove(this.linearWearArrow);
       this.linearWearArrow.dispose();
       this.linearWearArrow = null;
+    }
+    if (this.linearWearLabel) {
+      this.originalGroup.remove(this.linearWearLabel);
+      this.linearWearLabel = null;
     }
     this.removeNamedObject('linear-wear-line');
     this.removeNamedObject('linear-wear-from-marker');
@@ -1708,6 +1737,7 @@ export class MeshViewer {
     this.rimPlaneObject = null;
     this.wearPlaneObject = null;
     this.linearWearArrow = null;
+    this.linearWearLabel = null;
     this.volumePreviewGroup = null;
     this.repairedHolesOverlay = null;
   }

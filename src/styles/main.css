@@ -862,6 +862,22 @@ html, body {
   margin-bottom: 1px;
 }
 
+/* ---------- Linear Wear Vector Label (CSS2D) ---------- */
+.linear-wear-label {
+  background: rgba(255, 204, 0, 0.92);
+  color: #1a1400;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid #b38a00;
+  pointer-events: none;
+  user-select: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+
 /* ---------- Tooltip ---------- */
 .tooltip {
   position: absolute;

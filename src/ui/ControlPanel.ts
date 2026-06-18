@@ -32,6 +32,7 @@ export interface ControlCallbacks {
   onToggleRimPlane: (v: boolean) => void;
   onToggleWearPlane: (v: boolean) => void;
   onToggleLinearWearVector: (v: boolean) => void;
+  onFocusLinearWearVector: () => void;
   onToggleMeshVolume: (v: boolean) => void;
   onToggleSphereCapVolume: (v: boolean) => void;
   onToggleWearVolume: (v: boolean) => void;
@@ -510,6 +511,9 @@ export class ControlPanel {
     overlayFolder.add(this.params, 'showLinearWearVector')
       .name('Linear Wear Vector')
       .onChange((v: boolean) => this.callbacks.onToggleLinearWearVector(v));
+
+    const focusActions = { focus: () => this.callbacks.onFocusLinearWearVector() };
+    overlayFolder.add(focusActions, 'focus').name('🎯 Focus on Vector');
 
     overlayFolder.close();
     overlayFolder.hide(); // hidden until analysis runs
