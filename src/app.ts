@@ -895,22 +895,31 @@ export class App {
         this.scene.controls.enabled = true;
         if (selected.size === 0) return;
 
-        // Extract 3D positions from the trimmed mesh (mesh-local coords, group offset already applied)
-        const pts = new Float32Array(selected.size * 3);
+        // Extract 3D positions from the trimmed mesh (mesh-local coords)
+        const newPts = new Float32Array(selected.size * 3);
         let i = 0;
         for (const vi of selected) {
-          pts[i++] = workingMesh.positions[vi * 3];
-          pts[i++] = workingMesh.positions[vi * 3 + 1];
-          pts[i++] = workingMesh.positions[vi * 3 + 2];
+          newPts[i++] = workingMesh.positions[vi * 3];
+          newPts[i++] = workingMesh.positions[vi * 3 + 1];
+          newPts[i++] = workingMesh.positions[vi * 3 + 2];
         }
-        this.manualNonWornPositions = pts;
-        this.manualNonWornCount = selected.size;
 
-        this.controls.updateManualSelectionCount(selected.size);
-        this.meshViewer.setManualNonWornHighlight(pts);
+        // Accumulate with any previous selection
+        if (this.manualNonWornPositions && this.manualNonWornCount > 0) {
+          const merged = new Float32Array(this.manualNonWornPositions.length + newPts.length);
+          merged.set(this.manualNonWornPositions, 0);
+          merged.set(newPts, this.manualNonWornPositions.length);
+          this.manualNonWornPositions = merged;
+        } else {
+          this.manualNonWornPositions = newPts;
+        }
+        this.manualNonWornCount = this.manualNonWornPositions.length / 3;
+
+        this.controls.updateManualSelectionCount(this.manualNonWornCount);
+        this.meshViewer.setManualNonWornHighlight(this.manualNonWornPositions);
         this.scene.requestRender();
         this.status.setStatus(
-          `Non-worn zone selected: ${selected.size.toLocaleString()} vertices. Run Full Analysis to proceed.`
+          `Non-worn zone: ${this.manualNonWornCount.toLocaleString()} vertices total. Draw again to add more, or run analysis.`
         );
       },
     });
