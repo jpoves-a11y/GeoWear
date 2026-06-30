@@ -257,11 +257,9 @@ export interface AnalysisResults {
 
 export interface MultiModeComparisonResults {
   analysisMode: 'compare-all-modes';
-  pureGeodesic: AnalysisResults;
   sphereBestfit: AnalysisResults;
   doubleSphereMetrics: AnalysisResults;
   summary: {
-    pureGeodesicWearVolumeMm3: number;
     sphereBestfitWearVolumeMm3: number;
     doubleSphereLinearWearMm: number;
   };

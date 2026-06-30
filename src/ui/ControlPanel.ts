@@ -111,14 +111,12 @@ export class ControlPanel {
   private manualNonWornCountController: any = null;
   // Analysis mode display name mapping
   private readonly modeLabelMap: Record<string, string> = {
-    'Pure Geodesic': 'pure-geodesic',
     'Sphere BestFit': 'sphere-bestfit',
     'Double Sphere Metrics': 'double-sphere-metrics',
     'Manual Geodesic': 'manual-geodesic',
     'Compare All Modes': 'compare-all-modes',
   };
   private readonly modeReverseMap: Record<string, string> = {
-    'pure-geodesic': 'Pure Geodesic',
     'sphere-bestfit': 'Sphere BestFit',
     'double-sphere-metrics': 'Double Sphere Metrics',
     'manual-geodesic': 'Manual Geodesic',
@@ -128,9 +126,8 @@ export class ControlPanel {
 
   // Compare-mode visualisation selector (inline inside Visualization folder)
   private compareVisModeProxy = { mode: 'Sphere BestFit' };
-  private compareVisModeCallback: ((mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics') => void) | null = null;
-  private readonly compareVisModeMap: Record<string, 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics'> = {
-    'Pure Geodesic': 'pure-geodesic',
+  private compareVisModeCallback: ((mode: 'sphere-bestfit' | 'double-sphere-metrics') => void) | null = null;
+  private readonly compareVisModeMap: Record<string, 'sphere-bestfit' | 'double-sphere-metrics'> = {
     'Sphere BestFit': 'sphere-bestfit',
     'Double Sphere Metrics': 'double-sphere-metrics',
   };
@@ -244,7 +241,7 @@ export class ControlPanel {
 
     // --- Wear Model sub-section ---
     const wearModel = folder.addFolder('Wear Model');
-    wearModel.add(this.analysisModelProxy, 'mode', ['Pure Geodesic', 'Sphere BestFit', 'Double Sphere Metrics', 'Manual Geodesic', 'Compare All Modes'])
+    wearModel.add(this.analysisModelProxy, 'mode', ['Sphere BestFit', 'Double Sphere Metrics', 'Manual Geodesic', 'Compare All Modes'])
       .name('Analysis Mode')
       .onChange((v: string) => {
         this.params.analysisMode = this.modeLabelMap[v] as AnalysisParams['analysisMode'];
@@ -399,7 +396,7 @@ export class ControlPanel {
     this.visCompareSelectorCtrl = folder.add(
       this.compareVisModeProxy,
       'mode',
-      ['Pure Geodesic', 'Sphere BestFit', 'Double Sphere Metrics'],
+      ['Sphere BestFit', 'Double Sphere Metrics'],
     )
       .name('🔍 View Mode')
       .onChange((v: string) => {
@@ -857,7 +854,7 @@ export class ControlPanel {
    * Also updates the visualization controls to match the initial sphere-bestfit view.
    */
   public showCompareSelector(
-    onChange: (mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics') => void,
+    onChange: (mode: 'sphere-bestfit' | 'double-sphere-metrics') => void,
   ): void {
     this.compareVisModeCallback = onChange;
     this.compareVisModeProxy.mode = 'Sphere BestFit';

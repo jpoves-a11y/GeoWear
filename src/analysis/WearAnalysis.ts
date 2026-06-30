@@ -170,7 +170,6 @@ export class WearAnalysisPipeline {
   /** Populated after a 'compare-all-modes' run; holds each sub-pipeline's state
    *  so the caller can swap to any mode's 3D visualisation on demand. */
   public compareModePipelineStates: {
-    pureGeodesic: PipelineState;
     sphereBestfit: PipelineState;
     doubleSphereMetrics: PipelineState;
   } | null = null;
@@ -503,12 +502,12 @@ export class WearAnalysisPipeline {
     });
 
     const runOne = async (
-      mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics',
+      mode: 'sphere-bestfit' | 'double-sphere-metrics',
       offset: number,
       label: string,
     ): Promise<{ result: AnalysisResults; pipeline: WearAnalysisPipeline }> => {
       const subPipeline = new WearAnalysisPipeline((stage, progress, message) => {
-        const scaled = Math.min(0.999, offset + progress / 3);
+        const scaled = Math.min(0.999, offset + progress / 2);
         this.progress(stage, scaled, `[${label}] ${message}`);
       });
       // Propagate user-configured rim plane and exclusion mask to each sub-pipeline
@@ -522,16 +521,13 @@ export class WearAnalysisPipeline {
       return { result: subResult as AnalysisResults, pipeline: subPipeline };
     };
 
-    const pureRun = await runOne('pure-geodesic', 0, 'Pure Geodesic');
-    const bestfitRun = await runOne('sphere-bestfit', 1 / 3, 'Sphere BestFit');
-    const doubleRun = await runOne('double-sphere-metrics', 2 / 3, 'Double Sphere');
-    const pure = pureRun.result;
+    const bestfitRun = await runOne('sphere-bestfit', 0, 'Sphere BestFit');
+    const doubleRun = await runOne('double-sphere-metrics', 1 / 2, 'Double Sphere');
     const bestfit = bestfitRun.result;
     const doubleMetrics = doubleRun.result;
 
-    // Store all three sub-pipeline states so the caller can switch 3D visualisation.
+    // Store sub-pipeline states so the caller can switch 3D visualisation.
     this.compareModePipelineStates = {
-      pureGeodesic: pureRun.pipeline.state,
       sphereBestfit: bestfitRun.pipeline.state,
       doubleSphereMetrics: doubleRun.pipeline.state,
     };
@@ -543,11 +539,9 @@ export class WearAnalysisPipeline {
 
     return {
       analysisMode: 'compare-all-modes',
-      pureGeodesic: pure,
       sphereBestfit: bestfit,
       doubleSphereMetrics: doubleMetrics,
       summary: {
-        pureGeodesicWearVolumeMm3: pure.totalWearVolume,
         sphereBestfitWearVolumeMm3: bestfit.wearVolumeResult?.wearVolume ?? bestfit.totalWearVolume,
         doubleSphereLinearWearMm: doubleMetrics.doubleSphereMetrics?.bestCell?.centerDistanceMean ?? 0,
       },

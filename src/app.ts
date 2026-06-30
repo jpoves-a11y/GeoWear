@@ -59,7 +59,7 @@ export class App {
   private currentMeshData: MeshData | null = null;
   private currentResults: AnalysisRunResult | null = null;
   /** Which sub-mode is currently rendered when analysisMode === 'compare-all-modes'. */
-  private compareVisualizationMode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' = 'sphere-bestfit';
+  private compareVisualizationMode: 'sphere-bestfit' | 'double-sphere-metrics' = 'sphere-bestfit';
   private fileName: string = '';
   private isRunning = false;
   private stlWorker: Worker | null = null;
@@ -1162,11 +1162,10 @@ export class App {
    * Switch which sub-mode is rendered in compare-all-modes.
    * Swaps pipeline.state to the selected mode's sub-pipeline state and re-renders.
    */
-  public setCompareVisualizationMode(mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics'): void {
+  public setCompareVisualizationMode(mode: 'sphere-bestfit' | 'double-sphere-metrics'): void {
     if (!this.pipeline || !this.pipeline.compareModePipelineStates) return;
     this.compareVisualizationMode = mode;
     const stateMap = {
-      'pure-geodesic': this.pipeline.compareModePipelineStates.pureGeodesic,
       'sphere-bestfit': this.pipeline.compareModePipelineStates.sphereBestfit,
       'double-sphere-metrics': this.pipeline.compareModePipelineStates.doubleSphereMetrics,
     };

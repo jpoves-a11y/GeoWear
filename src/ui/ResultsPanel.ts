@@ -41,7 +41,6 @@ export class ResultsPanel {
 
     if (results.analysisMode === 'compare-all-modes') {
       this.addCompareTopSummary(results);
-      this.renderSingleResult(results.pureGeodesic, 'Pure Geodesic', 'pg');
       this.renderSingleResult(results.sphereBestfit, 'Sphere BestFit', 'sbf');
       this.renderSingleResult(results.doubleSphereMetrics, 'Double Sphere Metrics', 'dsm');
       window.dispatchEvent(new Event('resize'));
@@ -54,9 +53,13 @@ export class ResultsPanel {
     window.dispatchEvent(new Event('resize'));
   }
 
-  private renderSingleResult(results: AnalysisResults, titlePrefix?: string, modeKey?: 'pg' | 'sbf' | 'dsm'): void {
+  private renderSingleResult(results: AnalysisResults, titlePrefix?: string, modeKey?: 'sbf' | 'dsm'): void {
     if (titlePrefix && modeKey) {
       this.addModeDetailHeader(titlePrefix, modeKey);
+    }
+
+    if (results.analysisMode === 'manual-geodesic') {
+      this.addManualGeodesicComparisonSummary(results);
     }
 
     // KPI cards at the top for quick overview
@@ -140,19 +143,14 @@ export class ResultsPanel {
     const section = document.createElement('div');
     section.className = 'results-section fade-in';
 
-    // --- extract all values ---
-    const pg = results.pureGeodesic;
     const sbf = results.sphereBestfit;
     const dsm = results.doubleSphereMetrics;
 
     // Max wear depth (μm)
-    const pgDepth: number | null = pg.wearVector?.maxDepth
-      ?? pg.primaryWearZone?.maxDeviation ?? null;
     const sbfDepth: number | null = sbf.wearPlane?.maxWearDepth ?? null;
     const dsmDepth: number | null = dsm.wearPlane?.maxWearDepth ?? null;
 
     // Linear wear = center-distance shift (μm)
-    const pgLinear: null = null; // not defined for pure geodesic
     const sbfLinear: number | null = sbf.zoneSpheres
       ? sbf.zoneSpheres.wornSphere.center.distanceTo(sbf.zoneSpheres.unwornSphere.center) * 1000
       : null;
@@ -162,7 +160,6 @@ export class ResultsPanel {
         : null;
 
     // Volumetric wear (mm³)
-    const pgVol: number | null = pg.totalBumpVolume;
     const sbfVol: number | null = sbf.wearVolumeResult?.wearVolume ?? null;
     const dsmVol: number | null = dsm.wearVolumeResult?.wearVolume ?? null;
 
@@ -182,10 +179,9 @@ export class ResultsPanel {
       <table class="wear-compare-table">
         <thead>
           <tr>
-            <th class="col-metric">Metric</th>
-            <th class="col-pg">PG</th>
-            <th class="col-sbf">SBF</th>
-            <th class="col-dsm">DSM</th>
+            <th class="col-metric">Métrica</th>
+            <th class="col-sbf">Sphere BestFit</th>
+            <th class="col-dsm">Double Sphere</th>
           </tr>
         </thead>
         <tbody>${rows.join('')}</tbody>
@@ -195,24 +191,21 @@ export class ResultsPanel {
 
     // Max Wear Depth row
     rows.push(`<tr>
-      <td class="col-metric">Max Wear Depth</td>
-      ${cell(pgDepth, 1, 'μm')}
+      <td class="col-metric">Profundidad máxima de desgaste</td>
       ${cell(sbfDepth, 1, 'μm')}
       ${cell(dsmDepth, 1, 'μm')}
     </tr>`);
 
     // Linear Wear row
     rows.push(`<tr>
-      <td class="col-metric">Linear Wear${warnSbf || warnDsm ? ' ⚠' : ''}</td>
-      <td class="col-val"><span class="cmp-na">—</span></td>
+      <td class="col-metric">Desgaste lineal${warnSbf || warnDsm ? ' ⚠' : ''}</td>
       ${cell(sbfLinear, 1, 'μm')}
       ${cell(dsmLinear, 1, 'μm')}
     </tr>`);
 
     // Volumetric Wear row
     rows.push(`<tr>
-      <td class="col-metric">Volumetric Wear</td>
-      ${cell(pgVol, 4, 'mm³')}
+      <td class="col-metric">Volumen desgastado</td>
       ${cell(sbfVol, 4, 'mm³')}
       ${cell(dsmVol, 4, 'mm³')}
     </tr>`);
@@ -220,8 +213,7 @@ export class ResultsPanel {
     // Worn % row (only SBF has it)
     if (sbfWornPct !== null) {
       rows.push(`<tr>
-        <td class="col-metric">Worn Surface %</td>
-        <td class="col-val"><span class="cmp-na">—</span></td>
+        <td class="col-metric">Superficie desgastada %</td>
         <td class="col-val">
           <span class="cmp-num ${sbfWornPct > 10 ? 'danger' : sbfWornPct > 2 ? 'warning' : 'success'}">${sbfWornPct.toFixed(1)}</span>
           <span class="cmp-unit">%</span>
@@ -232,7 +224,7 @@ export class ResultsPanel {
 
     const titleDiv = document.createElement('div');
     titleDiv.className = 'compare-section-title';
-    titleDiv.innerHTML = `<span class="icon">📊</span> Wear Metrics — All Modes`;
+    titleDiv.innerHTML = `<span class="icon">📊</span> Wear Metrics — Compared Modes`;
     section.appendChild(titleDiv);
     section.insertAdjacentHTML('beforeend', tableHtml(rows));
 
@@ -246,14 +238,12 @@ export class ResultsPanel {
 
       const rateRows: string[] = [];
       rateRows.push(`<tr>
-        <td class="col-metric">Linear Rate</td>
-        <td class="col-val"><span class="cmp-na">—</span></td>
+        <td class="col-metric">Tasa de desgaste lineal</td>
         ${rateCell(sbfLinear != null ? sbfLinear / 1000 : null, 4, 'mm/yr')}
         ${rateCell(dsmLinear != null ? dsmLinear / 1000 : null, 4, 'mm/yr')}
       </tr>`);
       rateRows.push(`<tr>
-        <td class="col-metric">Volumetric Rate</td>
-        ${rateCell(pgVol, 4, 'mm³/yr')}
+        <td class="col-metric">Tasa volumétrica</td>
         ${rateCell(sbfVol, 4, 'mm³/yr')}
         ${rateCell(dsmVol, 4, 'mm³/yr')}
       </tr>`);
@@ -270,8 +260,81 @@ export class ResultsPanel {
     const ptRow = document.createElement('div');
     ptRow.className = 'metric-row';
     ptRow.style.marginTop = '10px';
-    ptRow.innerHTML = `<span class="metric-label">Processing Time</span><span class="metric-value">${(results.processingTimeMs / 1000).toFixed(1)}<span class="metric-unit">s</span></span>`;
+    ptRow.innerHTML = `<span class="metric-label">Tiempo de proceso</span><span class="metric-value">${(results.processingTimeMs / 1000).toFixed(1)}<span class="metric-unit">s</span></span>`;
     section.appendChild(ptRow);
+
+    this.container.appendChild(section);
+  }
+
+  private addManualGeodesicComparisonSummary(results: AnalysisResults): void {
+    const section = document.createElement('div');
+    section.className = 'results-section fade-in';
+
+    const linearWear = results.zoneSpheres
+      ? results.zoneSpheres.wornSphere.center.distanceTo(results.zoneSpheres.unwornSphere.center) * 1000
+      : null;
+    const volumetricWear = results.wearVolumeResult?.wearVolume ?? null;
+    const maxWearDepth = results.wearPlane?.maxWearDepth ?? null;
+    const wornPct = results.wearClassification?.wornPercent ?? null;
+    const sphericity = results.ellipsoidFit?.sphericityPercent ?? null;
+
+    const cell = (val: number | null, dec: number, unit: string): string => {
+      if (val === null) return '<td class="col-val"><span class="cmp-na">—</span></td>';
+      const cls = val > 50 ? 'danger' : val > 20 ? 'warning' : 'success';
+      return `<td class="col-val"><span class="cmp-num ${cls}">${val.toFixed(dec)}</span><span class="cmp-unit">${unit}</span></td>`;
+    };
+
+    const tableRows: string[] = [];
+    tableRows.push(`<tr><td class="col-metric">Volumen desgastado</td>${cell(volumetricWear, 4, 'mm³')}</tr>`);
+    tableRows.push(`<tr><td class="col-metric">Desgaste lineal</td>${cell(linearWear, 1, 'μm')}</tr>`);
+    tableRows.push(`<tr><td class="col-metric">Profundidad máx. desgaste</td>${cell(maxWearDepth, 1, 'μm')}</tr>`);
+    tableRows.push(`<tr><td class="col-metric">Superficie desgastada %</td>${cell(wornPct, 1, '%')}</tr>`);
+    tableRows.push(`<tr><td class="col-metric">Esfericidad</td>${cell(sphericity, 2, '%')}</tr>`);
+
+    const titleDiv = document.createElement('div');
+    titleDiv.className = 'compare-section-title';
+    titleDiv.innerHTML = `<span class="icon">📊</span> Manual Geodesic — Comparative Metrics`;
+    section.appendChild(titleDiv);
+    section.insertAdjacentHTML('beforeend', `
+      <table class="wear-compare-table">
+        <thead>
+          <tr>
+            <th class="col-metric">Metric</th>
+            <th class="col-sbf">Manual Geodesic</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows.join('')}</tbody>
+      </table>
+    `);
+
+    if (this.yearsInVivo > 0) {
+      const y = this.yearsInVivo;
+      const rateCell = (val: number | null, dec: number, unit: string): string => {
+        if (val === null) return '<td class="col-val"><span class="cmp-na">—</span></td>';
+        return `<td class="col-val"><span class="cmp-num" style="color:#389aed">${(val / y).toFixed(dec)}</span><span class="cmp-unit">${unit}</span></td>`;
+      };
+
+      const rateRows: string[] = [];
+      rateRows.push(`<tr><td class="col-metric">Tasa de desgaste lineal</td>${rateCell(linearWear != null ? linearWear / 1000 : null, 4, 'mm/yr')}</tr>`);
+      rateRows.push(`<tr><td class="col-metric">Tasa volumétrica</td>${rateCell(volumetricWear, 4, 'mm³/yr')}</tr>`);
+
+      const rateTitle = document.createElement('div');
+      rateTitle.className = 'compare-section-title';
+      rateTitle.style.marginTop = '14px';
+      rateTitle.innerHTML = `<span class="icon">⏱</span> Wear Rates — ${y} yr${y !== 1 ? 's' : ''} in vivo`;
+      section.appendChild(rateTitle);
+      section.insertAdjacentHTML('beforeend', `
+        <table class="wear-compare-table">
+          <thead>
+            <tr>
+              <th class="col-metric">Metric</th>
+              <th class="col-sbf">Manual Geodesic</th>
+            </tr>
+          </thead>
+          <tbody>${rateRows.join('')}</tbody>
+        </table>
+      `);
+    }
 
     this.container.appendChild(section);
   }
@@ -280,7 +343,7 @@ export class ResultsPanel {
   // Mode detail header (used in compare-all sub-sections)
   // -------------------------------------------------------
 
-  private addModeDetailHeader(modeName: string, modeKey: 'pg' | 'sbf' | 'dsm'): void {
+  private addModeDetailHeader(modeName: string, modeKey: 'sbf' | 'dsm'): void {
     const wrap = document.createElement('div');
     wrap.style.cssText = 'padding: 14px 16px 0; display:flex; align-items:center; gap:8px;';
     wrap.innerHTML = `
