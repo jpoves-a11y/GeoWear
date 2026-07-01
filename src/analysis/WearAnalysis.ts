@@ -1295,15 +1295,41 @@ export class WearAnalysisPipeline {
       console.log(`[DS Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, cap=${sphereCapVolume.toFixed(4)}mm³ (R=${commercialR1}mm), wear=${wearVolume.toFixed(4)}mm³`);
     }
 
-    // Compute per-vertex deviations from the reference sphere so the heat map
-    // overlay works in double-sphere mode exactly as it does in other modes.
-    if (this.state.sphereFit && this.state.workingMesh) {
-      this.state.vertexDeviations = computeVertexDeviations(
-        this.state.workingMesh.positions,
-        this.state.workingMesh.vertexCount,
-        this.state.sphereFit.center,
-        this.state.sphereFit.radius
-      );
+    // Compute per-vertex deviations for the heat map overlay.
+    // Use the RANSAC unworn sphere (sphere 1) as reference so that worn vertices
+    // show clearly positive deviation (red = deep wear, blue = intact surface).
+    // Deviation = (r_actual - radius_unworn) * 1000 µm:
+    //   > 0  worn area (inner surface has expanded = material removed)
+    //   ≈ 0  unworn area (vertex sits on the original spherical surface)
+    if (this.state.workingMesh) {
+      const positions = this.state.workingMesh.positions;
+      const n = this.state.workingMesh.vertexCount;
+      const devs = new Float32Array(n);
+
+      // Prefer the RANSAC unworn sphere; fall back to the initial sphere fit.
+      let refCx: number, refCy: number, refCz: number, refR: number;
+      if (bestCell) {
+        refCx = bestCell.center1Mean[0];
+        refCy = bestCell.center1Mean[1];
+        refCz = bestCell.center1Mean[2];
+        refR  = bestCell.radius1Mean;
+      } else if (this.state.sphereFit) {
+        refCx = this.state.sphereFit.center.x;
+        refCy = this.state.sphereFit.center.y;
+        refCz = this.state.sphereFit.center.z;
+        refR  = this.state.sphereFit.radius;
+      } else {
+        refCx = 0; refCy = 0; refCz = 0; refR = 1;
+      }
+
+      for (let i = 0; i < n; i++) {
+        const dx = positions[i * 3]     - refCx;
+        const dy = positions[i * 3 + 1] - refCy;
+        const dz = positions[i * 3 + 2] - refCz;
+        const r  = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        devs[i] = (r - refR) * 1000; // mm → µm; positive = outside original sphere
+      }
+      this.state.vertexDeviations = devs;
     }
 
     this.state.results = {

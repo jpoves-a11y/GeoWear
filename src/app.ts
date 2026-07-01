@@ -1560,9 +1560,18 @@ export class App {
   private autoScaleColorRange(): void {
     if (!this.pipeline?.state.vertexDeviations) return;
     const devs = this.pipeline.state.vertexDeviations;
-    let maxDev = 0;
+
+    // Collect positive deviations and use the 99th percentile so that extreme
+    // outliers near screw holes or rim edges don't collapse the colour scale.
+    const positive: number[] = [];
     for (let i = 0; i < devs.length; i++) {
-      if (devs[i] > maxDev) maxDev = devs[i];
+      if (devs[i] > 0) positive.push(devs[i]);
+    }
+    let maxDev = 0;
+    if (positive.length > 0) {
+      positive.sort((a, b) => a - b);
+      const p99idx = Math.min(Math.floor(positive.length * 0.99), positive.length - 1);
+      maxDev = positive[p99idx];
     }
     // Round up to nearest 10 μm for a clean slider value
     const rounded = Math.ceil(maxDev / 10) * 10;
