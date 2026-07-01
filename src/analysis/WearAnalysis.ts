@@ -1295,6 +1295,17 @@ export class WearAnalysisPipeline {
       console.log(`[DS Volume] mesh=${meshEnclosedVolume.toFixed(4)}mm³, cap=${sphereCapVolume.toFixed(4)}mm³ (R=${commercialR1}mm), wear=${wearVolume.toFixed(4)}mm³`);
     }
 
+    // Compute per-vertex deviations from the reference sphere so the heat map
+    // overlay works in double-sphere mode exactly as it does in other modes.
+    if (this.state.sphereFit && this.state.workingMesh) {
+      this.state.vertexDeviations = computeVertexDeviations(
+        this.state.workingMesh.positions,
+        this.state.workingMesh.vertexCount,
+        this.state.sphereFit.center,
+        this.state.sphereFit.radius
+      );
+    }
+
     this.state.results = {
       analysisMode: 'double-sphere-metrics',
       sphereFit: this.state.sphereFit,
