@@ -789,12 +789,9 @@ export class MeshViewer {
     if (wearGeo) {
       const wearMat = new THREE.MeshStandardMaterial({
         vertexColors: true,
-        transparent: false,
-        opacity: 1.0,
-        depthWrite: true,
-        depthTest: true,
-        roughness: 0.55,
-        metalness: 0.08,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
         side: THREE.DoubleSide,
       });
       const wearObj = new THREE.Mesh(wearGeo, wearMat);
