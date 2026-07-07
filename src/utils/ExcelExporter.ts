@@ -218,26 +218,64 @@ export function downloadWorkbook(wb: any, fileName: string): void {
 }
 
 /**
- * Write a workbook either to a FileSystemFileHandle (File System Access API,
- * Chrome/Edge — allows in-place overwrite) or fall back to a blob download.
+ * Write a workbook to disk.
+ *
+ * Priority order:
+ * 1. In-place write via an existing FileSystemFileHandle (from showOpenFilePicker).
+ * 2. showSaveFilePicker — lets the user choose / overwrite the exact file,
+ *    avoiding the browser's automatic "(1)" renaming.
+ * 3. Blob download fallback for browsers without the File System Access API.
  */
 export async function writeWorkbook(
   wb: any,
   fileName: string,
   fileHandle?: FileSystemFileHandle,
 ): Promise<void> {
+  const name = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
+
+  // --- 1. In-place write via provided handle (e.g. from showOpenFilePicker) ---
   if (fileHandle) {
-    const wbout: ArrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const writable = await fileHandle.createWritable();
-    await writable.write(
-      new Blob([wbout], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      }),
-    );
-    await writable.close();
-  } else {
-    downloadWorkbook(wb, fileName);
+    try {
+      const wbout: ArrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const writable = await fileHandle.createWritable();
+      await writable.write(
+        new Blob([wbout], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+      );
+      await writable.close();
+      return;
+    } catch {
+      // createWritable() not supported in this browser (e.g. Firefox) — fall through.
+    }
   }
+
+  // --- 2. showSaveFilePicker: "Save As" dialog keeps the original filename ---
+  if ('showSaveFilePicker' in window) {
+    try {
+      const handle: FileSystemFileHandle = await (window as any).showSaveFilePicker({
+        suggestedName: name,
+        types: [{
+          description: 'Excel',
+          accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
+        }],
+      });
+      const wbout: ArrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const writable = await handle.createWritable();
+      await writable.write(
+        new Blob([wbout], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+      );
+      await writable.close();
+      return;
+    } catch {
+      // User cancelled the picker — fall through to download.
+    }
+  }
+
+  // --- 3. Blob download fallback ---
+  downloadWorkbook(wb, fileName);
 }
 
 /**
