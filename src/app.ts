@@ -234,16 +234,48 @@ export class App {
   // ---- File Loading ----
 
   private openFileDialog(): void {
-    // The file picker must be opened synchronously within the user-gesture context.
-    // The save dialog is shown afterwards from onchange, once the file is already captured.
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.stl';
-    input.onchange = (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) this.handlePreLoadSave(() => this.loadFile(file));
-    };
-    input.click();
+    // Run the save-flow first (async), then open the STL file picker.
+    // showOpenFilePicker() is used when available because it is designed to work
+    // from async contexts (Chrome / Edge); a hidden <input> is used as fallback.
+    (async () => {
+      await this.runSaveFlowIfNeeded();
+      this.openSTLPicker();
+    })();
+  }
+
+  /**
+   * Open the STL file picker.
+   * Prefers the File System Access API (showOpenFilePicker) because it can be
+   * called from async contexts without losing the user-gesture requirement.
+   * Falls back to a hidden <input type="file"> for Firefox / Safari.
+   */
+  private openSTLPicker(): void {
+    if ('showOpenFilePicker' in window) {
+      (async () => {
+        try {
+          const [handle] = await (window as any).showOpenFilePicker({
+            types: [{ description: 'STL Files', accept: { 'application/octet-stream': ['.stl'] } }],
+            excludeAcceptAllOption: false,
+            multiple: false,
+          });
+          const file: File = await handle.getFile();
+          this.loadFile(file);
+        } catch {
+          // User cancelled the picker — do nothing.
+        }
+      })();
+    } else {
+      // Fallback: traditional hidden input (requires synchronous user-gesture context;
+      // works in Firefox / Safari where showOpenFilePicker is unavailable).
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.stl';
+      input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) this.loadFile(file);
+      };
+      input.click();
+    }
   }
 
   private setupDragDrop(element: HTMLElement): void {
@@ -261,7 +293,10 @@ export class App {
       element.classList.remove('drag-over');
       const file = e.dataTransfer?.files[0];
       if (file && file.name.toLowerCase().endsWith('.stl')) {
-        this.handlePreLoadSave(() => this.loadFile(file));
+        (async () => {
+          await this.runSaveFlowIfNeeded();
+          this.loadFile(file);
+        })();
       } else {
         this.status.setStatus('Please drop an STL file.');
       }
@@ -271,63 +306,46 @@ export class App {
   // ---- Pre-load save flow ----
 
   /**
-   * Intercepts any STL load attempt.
-   * If there are current analysis results the user is asked whether to save them
-   * to Excel first. Once the save flow completes (or is skipped) `proceed` is called
-   * to actually load the new file.
+   * If there are current analysis results, guides the user through the
+   * save-to-Excel flow before a new STL is loaded.
+   * Always resolves (never rejects) — cancelling save still allows loading.
    */
-  private handlePreLoadSave(proceed: () => void): void {
-    if (!this.currentResults) {
-      proceed();
-      return;
-    }
+  private async runSaveFlowIfNeeded(): Promise<void> {
+    if (!this.currentResults) return;
 
     const prosthesisName = this.fileName;
     const results = this.currentResults;
     const params = { ...this.params };
 
-    // Run the async flow without blocking the synchronous caller
-    (async () => {
-      const wantSave = await this.saveDialog.askWantToSave(prosthesisName);
-      if (!wantSave) { proceed(); return; }
+    const wantSave = await this.saveDialog.askWantToSave(prosthesisName);
+    if (!wantSave) return;
 
-      const action = await this.saveDialog.askCreateOrAppend();
-      if (action === 'cancel') { proceed(); return; }
+    const action = await this.saveDialog.askCreateOrAppend();
+    if (action === 'cancel') return;
 
-      const rows = extractRows(prosthesisName, results, params);
+    const rows = extractRows(prosthesisName, results, params);
 
-      if (action === 'create') {
-        // Ask for a file name, then try the FSA save picker (Chrome/Edge);
-        // fall back to blob download on unsupported browsers.
-        const fileName = await this.saveDialog.askFileName(prosthesisName);
-        if (!fileName) { proceed(); return; }
+    if (action === 'create') {
+      const fileName = await this.saveDialog.askFileName(prosthesisName);
+      if (!fileName) return;
 
-        const wb = createWorkbook(rows);
-        const handle = await this.saveDialog.askSaveFilePicker(fileName);
-        await writeWorkbook(wb, fileName, handle ?? undefined);
-      } else {
-        // Append to an existing file
-        const picked = await this.saveDialog.askPickExistingFile();
-        if (!picked) { proceed(); return; }
+      const wb = createWorkbook(rows);
+      const handle = await this.saveDialog.askSaveFilePicker(fileName);
+      await writeWorkbook(wb, fileName, handle ?? undefined);
+    } else {
+      const picked = await this.saveDialog.askPickExistingFile();
+      if (!picked) return;
 
-        const buffer = await picked.file.arrayBuffer();
-        const wb = parseWorkbook(buffer);
+      const buffer = await picked.file.arrayBuffer();
+      const wb = parseWorkbook(buffer);
 
-        if (prosthesisExistsInWorkbook(wb, prosthesisName)) {
-          const decision = await this.saveDialog.askOverwriteOrSkip(prosthesisName);
-          if (decision === 'skip') { proceed(); return; }
-          mergeWorkbook(wb, prosthesisName, rows);
-        } else {
-          mergeWorkbook(wb, prosthesisName, rows);
-        }
-
-        // Use the FSA handle for in-place write when available, otherwise download
-        const outName = picked.file.name;
-        await writeWorkbook(wb, outName, picked.handle);
+      if (prosthesisExistsInWorkbook(wb, prosthesisName)) {
+        const decision = await this.saveDialog.askOverwriteOrSkip(prosthesisName);
+        if (decision === 'skip') return;
       }
-
-      proceed();
-    })();
+      mergeWorkbook(wb, prosthesisName, rows);
+      await writeWorkbook(wb, picked.file.name, picked.handle);
+    }
   }
 
   private async loadFile(file: File): Promise<void> {
