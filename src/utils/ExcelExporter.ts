@@ -7,8 +7,9 @@
 import type { AnalysisRunResult, AnalysisResults, AnalysisParams } from '../types';
 
 // SheetJS is loaded as a global script from CDN in index.html.
-// This declaration gives TypeScript the correct types without an npm dependency.
-declare const XLSX: typeof import('xlsx');
+// Typed as 'any' to avoid requiring the xlsx npm package at build time.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+declare const XLSX: any;
 
 // ---------------------------------------------------------------------------
 // Column definitions
