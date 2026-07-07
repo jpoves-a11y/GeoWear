@@ -42,6 +42,7 @@ export interface ControlCallbacks {
   onExportCSV: () => void;
   onExportSTL: () => void;
   onExportPDF: () => void;
+  onExportExcel: () => void;
   onShowResults: () => void;
   onParamsChange: (params: AnalysisParams) => void;
   // Exclusion zone
@@ -714,12 +715,14 @@ export class ControlPanel {
       'Data (CSV)': () => this.callbacks.onExportCSV(),
       'Colored Mesh (STL)': () => this.callbacks.onExportSTL(),
       'Report (PDF)': () => this.callbacks.onExportPDF(),
+      'Wear Data (Excel)': () => this.callbacks.onExportExcel(),
     };
 
     folder.add(exports, 'Screenshot (PNG)');
     folder.add(exports, 'Data (CSV)');
     folder.add(exports, 'Colored Mesh (STL)');
     folder.add(exports, 'Report (PDF)');
+    folder.add(exports, 'Wear Data (Excel)');
 
     folder.close();
   }

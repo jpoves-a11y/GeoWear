@@ -183,6 +183,7 @@ export class App {
       onExportCSV: () => this.exportCSV(),
       onExportSTL: () => this.exportSTL(),
       onExportPDF: () => this.exportPDF(),
+      onExportExcel: () => this.exportExcel(),
       onShowResults: () => {
         if (this.currentResults) {
           this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
@@ -235,43 +236,14 @@ export class App {
   // ---- File Loading ----
 
   private openFileDialog(): void {
-    if ('showOpenFilePicker' in window) {
-      // Chrome / Edge: showOpenFilePicker is designed for async contexts.
-      // Show the save dialog BEFORE the file picker opens.
-      (async () => {
-        await this.runSaveFlowIfNeeded();
-        try {
-          const [handle] = await (window as any).showOpenFilePicker({
-            types: [{ description: 'STL Files', accept: { 'application/octet-stream': ['.stl'] } }],
-            excludeAcceptAllOption: false,
-            multiple: false,
-          });
-          const file: File = await handle.getFile();
-          this.loadFile(file);
-        } catch {
-          // User cancelled the picker — do nothing.
-        }
-      })();
-    } else {
-      // Firefox / Safari: input.click() must be called synchronously within
-      // the user-gesture context, so the file picker opens first.
-      // The save dialog is shown in onchange, before the new file loads.
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.stl';
-      input.onchange = (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (!file) return;
-        // Small delay so the OS file picker is fully closed before the modal renders.
-        setTimeout(() => {
-          (async () => {
-            await this.runSaveFlowIfNeeded();
-            this.loadFile(file);
-          })();
-        }, 150);
-      };
-      input.click();
-    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.stl';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) this.loadFile(file);
+    };
+    input.click();
   }
 
   private setupDragDrop(element: HTMLElement): void {
@@ -289,41 +261,27 @@ export class App {
       element.classList.remove('drag-over');
       const file = e.dataTransfer?.files[0];
       if (file && file.name.toLowerCase().endsWith('.stl')) {
-        (async () => {
-          await this.runSaveFlowIfNeeded();
-          this.loadFile(file);
-        })();
+        this.loadFile(file);
       } else {
         this.status.setStatus('Please drop an STL file.');
       }
     });
   }
 
-  // ---- Pre-load save flow ----
+  // ---- Excel export ----
 
-  /**
-   * If there are current analysis results, guides the user through the
-   * save-to-Excel flow before a new STL is loaded.
-   * Always resolves (never rejects) — cancelling save still allows loading.
-   */
-  private async runSaveFlowIfNeeded(): Promise<void> {
-    // Skip if no analysis has been run yet
-    if (!this.currentResults) return;
+  private async exportExcel(): Promise<void> {
+    if (!this.currentResults) {
+      this.status.setStatus('Run analysis first before exporting to Excel.');
+      return;
+    }
 
     const prosthesisName = this.fileName;
-    const results = this.currentResults;
-    const params = { ...this.params };
-
-    // --- Step 1: ask whether to save at all ---
-    const wantSave = await this.saveDialog.askWantToSave(prosthesisName);
-    if (!wantSave) return;
+    const rows = extractRows(prosthesisName, this.currentResults, this.params);
+    const xlsxAvailable = !!(window as any).XLSX;
 
     const action = await this.saveDialog.askCreateOrAppend();
     if (action === 'cancel') return;
-
-    // --- Step 2: extract data rows (pure TS, no library needed) ---
-    const rows = extractRows(prosthesisName, results, params);
-    const xlsxAvailable = !!(window as any).XLSX;
 
     if (action === 'create') {
       const fileName = await this.saveDialog.askFileName(prosthesisName);
@@ -333,13 +291,14 @@ export class App {
         const wb = createWorkbook(rows);
         const handle = await this.saveDialog.askSaveFilePicker(fileName);
         await writeWorkbook(wb, fileName, handle ?? undefined);
+        this.status.setStatus(`Excel guardado: ${fileName}.xlsx`);
       } else {
-        // Fallback: download as CSV (opens correctly in Excel)
         downloadRowsAsCSV(rows, fileName);
+        this.status.setStatus(`CSV guardado: ${fileName}.csv`);
       }
     } else {
       if (!xlsxAvailable) {
-        this.status.setStatus('SheetJS no disponible — usa "Crear nuevo" para exportar CSV.');
+        this.status.setStatus('SheetJS CDN no disponible — usa "Crear nuevo" para exportar CSV.');
         return;
       }
       const picked = await this.saveDialog.askPickExistingFile();
@@ -354,6 +313,7 @@ export class App {
       }
       mergeWorkbook(wb, prosthesisName, rows);
       await writeWorkbook(wb, picked.file.name, picked.handle);
+      this.status.setStatus(`Excel actualizado: ${picked.file.name}`);
     }
   }
 
