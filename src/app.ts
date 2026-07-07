@@ -234,24 +234,11 @@ export class App {
   // ---- File Loading ----
 
   private openFileDialog(): void {
-    // Run the save-flow first (async), then open the STL file picker.
-    // showOpenFilePicker() is used when available because it is designed to work
-    // from async contexts (Chrome / Edge); a hidden <input> is used as fallback.
-    (async () => {
-      await this.runSaveFlowIfNeeded();
-      this.openSTLPicker();
-    })();
-  }
-
-  /**
-   * Open the STL file picker.
-   * Prefers the File System Access API (showOpenFilePicker) because it can be
-   * called from async contexts without losing the user-gesture requirement.
-   * Falls back to a hidden <input type="file"> for Firefox / Safari.
-   */
-  private openSTLPicker(): void {
     if ('showOpenFilePicker' in window) {
+      // Chrome / Edge: showOpenFilePicker is designed for async contexts.
+      // Show the save dialog BEFORE the file picker opens.
       (async () => {
+        await this.runSaveFlowIfNeeded();
         try {
           const [handle] = await (window as any).showOpenFilePicker({
             types: [{ description: 'STL Files', accept: { 'application/octet-stream': ['.stl'] } }],
@@ -265,14 +252,19 @@ export class App {
         }
       })();
     } else {
-      // Fallback: traditional hidden input (requires synchronous user-gesture context;
-      // works in Firefox / Safari where showOpenFilePicker is unavailable).
+      // Firefox / Safari: input.click() must be called synchronously within
+      // the user-gesture context, so the file picker opens first.
+      // The save dialog is shown in onchange, before the new file loads.
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = '.stl';
       input.onchange = (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
-        if (file) this.loadFile(file);
+        if (!file) return;
+        (async () => {
+          await this.runSaveFlowIfNeeded();
+          this.loadFile(file);
+        })();
       };
       input.click();
     }
