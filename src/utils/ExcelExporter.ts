@@ -134,7 +134,7 @@ export function extractRows(
 }
 
 /** Create a brand-new workbook with header row + the supplied data rows. */
-export function createWorkbook(rows: RowArray[]): XLSX.WorkBook {
+export function createWorkbook(rows: RowArray[]): any {
   const aoa: RowArray[] = [HEADERS as unknown as RowArray, ...rows];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new();
@@ -143,7 +143,7 @@ export function createWorkbook(rows: RowArray[]): XLSX.WorkBook {
 }
 
 /** Parse an existing .xlsx file buffer into a SheetJS WorkBook. */
-export function parseWorkbook(buffer: ArrayBuffer): XLSX.WorkBook {
+export function parseWorkbook(buffer: ArrayBuffer): any {
   return XLSX.read(new Uint8Array(buffer), { type: 'array' });
 }
 
@@ -151,9 +151,9 @@ export function parseWorkbook(buffer: ArrayBuffer): XLSX.WorkBook {
  * Check whether a prosthesis name already has a row block in the workbook.
  * Scans column A (index 0) of the first sheet.
  */
-export function prosthesisExistsInWorkbook(wb: XLSX.WorkBook, prosthesisName: string): boolean {
+export function prosthesisExistsInWorkbook(wb: any, prosthesisName: string): boolean {
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const aoa = XLSX.utils.sheet_to_json<(string | number | undefined)[]>(ws, { header: 1 });
+  const aoa: (string | number | undefined)[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
   for (let i = 1; i < aoa.length; i++) {
     if (aoa[i]?.[0] === prosthesisName) return true;
   }
@@ -168,13 +168,13 @@ export function prosthesisExistsInWorkbook(wb: XLSX.WorkBook, prosthesisName: st
  * - If no block is found `newRows` are appended at the end.
  */
 export function mergeWorkbook(
-  wb: XLSX.WorkBook,
+  wb: any,
   prosthesisName: string,
   newRows: RowArray[],
-): XLSX.WorkBook {
+): any {
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
-  const aoa = XLSX.utils.sheet_to_json<(string | number | undefined)[]>(ws, { header: 1 });
+  const aoa: (string | number | undefined)[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
   // Locate the existing block for this prosthesis
   let blockStart = -1;
@@ -212,7 +212,7 @@ export function mergeWorkbook(
  * Trigger a browser download of the workbook as an .xlsx file.
  * Used as the universal fallback when the File System Access API is unavailable.
  */
-export function downloadWorkbook(wb: XLSX.WorkBook, fileName: string): void {
+export function downloadWorkbook(wb: any, fileName: string): void {
   const name = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
   XLSX.writeFile(wb, name);
 }
@@ -222,7 +222,7 @@ export function downloadWorkbook(wb: XLSX.WorkBook, fileName: string): void {
  * Chrome/Edge — allows in-place overwrite) or fall back to a blob download.
  */
 export async function writeWorkbook(
-  wb: XLSX.WorkBook,
+  wb: any,
   fileName: string,
   fileHandle?: FileSystemFileHandle,
 ): Promise<void> {
