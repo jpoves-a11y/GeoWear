@@ -31,6 +31,7 @@ import {
   prosthesisExistsInWorkbook,
   mergeWorkbook,
   writeWorkbook,
+  downloadRowsAsCSV,
 } from './utils/ExcelExporter';
 
 export class App {
@@ -261,9 +262,8 @@ export class App {
       input.onchange = (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
-        console.log('[GeoWear] onchange fired, file:', file.name, '| currentResults:', this.currentResults);
+        // Small delay so the OS file picker is fully closed before the modal renders.
         setTimeout(() => {
-          console.log('[GeoWear] setTimeout: launching save flow, currentResults:', this.currentResults);
           (async () => {
             await this.runSaveFlowIfNeeded();
             this.loadFile(file);
@@ -307,41 +307,41 @@ export class App {
    * Always resolves (never rejects) — cancelling save still allows loading.
    */
   private async runSaveFlowIfNeeded(): Promise<void> {
-    console.log('[GeoWear] runSaveFlowIfNeeded: currentResults=', this.currentResults, '| XLSX loaded=', !!(window as any).XLSX);
-    if (!this.currentResults) {
-      console.log('[GeoWear] No results — skipping save dialog');
-      return;
-    }
-
-    // Verify SheetJS CDN script has loaded
-    if (!(window as any).XLSX) {
-      console.error('[GeoWear] XLSX global not found — CDN script failed to load');
-      this.status.setStatus('Error: SheetJS no cargado (CDN). Comprueba conexión.');
-      return;
-    }
-
-    console.log('[GeoWear] Showing save dialog...');
+    // Skip if no analysis has been run yet
+    if (!this.currentResults) return;
 
     const prosthesisName = this.fileName;
     const results = this.currentResults;
     const params = { ...this.params };
 
+    // --- Step 1: ask whether to save at all ---
     const wantSave = await this.saveDialog.askWantToSave(prosthesisName);
     if (!wantSave) return;
 
     const action = await this.saveDialog.askCreateOrAppend();
     if (action === 'cancel') return;
 
+    // --- Step 2: extract data rows (pure TS, no library needed) ---
     const rows = extractRows(prosthesisName, results, params);
+    const xlsxAvailable = !!(window as any).XLSX;
 
     if (action === 'create') {
       const fileName = await this.saveDialog.askFileName(prosthesisName);
       if (!fileName) return;
 
-      const wb = createWorkbook(rows);
-      const handle = await this.saveDialog.askSaveFilePicker(fileName);
-      await writeWorkbook(wb, fileName, handle ?? undefined);
+      if (xlsxAvailable) {
+        const wb = createWorkbook(rows);
+        const handle = await this.saveDialog.askSaveFilePicker(fileName);
+        await writeWorkbook(wb, fileName, handle ?? undefined);
+      } else {
+        // Fallback: download as CSV (opens correctly in Excel)
+        downloadRowsAsCSV(rows, fileName);
+      }
     } else {
+      if (!xlsxAvailable) {
+        this.status.setStatus('SheetJS no disponible — usa "Crear nuevo" para exportar CSV.');
+        return;
+      }
       const picked = await this.saveDialog.askPickExistingFile();
       if (!picked) return;
 
