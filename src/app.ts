@@ -31,6 +31,7 @@ import {
   prosthesisExistsInWorkbook,
   mergeWorkbook,
   writeWorkbook,
+  downloadWorkbook,
   downloadRowsAsCSV,
 } from './utils/ExcelExporter';
 
@@ -270,15 +271,73 @@ export class App {
 
   // ---- Excel export ----
 
-  private async exportExcel(): Promise<void> {
+  /**
+   * Entry point — must NOT be async so that showSaveFilePicker (File System
+   * Access API) is called synchronously within the user-gesture context before
+   * any awaits expire the transient activation.
+   */
+  private exportExcel(): void {
     if (!this.currentResults) {
       this.status.setStatus('Run analysis first before exporting to Excel.');
       return;
     }
 
-    const prosthesisName = this.fileName;
-    const rows = extractRows(prosthesisName, this.currentResults, this.params);
     const xlsxAvailable = !!(window as any).XLSX;
+
+    if ('showSaveFilePicker' in window && xlsxAvailable) {
+      // ---- FSA path: save picker opened immediately (gesture still valid) ----
+      (window as any)
+        .showSaveFilePicker({
+          suggestedName: `${this.fileName}.xlsx`,
+          types: [{
+            description: 'Excel',
+            accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
+          }],
+        })
+        .then((handle: FileSystemFileHandle) => this.runExcelExportFSA(handle))
+        .catch(() => { /* user cancelled the picker */ });
+    } else {
+      // ---- Fallback path: modal dialogs + download ----
+      (async () => this.runExcelExportDownload(xlsxAvailable))();
+    }
+  }
+
+  /** FSA path — write in-place, no Downloads renaming. */
+  private async runExcelExportFSA(handle: FileSystemFileHandle): Promise<void> {
+    const prosthesisName = this.fileName;
+    const rows = extractRows(prosthesisName, this.currentResults!, this.params);
+
+    // Try to read existing content (file may already exist if user picked it)
+    let existingWb: any = null;
+    try {
+      const existingFile = await handle.getFile();
+      if (existingFile.size > 0) {
+        const buffer = await existingFile.arrayBuffer();
+        existingWb = parseWorkbook(buffer);
+      }
+    } catch { /* new file — no existing content */ }
+
+    if (existingWb) {
+      // Existing file: merge new data into it
+      if (prosthesisExistsInWorkbook(existingWb, prosthesisName)) {
+        const decision = await this.saveDialog.askOverwriteOrSkip(prosthesisName);
+        if (decision === 'skip') return;
+      }
+      mergeWorkbook(existingWb, prosthesisName, rows);
+      await writeWorkbook(existingWb, prosthesisName, handle);
+      this.status.setStatus(`Excel actualizado: ${prosthesisName}.xlsx`);
+    } else {
+      // New file: create fresh workbook
+      const wb = createWorkbook(rows);
+      await writeWorkbook(wb, prosthesisName, handle);
+      this.status.setStatus(`Excel guardado: ${prosthesisName}.xlsx`);
+    }
+  }
+
+  /** Fallback path for browsers without FSA — uses modal dialogs and downloads. */
+  private async runExcelExportDownload(xlsxAvailable: boolean): Promise<void> {
+    const prosthesisName = this.fileName;
+    const rows = extractRows(prosthesisName, this.currentResults!, this.params);
 
     const action = await this.saveDialog.askCreateOrAppend();
     if (action === 'cancel') return;
@@ -289,12 +348,11 @@ export class App {
 
       if (xlsxAvailable) {
         const wb = createWorkbook(rows);
-        const handle = await this.saveDialog.askSaveFilePicker(fileName);
-        await writeWorkbook(wb, fileName, handle ?? undefined);
-        this.status.setStatus(`Excel guardado: ${fileName}.xlsx`);
+        downloadWorkbook(wb, fileName);
+        this.status.setStatus(`Excel descargado: ${fileName}.xlsx`);
       } else {
         downloadRowsAsCSV(rows, fileName);
-        this.status.setStatus(`CSV guardado: ${fileName}.csv`);
+        this.status.setStatus(`CSV descargado: ${fileName}.csv`);
       }
     } else {
       if (!xlsxAvailable) {
@@ -312,8 +370,8 @@ export class App {
         if (decision === 'skip') return;
       }
       mergeWorkbook(wb, prosthesisName, rows);
-      await writeWorkbook(wb, picked.file.name, picked.handle);
-      this.status.setStatus(`Excel actualizado: ${picked.file.name}`);
+      downloadWorkbook(wb, picked.file.name);
+      this.status.setStatus(`Excel descargado: ${picked.file.name}`);
     }
   }
 
