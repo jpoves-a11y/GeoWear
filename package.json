@@ -17,8 +17,7 @@
     "jspdf": "^4.2.0",
     "lil-gui": "^0.21.0",
     "ml-matrix": "^6.12.1",
-    "three": "^0.183.1",
-    "xlsx": "^0.18.5"
+    "three": "^0.183.1"
   },
   "devDependencies": {
     "@types/three": "^0.183.1",

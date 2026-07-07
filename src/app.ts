@@ -261,10 +261,13 @@ export class App {
       input.onchange = (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
-        (async () => {
-          await this.runSaveFlowIfNeeded();
-          this.loadFile(file);
-        })();
+        // Small delay so the OS file picker is fully closed before the modal renders.
+        setTimeout(() => {
+          (async () => {
+            await this.runSaveFlowIfNeeded();
+            this.loadFile(file);
+          })();
+        }, 150);
       };
       input.click();
     }

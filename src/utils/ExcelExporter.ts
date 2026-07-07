@@ -1,11 +1,14 @@
 // ============================================================
 // GeoWear — ExcelExporter
 // Builds and mutates Excel (.xlsx) workbooks from analysis results.
-// Uses SheetJS (xlsx) for all spreadsheet operations.
+// Uses SheetJS loaded from CDN (window.XLSX) — no npm install required.
 // ============================================================
 
-import * as XLSX from 'xlsx';
 import type { AnalysisRunResult, AnalysisResults, AnalysisParams } from '../types';
+
+// SheetJS is loaded as a global script from CDN in index.html.
+// This declaration gives TypeScript the correct types without an npm dependency.
+declare const XLSX: typeof import('xlsx');
 
 // ---------------------------------------------------------------------------
 // Column definitions
