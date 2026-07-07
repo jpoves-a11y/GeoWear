@@ -234,16 +234,16 @@ export class App {
   // ---- File Loading ----
 
   private openFileDialog(): void {
-    this.handlePreLoadSave(() => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.stl';
-      input.onchange = (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (file) this.loadFile(file);
-      };
-      input.click();
-    });
+    // The file picker must be opened synchronously within the user-gesture context.
+    // The save dialog is shown afterwards from onchange, once the file is already captured.
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.stl';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) this.handlePreLoadSave(() => this.loadFile(file));
+    };
+    input.click();
   }
 
   private setupDragDrop(element: HTMLElement): void {
