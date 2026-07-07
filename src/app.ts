@@ -23,6 +23,15 @@ import { RimPlanePickManager } from './viewer/RimPlanePickManager';
 import { HoleSeedPickManager } from './viewer/HoleSeedPickManager';
 import { trimRim, computeRimAnchor, rimAnchorToPlanePoint, type RimAnchor } from './analysis/MeshProcessor';
 import { computeTiltedRimNormal, fitPlaneFromPoints, decomposeNormalToInclination } from './utils/geometry';
+import { SaveDialog } from './ui/SaveDialog';
+import {
+  extractRows,
+  createWorkbook,
+  parseWorkbook,
+  prosthesisExistsInWorkbook,
+  mergeWorkbook,
+  writeWorkbook,
+} from './utils/ExcelExporter';
 
 export class App {
   // Core viewer
@@ -76,6 +85,9 @@ export class App {
   private manualNonWornPositions: Float32Array | null = null;
   private manualNonWornCount: number = 0;
   private manualLassoManager: LassoSelectionManager | null = null;
+
+  // Save-to-Excel dialog
+  private saveDialog: SaveDialog = new SaveDialog();
 
   // Rim-plane preview performance: cache mesh geometry stats so the disc
   // can be updated instantly (O(1)) without re-running the O(F) edge map.
@@ -222,14 +234,16 @@ export class App {
   // ---- File Loading ----
 
   private openFileDialog(): void {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.stl';
-    input.onchange = (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) this.loadFile(file);
-    };
-    input.click();
+    this.handlePreLoadSave(() => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.stl';
+      input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) this.loadFile(file);
+      };
+      input.click();
+    });
   }
 
   private setupDragDrop(element: HTMLElement): void {
@@ -247,11 +261,73 @@ export class App {
       element.classList.remove('drag-over');
       const file = e.dataTransfer?.files[0];
       if (file && file.name.toLowerCase().endsWith('.stl')) {
-        this.loadFile(file);
+        this.handlePreLoadSave(() => this.loadFile(file));
       } else {
         this.status.setStatus('Please drop an STL file.');
       }
     });
+  }
+
+  // ---- Pre-load save flow ----
+
+  /**
+   * Intercepts any STL load attempt.
+   * If there are current analysis results the user is asked whether to save them
+   * to Excel first. Once the save flow completes (or is skipped) `proceed` is called
+   * to actually load the new file.
+   */
+  private handlePreLoadSave(proceed: () => void): void {
+    if (!this.currentResults) {
+      proceed();
+      return;
+    }
+
+    const prosthesisName = this.fileName;
+    const results = this.currentResults;
+    const params = { ...this.params };
+
+    // Run the async flow without blocking the synchronous caller
+    (async () => {
+      const wantSave = await this.saveDialog.askWantToSave(prosthesisName);
+      if (!wantSave) { proceed(); return; }
+
+      const action = await this.saveDialog.askCreateOrAppend();
+      if (action === 'cancel') { proceed(); return; }
+
+      const rows = extractRows(prosthesisName, results, params);
+
+      if (action === 'create') {
+        // Ask for a file name, then try the FSA save picker (Chrome/Edge);
+        // fall back to blob download on unsupported browsers.
+        const fileName = await this.saveDialog.askFileName(prosthesisName);
+        if (!fileName) { proceed(); return; }
+
+        const wb = createWorkbook(rows);
+        const handle = await this.saveDialog.askSaveFilePicker(fileName);
+        await writeWorkbook(wb, fileName, handle ?? undefined);
+      } else {
+        // Append to an existing file
+        const picked = await this.saveDialog.askPickExistingFile();
+        if (!picked) { proceed(); return; }
+
+        const buffer = await picked.file.arrayBuffer();
+        const wb = parseWorkbook(buffer);
+
+        if (prosthesisExistsInWorkbook(wb, prosthesisName)) {
+          const decision = await this.saveDialog.askOverwriteOrSkip(prosthesisName);
+          if (decision === 'skip') { proceed(); return; }
+          mergeWorkbook(wb, prosthesisName, rows);
+        } else {
+          mergeWorkbook(wb, prosthesisName, rows);
+        }
+
+        // Use the FSA handle for in-place write when available, otherwise download
+        const outName = picked.file.name;
+        await writeWorkbook(wb, outName, picked.handle);
+      }
+
+      proceed();
+    })();
   }
 
   private async loadFile(file: File): Promise<void> {
