@@ -261,10 +261,9 @@ export class App {
       input.onchange = (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
-        this.status.setStatus('[debug] archivo seleccionado, esperando...');
-        // Small delay so the OS file picker is fully closed before the modal renders.
+        console.log('[GeoWear] onchange fired, file:', file.name, '| currentResults:', this.currentResults);
         setTimeout(() => {
-          this.status.setStatus('[debug] lanzando flujo de guardado...');
+          console.log('[GeoWear] setTimeout: launching save flow, currentResults:', this.currentResults);
           (async () => {
             await this.runSaveFlowIfNeeded();
             this.loadFile(file);
@@ -308,18 +307,20 @@ export class App {
    * Always resolves (never rejects) — cancelling save still allows loading.
    */
   private async runSaveFlowIfNeeded(): Promise<void> {
+    console.log('[GeoWear] runSaveFlowIfNeeded: currentResults=', this.currentResults, '| XLSX loaded=', !!(window as any).XLSX);
     if (!this.currentResults) {
-      this.status.setStatus('[debug] sin resultados, cargando directamente');
+      console.log('[GeoWear] No results — skipping save dialog');
       return;
     }
 
     // Verify SheetJS CDN script has loaded
     if (!(window as any).XLSX) {
-      this.status.setStatus('[debug] XLSX no cargado — comprueba conexión a CDN');
+      console.error('[GeoWear] XLSX global not found — CDN script failed to load');
+      this.status.setStatus('Error: SheetJS no cargado (CDN). Comprueba conexión.');
       return;
     }
 
-    this.status.setStatus('[debug] mostrando diálogo de guardado...');
+    console.log('[GeoWear] Showing save dialog...');
 
     const prosthesisName = this.fileName;
     const results = this.currentResults;
