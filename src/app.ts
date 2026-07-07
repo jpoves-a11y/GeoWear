@@ -261,8 +261,10 @@ export class App {
       input.onchange = (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
         if (!file) return;
+        this.status.setStatus('[debug] archivo seleccionado, esperando...');
         // Small delay so the OS file picker is fully closed before the modal renders.
         setTimeout(() => {
+          this.status.setStatus('[debug] lanzando flujo de guardado...');
           (async () => {
             await this.runSaveFlowIfNeeded();
             this.loadFile(file);
@@ -306,7 +308,18 @@ export class App {
    * Always resolves (never rejects) — cancelling save still allows loading.
    */
   private async runSaveFlowIfNeeded(): Promise<void> {
-    if (!this.currentResults) return;
+    if (!this.currentResults) {
+      this.status.setStatus('[debug] sin resultados, cargando directamente');
+      return;
+    }
+
+    // Verify SheetJS CDN script has loaded
+    if (!(window as any).XLSX) {
+      this.status.setStatus('[debug] XLSX no cargado — comprueba conexión a CDN');
+      return;
+    }
+
+    this.status.setStatus('[debug] mostrando diálogo de guardado...');
 
     const prosthesisName = this.fileName;
     const results = this.currentResults;
