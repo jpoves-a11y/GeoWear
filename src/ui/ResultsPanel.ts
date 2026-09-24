@@ -527,9 +527,17 @@ export class ResultsPanel {
     this.addMetric(section, 'Thresh1 Values', ds.thresh1Values.length.toString());
     this.addMetric(section, 'Thresh2 Values', ds.thresh2Values.length.toString());
     this.addMetric(section, 'Computed Cells', ds.cells.length.toString());
+    if (ds.seed != null) this.addMetric(section, 'Bootstrap Seed', ds.seed.toString());
+    if (ds.estimator) {
+      this.addMetric(section, 'Cell Selection', ds.estimator === 'stable-quartile' ? 'Median of most stable 25%' : 'Min-dispersion cell (legacy)');
+    }
+    if (ds.cellDistanceMedian != null && ds.cellDistanceIQR) {
+      this.addMetric(section, 'Sweep Median (IQR)',
+        `${(ds.cellDistanceMedian * 1000).toFixed(1)} (${(ds.cellDistanceIQR[0] * 1000).toFixed(1)}–${(ds.cellDistanceIQR[1] * 1000).toFixed(1)})`, 'μm');
+    }
     if (ds.bestCell) {
-      this.addMetric(section, 'Best Thresh1', ds.bestCell.thresh1.toFixed(3));
-      this.addMetric(section, 'Best Thresh2', ds.bestCell.thresh2.toFixed(3));
+      this.addMetric(section, 'Selected Thresh1', ds.bestCell.thresh1.toFixed(3));
+      this.addMetric(section, 'Selected Thresh2', ds.bestCell.thresh2.toFixed(3));
       this.addMetric(section, 'Best Center Dist Mean', ds.bestCell.centerDistanceMean.toFixed(4), 'mm', 'warning', true);
       this.addMetric(section, 'Best Center Dist Std', ds.bestCell.centerDistanceStd.toFixed(4), 'mm');
       if (this.yearsInVivo > 0) {
@@ -667,6 +675,17 @@ export class ResultsPanel {
     const wc = results.wearClassification!;
 
     this.addMetric(section, 'Threshold', wc.threshold.toFixed(3), 'mm');
+    if (wc.thresholdMode) {
+      this.addMetric(section, 'Threshold Rule', wc.thresholdMode === 'noise-adaptive' ? 'Noise-adaptive (k·σ)' : 'Legacy 1.02·R');
+    }
+    if (wc.thresholdMode === 'noise-adaptive') {
+      this.addMetric(section, 'Scan Noise σ (MAD)', (wc.noiseSigmaUm ?? 0).toFixed(1), 'μm');
+      this.addMetric(section, 'Reference Baseline', (wc.baselineUm ?? 0).toFixed(1), 'μm');
+      this.addMetric(section, 'Threshold over R', (wc.depthThresholdUm ?? 0).toFixed(1), 'μm');
+      if (wc.noiseAboveLegacy) {
+        this.addMetric(section, 'Warning', 'Surface deviates from the sphere more than noise — threshold capped at 2 %', undefined, 'warning');
+      }
+    }
     this.addMetric(section, 'Worn Vertices', wc.wornCount.toLocaleString(), undefined,
       wc.wornCount > 0 ? 'danger' : 'success');
     this.addMetric(section, 'Unworn Vertices', wc.unwornCount.toLocaleString(), undefined, 'success');

@@ -6,6 +6,7 @@
 import { Matrix, solve } from 'ml-matrix';
 import type { SphereFitResult } from '../types';
 import * as THREE from 'three';
+import { robustSigma } from '../utils/random';
 
 /**
  * Fit a sphere to a set of 3D points using the algebraic (linearized) method.
@@ -241,64 +242,16 @@ export function fitSphereFixedRadius(
     return { center: new THREE.Vector3(), radius: fixedRadius, rmsError: 0 };
   }
 
-  // Initial center = centroid of points
-  let cx = 0, cy = 0, cz = 0;
-  for (let i = 0; i < n; i++) {
-    cx += positions[i * 3];
-    cy += positions[i * 3 + 1];
-    cz += positions[i * 3 + 2];
-  }
-  cx /= n; cy /= n; cz /= n;
+  // Initial centre: algebraic free-radius fit (close to the optimum even for a
+  // partial cap). The former start at the point centroid lies near the surface for
+  // a small patch, and the fixed-point iteration then needs far more than 30 steps.
+  let [cx, cy, cz] = initialCentre(positions, n);
+  // `iterations` is kept as the Gauss–Newton iteration cap (converges in a few steps).
+  [cx, cy, cz] = gaussNewtonFixedRadius(positions, n, fixedRadius, cx, cy, cz, null, Math.max(iterations, 50));
 
-  for (let iter = 0; iter < iterations; iter++) {
-    let nx = 0, ny = 0, nz = 0;
-    for (let i = 0; i < n; i++) {
-      const px = positions[i * 3];
-      const py = positions[i * 3 + 1];
-      const pz = positions[i * 3 + 2];
-      const dx = px - cx, dy = py - cy, dz = pz - cz;
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (dist < 1e-12) continue;
-      // Projected center contribution: p_i - R * (p_i - c)/||p_i - c||
-      const s = fixedRadius / dist;
-      nx += px - dx * s;
-      ny += py - dy * s;
-      nz += pz - dz * s;
-    }
-    cx = nx / n;
-    cy = ny / n;
-    cz = nz / n;
-  }
-
-  // Enforce inscribed constraint: sphere must never protrude beyond
-  // the concave inner face. All vertices must satisfy dist(v, center) >= R.
-  for (let attempt = 0; attempt < 100; attempt++) {
-    let dispX = 0, dispY = 0, dispZ = 0;
-    let violationCount = 0;
-
-    for (let i = 0; i < n; i++) {
-      const dx = positions[i * 3] - cx;
-      const dy = positions[i * 3 + 1] - cy;
-      const dz = positions[i * 3 + 2] - cz;
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (d < fixedRadius) {
-        // Vertex is inside the sphere → sphere protrudes beyond inner face
-        const deficit = fixedRadius - d;
-        const invD = 1 / Math.max(d, 1e-12);
-        // Push center away from this vertex
-        dispX -= (dx * invD) * deficit;
-        dispY -= (dy * invD) * deficit;
-        dispZ -= (dz * invD) * deficit;
-        violationCount++;
-      }
-    }
-
-    if (violationCount === 0) break;
-
-    cx += dispX / violationCount;
-    cy += dispY / violationCount;
-    cz += dispZ / violationCount;
-  }
+  // Enforce inscribed constraint (noise-tolerant): the sphere must not
+  // protrude beyond the concave inner face by more than the scan noise.
+  [cx, cy, cz] = enforceInscribedRobust(positions, n, fixedRadius, cx, cy, cz);
 
   // Compute RMS error
   let sumSq = 0;
@@ -368,57 +321,12 @@ export function fitSphereFixedRadiusRobust(
       }
     }
 
-    // Weighted center-only optimization
-    for (let iter = 0; iter < centerIterations; iter++) {
-      let nx = 0, ny = 0, nz = 0, wSum = 0;
-      for (let i = 0; i < n; i++) {
-        if (weights[i] < 1e-8) continue;
-        const px = positions[i * 3];
-        const py = positions[i * 3 + 1];
-        const pz = positions[i * 3 + 2];
-        const dx = px - cx, dy = py - cy, dz = pz - cz;
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist < 1e-12) continue;
-        const s = fixedRadius / dist;
-        const w = weights[i];
-        nx += w * (px - dx * s);
-        ny += w * (py - dy * s);
-        nz += w * (pz - dz * s);
-        wSum += w;
-      }
-      if (wSum > 1e-12) {
-        cx = nx / wSum;
-        cy = ny / wSum;
-        cz = nz / wSum;
-      }
-    }
+    // Weighted centre-only optimisation (Gauss–Newton)
+    [cx, cy, cz] = gaussNewtonFixedRadius(positions, n, fixedRadius, cx, cy, cz, weights, Math.max(centerIterations, 50));
   }
 
-  // Enforce inscribed constraint
-  for (let attempt = 0; attempt < 100; attempt++) {
-    let dispX = 0, dispY = 0, dispZ = 0;
-    let violationCount = 0;
-
-    for (let i = 0; i < n; i++) {
-      const dx = positions[i * 3] - cx;
-      const dy = positions[i * 3 + 1] - cy;
-      const dz = positions[i * 3 + 2] - cz;
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (d < fixedRadius) {
-        const deficit = fixedRadius - d;
-        const invD = 1 / Math.max(d, 1e-12);
-        dispX -= (dx * invD) * deficit;
-        dispY -= (dy * invD) * deficit;
-        dispZ -= (dz * invD) * deficit;
-        violationCount++;
-      }
-    }
-
-    if (violationCount === 0) break;
-    cx += dispX / violationCount;
-    cy += dispY / violationCount;
-    cz += dispZ / violationCount;
-  }
+  // Enforce inscribed constraint (noise-tolerant)
+  [cx, cy, cz] = enforceInscribedRobust(positions, n, fixedRadius, cx, cy, cz);
 
   // Compute RMS error
   let sumSq = 0;
@@ -436,4 +344,120 @@ export function fitSphereFixedRadiusRobust(
     radius: fixedRadius,
     rmsError: Math.sqrt(sumSq / n),
   };
+}
+
+/**
+ * Noise-tolerant inscribed constraint for fixed-radius sphere fits.
+ *
+ * Physically the unworn head sphere cannot lie outside the concave inner face,
+ * i.e. every vertex should satisfy ‖p − c‖ ≥ R. Enforcing this on EVERY vertex
+ * (the original rule) lets the single most negative noise sample decide the
+ * centre, which turns scanner noise into a spurious centre shift.
+ *
+ * Here a vertex only counts as a violation when it lies inside the sphere by
+ * more than `k·σ`, where σ = 1.4826·MAD of the residuals at the least-squares
+ * centre, and up to `allowedFraction` of vertices may still violate that band
+ * (tail of the noise distribution). With noise-free data σ → 0 and the rule
+ * reduces to the original one.
+ */
+export function enforceInscribedRobust(
+  positions: Float32Array,
+  n: number,
+  R: number,
+  cx: number, cy: number, cz: number,
+  k: number = 3,
+  allowedFraction: number = 0.005,
+  maxAttempts: number = 100,
+): [number, number, number] {
+  if (n === 0) return [cx, cy, cz];
+  const res = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const dx = positions[i * 3] - cx, dy = positions[i * 3 + 1] - cy, dz = positions[i * 3 + 2] - cz;
+    res[i] = Math.sqrt(dx * dx + dy * dy + dz * dz) - R;
+  }
+  const tol = k * robustSigma(res).sigma;
+  const allowed = Math.floor(allowedFraction * n);
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let dispX = 0, dispY = 0, dispZ = 0;
+    let violationCount = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = positions[i * 3] - cx;
+      const dy = positions[i * 3 + 1] - cy;
+      const dz = positions[i * 3 + 2] - cz;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const deficit = (R - tol) - d;          // > 0 → inside the sphere beyond the noise band
+      if (deficit > 0) {
+        const invD = 1 / Math.max(d, 1e-12);
+        dispX -= (dx * invD) * deficit;
+        dispY -= (dy * invD) * deficit;
+        dispZ -= (dz * invD) * deficit;
+        violationCount++;
+      }
+    }
+    if (violationCount <= allowed) break;
+    cx += dispX / violationCount;
+    cy += dispY / violationCount;
+    cz += dispZ / violationCount;
+  }
+  return [cx, cy, cz];
+}
+
+/** Starting centre for fixed-radius fits: algebraic sphere fit, or centroid if degenerate. */
+function initialCentre(positions: Float32Array, n: number): [number, number, number] {
+  if (n >= 4) {
+    const f = fitSphere(positions, n);
+    if (Number.isFinite(f.center.x) && Number.isFinite(f.rmsError)) return [f.center.x, f.center.y, f.center.z];
+  }
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < n; i++) { cx += positions[i * 3]; cy += positions[i * 3 + 1]; cz += positions[i * 3 + 2]; }
+  return [cx / n, cy / n, cz / n];
+}
+
+/**
+ * Gauss–Newton for the centre of a sphere of known radius R:
+ *   min_c Σ w_i (‖p_i − c‖ − R)²,   J_i = −(p_i − c)/‖p_i − c‖
+ * Solves the 3×3 normal equations (JᵀWJ) Δ = −JᵀW r each step, with step
+ * halving if the cost increases. Stops when ‖Δ‖ < 1e-9 mm.
+ */
+export function gaussNewtonFixedRadius(
+  positions: Float32Array, n: number, R: number,
+  cx: number, cy: number, cz: number,
+  weights: Float64Array | null, maxIter: number = 50,
+): [number, number, number] {
+  const cost = (x: number, y: number, z: number): number => {
+    let c = 0;
+    for (let i = 0; i < n; i++) {
+      const w = weights ? weights[i] : 1; if (w < 1e-12) continue;
+      const dx = positions[i * 3] - x, dy = positions[i * 3 + 1] - y, dz = positions[i * 3 + 2] - z;
+      const r = Math.sqrt(dx * dx + dy * dy + dz * dz) - R; c += w * r * r;
+    }
+    return c;
+  };
+  let f0 = cost(cx, cy, cz);
+  for (let it = 0; it < maxIter; it++) {
+    let a00 = 0, a01 = 0, a02 = 0, a11 = 0, a12 = 0, a22 = 0, g0 = 0, g1 = 0, g2 = 0;
+    for (let i = 0; i < n; i++) {
+      const w = weights ? weights[i] : 1; if (w < 1e-12) continue;
+      const dx = positions[i * 3] - cx, dy = positions[i * 3 + 1] - cy, dz = positions[i * 3 + 2] - cz;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz); if (d < 1e-12) continue;
+      const jx = -dx / d, jy = -dy / d, jz = -dz / d, r = d - R;
+      a00 += w * jx * jx; a01 += w * jx * jy; a02 += w * jx * jz;
+      a11 += w * jy * jy; a12 += w * jy * jz; a22 += w * jz * jz;
+      g0 += w * jx * r; g1 += w * jy * r; g2 += w * jz * r;
+    }
+    // Solve symmetric 3×3 system A Δ = −g by Cramer's rule
+    const det = a00 * (a11 * a22 - a12 * a12) - a01 * (a01 * a22 - a12 * a02) + a02 * (a01 * a12 - a11 * a02);
+    if (!(Math.abs(det) > 1e-30)) break;
+    const b0 = -g0, b1 = -g1, b2 = -g2;
+    const s0 = (b0 * (a11 * a22 - a12 * a12) - a01 * (b1 * a22 - a12 * b2) + a02 * (b1 * a12 - a11 * b2)) / det;
+    const s1 = (a00 * (b1 * a22 - a12 * b2) - b0 * (a01 * a22 - a12 * a02) + a02 * (a01 * b2 - b1 * a02)) / det;
+    const s2 = (a00 * (a11 * b2 - b1 * a12) - a01 * (a01 * b2 - b1 * a02) + b0 * (a01 * a12 - a11 * a02)) / det;
+    let t = 1, f1 = cost(cx + s0, cy + s1, cz + s2);
+    while (f1 > f0 && t > 1e-4) { t *= 0.5; f1 = cost(cx + t * s0, cy + t * s1, cz + t * s2); }
+    if (f1 > f0) break;
+    cx += t * s0; cy += t * s1; cz += t * s2; f0 = f1;
+    if (t * Math.sqrt(s0 * s0 + s1 * s1 + s2 * s2) < 1e-9) break;
+  }
+  return [cx, cy, cz];
 }

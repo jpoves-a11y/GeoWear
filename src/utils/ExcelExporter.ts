@@ -26,6 +26,10 @@ const HEADERS = [
   'Rim trim (%)',
   'Rim inclination (º)',
   'Rim azimuth (º)',
+  'Regla de umbral',
+  'Ruido σ (μm)',
+  'Umbral sobre R (μm)',
+  'Semilla DSM',
 ] as const;
 
 const MODE_LABELS: Record<string, string> = {
@@ -52,6 +56,12 @@ function round4(v: number): number { return Math.round(v * 10000) / 10000; }
 interface WearValues {
   linearWearUm: number;
   volumetricWearMm3: number;
+  /** Threshold rule, noise σ and applied threshold (SBF classification) — '' when not applicable */
+  thresholdMode: string;
+  noiseSigmaUm: number | '';
+  thresholdOverRUm: number | '';
+  /** Double-sphere bootstrap seed — '' when not applicable */
+  seed: number | '';
 }
 
 function extractWearValues(result: AnalysisResults): WearValues {
@@ -78,7 +88,14 @@ function extractWearValues(result: AnalysisResults): WearValues {
     volumetricWearMm3 = result.totalBumpVolume ?? 0;
   }
 
-  return { linearWearUm, volumetricWearMm3 };
+  const wc = result.wearClassification;
+  const ds = result.doubleSphereMetrics;
+  const thresholdMode = wc?.thresholdMode ?? ds?.thresholdMode ?? '';
+  const noiseSigmaUm = wc?.noiseSigmaUm != null ? round2(wc.noiseSigmaUm) : '';
+  const thresholdOverRUm = wc?.depthThresholdUm != null ? round2(wc.depthThresholdUm) : '';
+  const seed = ds?.seed ?? '';
+
+  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed };
 }
 
 type RowArray = (string | number)[];
@@ -102,6 +119,10 @@ function buildRowArray(
     params.rimTrimPercent,
     params.rimInclinationAngle,
     params.rimInclinationAzimuth,
+    wear.thresholdMode,
+    wear.noiseSigmaUm,
+    wear.thresholdOverRUm,
+    wear.seed,
   ];
 }
 
@@ -195,6 +216,11 @@ export function mergeWorkbook(
       break;
     }
   }
+
+  // Workbooks created by older versions have fewer columns: extend the header row.
+  const header = (aoa[0] ?? []) as (string | number | undefined)[];
+  for (let c = header.length; c < HEADERS.length; c++) header[c] = HEADERS[c];
+  aoa[0] = header;
 
   if (blockStart !== -1) {
     aoa.splice(blockStart, blockEnd - blockStart, ...newRows);

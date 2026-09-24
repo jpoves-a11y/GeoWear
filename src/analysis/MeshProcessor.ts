@@ -143,6 +143,15 @@ export function separateFaces(meshData: MeshData): SeparationResult {
 
   components.sort((a, b) => b.length - a.length);
   const innerFaceSet = new Set<number>(components[0] ?? []);
+
+  // Step 4b: close pinholes. Scanner noise tilts individual face normals past the
+  // dot > 0.5 test, leaving isolated one-face holes inside the inner surface. Those
+  // holes add spurious boundary loops (confusing rim detection) and remove their
+  // prism volume from the enclosed-volume integral. A rejected face that shares at
+  // least two edges with the inner surface and still faces inward (dot > 0) is
+  // enclosed by it, so it is re-admitted. A few passes close holes of 1–3 faces
+  // without growing the surface past the real rim (rim faces share only one edge).
+  closePinholes(indices, faceData, innerFaceSet);
   const innerFaces: number[] = [];
   const outerFaces: number[] = [];
   for (let f = 0; f < faceCount; f++) {
@@ -174,6 +183,92 @@ export function separateFaces(meshData: MeshData): SeparationResult {
     centroid: [cx, cy, cz],
     cupAxis: axis,
   };
+}
+
+/** Re-admit rejected faces enclosed by the inner surface (see separateFaces, step 4b). */
+function closePinholes(
+  indices: Uint32Array,
+  faceData: Array<{ index: number; dot: number }>,
+  innerFaceSet: Set<number>,
+  passes: number = 3,
+): void {
+  const faceCount = indices.length / 3;
+  const edgeFaces = new Map<string, number[]>();
+  for (let f = 0; f < faceCount; f++) {
+    for (let e = 0; e < 3; e++) {
+      const a = indices[f * 3 + e], b = indices[f * 3 + ((e + 1) % 3)];
+      const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+      const l = edgeFaces.get(k);
+      if (l) l.push(f); else edgeFaces.set(k, [f]);
+    }
+  }
+  for (let pass = 0; pass < passes; pass++) {
+    const add: number[] = [];
+    for (let f = 0; f < faceCount; f++) {
+      if (innerFaceSet.has(f) || faceData[f].dot <= 0) continue;
+      let shared = 0;
+      for (let e = 0; e < 3; e++) {
+        const a = indices[f * 3 + e], b = indices[f * 3 + ((e + 1) % 3)];
+        const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+        if (edgeFaces.get(k)!.some(g => g !== f && innerFaceSet.has(g))) shared++;
+      }
+      if (shared >= 2) add.push(f);
+    }
+    if (add.length === 0) break;
+    for (const f of add) innerFaceSet.add(f);
+  }
+}
+
+/**
+ * Vertices of the cup rim: the boundary loop (connected set of boundary edges)
+ * with the LARGEST 3-D perimeter. Interior holes and pinholes left by the scan or
+ * by face separation form their own, much shorter loops and are ignored, so they
+ * cannot bias the rim centroid, the rim-plane PCA or the rim-side detection.
+ */
+export function findRimLoopVertices(meshData: MeshData): number[] {
+  const { positions, indices } = meshData;
+  const faceCount = indices.length / 3;
+  const edgeCnt = new Map<string, number>();
+  for (let f = 0; f < faceCount; f++) {
+    for (let e = 0; e < 3; e++) {
+      const a = indices[f * 3 + e], b = indices[f * 3 + ((e + 1) % 3)];
+      const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+      edgeCnt.set(k, (edgeCnt.get(k) || 0) + 1);
+    }
+  }
+  const adj = new Map<number, number[]>();
+  const edges: Array<[number, number]> = [];
+  for (const [k, c] of edgeCnt) {
+    if (c !== 1) continue;
+    const [a, b] = k.split('_').map(Number);
+    edges.push([a, b]);
+    if (!adj.has(a)) adj.set(a, []);
+    if (!adj.has(b)) adj.set(b, []);
+    adj.get(a)!.push(b); adj.get(b)!.push(a);
+  }
+  // Connected components of the boundary graph
+  const comp = new Map<number, number>();
+  const members: number[][] = [];
+  for (const v of adj.keys()) {
+    if (comp.has(v)) continue;
+    const id = members.length; const list: number[] = []; const stack = [v]; comp.set(v, id);
+    while (stack.length) {
+      const x = stack.pop()!; list.push(x);
+      for (const y of adj.get(x)!) if (!comp.has(y)) { comp.set(y, id); stack.push(y); }
+    }
+    members.push(list);
+  }
+  if (members.length === 0) return [];
+  const perim = new Float64Array(members.length);
+  for (const [a, b] of edges) {
+    const dx = positions[a * 3] - positions[b * 3];
+    const dy = positions[a * 3 + 1] - positions[b * 3 + 1];
+    const dz = positions[a * 3 + 2] - positions[b * 3 + 2];
+    perim[comp.get(a)!] += Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  let best = 0;
+  for (let i = 1; i < members.length; i++) if (perim[i] > perim[best]) best = i;
+  return members[best];
 }
 
 /**
@@ -515,7 +610,7 @@ export function computeRimAnchor(
   meshData: MeshData,
   cupAxis: [number, number, number],
 ): RimAnchor {
-  const { positions, indices, vertexCount, faceCount } = meshData;
+  const { positions, vertexCount } = meshData;
   const [ax, ay, az] = cupAxis;
 
   // Centroid
@@ -539,24 +634,10 @@ export function computeRimAnchor(
     if (r2 > maxR2) maxR2 = r2;
   }
 
-  // Boundary edge detection to determine which end of the cup axis is the rim
-  const edgeCnt = new Map<string, number>();
-  for (let f = 0; f < faceCount; f++) {
-    for (let e = 0; e < 3; e++) {
-      const a = indices[f * 3 + e], b = indices[f * 3 + ((e + 1) % 3)];
-      const k = a < b ? `${a}_${b}` : `${b}_${a}`;
-      edgeCnt.set(k, (edgeCnt.get(k) || 0) + 1);
-    }
-  }
+  // Which end of the cup axis is the rim: mean height of the rim loop only
+  // (largest-perimeter boundary loop), so interior holes cannot flip the decision.
   let bhSum = 0, bhCnt = 0;
-  const seen = new Set<number>();
-  for (const [k, cnt] of edgeCnt) {
-    if (cnt === 1) {
-      const [a, b] = k.split('_').map(Number);
-      if (!seen.has(a)) { bhSum += heights[a]; bhCnt++; seen.add(a); }
-      if (!seen.has(b)) { bhSum += heights[b]; bhCnt++; seen.add(b); }
-    }
-  }
+  for (const v of findRimLoopVertices(meshData)) { bhSum += heights[v]; bhCnt++; }
   let rimAtHighEnd = true;
   if (bhCnt > 0) {
     const bm = bhSum / bhCnt;
@@ -628,7 +709,7 @@ export function trimRim(
       // Compute the anchor point: intersection of the cup axis with the trim plane.
       // Determined solely by cupAxis + percent, independent of the tilt direction.
       // This ensures tilting the normal pivots the plane around a fixed center.
-      const { positions: pos2, indices: idx2, vertexCount: vc2, faceCount: fc2 } = meshData;
+      const { positions: pos2, vertexCount: vc2 } = meshData;
       const [ax, ay, az] = cupAxis;
       let _cx = 0, _cy = 0, _cz = 0;
       for (let i = 0; i < vc2; i++) {
@@ -646,24 +727,9 @@ export function trimRim(
         if (h > maxHA) maxHA = h;
       }
 
-      // Detect whether rim is at maxHA or minHA along the cup axis
-      const edgeCntA = new Map<string, number>();
-      for (let f = 0; f < fc2; f++) {
-        for (let e = 0; e < 3; e++) {
-          const a = idx2[f * 3 + e], b = idx2[f * 3 + ((e + 1) % 3)];
-          const k = a < b ? `${a}_${b}` : `${b}_${a}`;
-          edgeCntA.set(k, (edgeCntA.get(k) || 0) + 1);
-        }
-      }
+      // Detect whether rim is at maxHA or minHA along the cup axis (rim loop only)
       let bhSumA = 0, bhCntA = 0;
-      const seenA = new Set<number>();
-      for (const [k, cnt] of edgeCntA) {
-        if (cnt === 1) {
-          const [a, b] = k.split('_').map(Number);
-          if (!seenA.has(a)) { bhSumA += heightsA[a]; bhCntA++; seenA.add(a); }
-          if (!seenA.has(b)) { bhSumA += heightsA[b]; bhCntA++; seenA.add(b); }
-        }
-      }
+      for (const v of findRimLoopVertices(meshData)) { bhSumA += heightsA[v]; bhCntA++; }
       rimAtHighEndA = true;
       if (bhCntA > 0) {
         const bmhA = bhSumA / bhCntA;
