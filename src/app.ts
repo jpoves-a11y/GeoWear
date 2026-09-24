@@ -1489,7 +1489,7 @@ export class App {
     const p = this.ensurePipeline();
     try {
       this.status.setStatus('Classifying worn/unworn zones...');
-      p.stepClassifyWear(this.params.rimTrimPercent);
+      p.stepClassifyWear(this.params.rimTrimPercent, this.params.wearThresholdMode, this.params.wearThresholdK, this.params.wearThresholdMinUm);
       this.autoScaleColorRange();
       this.status.setStatus(`Worn vertices: ${p.state.wearClassification!.wornCount}`);
       this.controls.markStepCompleted('classifywear');
@@ -1507,7 +1507,7 @@ export class App {
     try {
       this.status.setStatus('Computing wear volume...');
       p.stepComputeRimPlane(this.params.rimTrimPercent);
-      p.stepClassifyWear(this.params.rimTrimPercent);
+      p.stepClassifyWear(this.params.rimTrimPercent, this.params.wearThresholdMode, this.params.wearThresholdK, this.params.wearThresholdMinUm);
       p.stepFitZoneSpheres(this.params.linearWearFilter, this.params.minWornCoveragePct);
       p.stepComputeWearVolumeBestFit();
       p.stepComputeWearPlane();

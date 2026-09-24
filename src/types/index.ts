@@ -134,8 +134,24 @@ export interface WearClassification {
   wornCount: number;
   unwornCount: number;
   wornPercent: number;
-  threshold: number;            // 1.02 * commercialRadius
+  threshold: number;            // distance-to-centre threshold (mm) actually applied
+  /** Threshold rule used ('relative-2pct' = legacy 1.02·R, 'noise-adaptive' = baseline + k·σ) */
+  thresholdMode?: WearThresholdMode;
+  /** Robust noise estimate of the reference surface, σ = 1.4826·MAD (μm) */
+  noiseSigmaUm?: number;
+  /** Median offset of the reference surface from the commercial sphere (μm) */
+  baselineUm?: number;
+  /** Applied threshold as an offset over the commercial radius, threshold − R (μm) */
+  depthThresholdUm?: number;
+  /** k·σ exceeded the legacy 2 % threshold: the reference surface is not spherical within noise */
+  noiseAboveLegacy?: boolean;
 }
+
+/** Double-sphere cell selection: legacy minimum-dispersion cell, or the median cell of the most stable quarter */
+export type DoubleSphereEstimator = 'min-std-cell' | 'stable-quartile';
+
+/** Rule for deciding which vertices are worn */
+export type WearThresholdMode = 'relative-2pct' | 'noise-adaptive';
 
 /** Linear wear filtering strategies */
 export type LinearWearFilter = 'none' | 'robust-irls' | 'dbscan-spatial' | 'combined';
@@ -209,6 +225,15 @@ export interface DoubleSphereMetricsResult {
   thresh2Values: number[];
   cells: DoubleSphereSweepCellResult[];
   bestCell: DoubleSphereSweepCellResult | null;
+  /** PRNG seed actually used for the bootstrap (reproducible runs) */
+  seed?: number;
+  /** Threshold rule used to select sphere-2 points */
+  thresholdMode?: WearThresholdMode;
+  /** Cell-selection rule used for bestCell */
+  estimator?: DoubleSphereEstimator;
+  /** Median and interquartile range of centerDistanceMean across all sweep cells (mm) */
+  cellDistanceMedian?: number;
+  cellDistanceIQR?: [number, number];
 }
 
 export interface AnalysisResults {
@@ -351,6 +376,11 @@ export interface AnalysisParams {
   doubleSphereThresh2Min: number;
   doubleSphereThresh2Max: number;
   doubleSphereSweepStep: number;
+  doubleSphereSeed: number;            // bootstrap PRNG seed; 0 = derive from mesh geometry
+  doubleSphereEstimator: DoubleSphereEstimator; // how the reported sweep cell is chosen
+  wearThresholdMode: WearThresholdMode; // worn-vertex rule (SBF classification + DSM sphere-2 selection)
+  wearThresholdK: number;              // noise-adaptive: threshold = max(k·σ, min)
+  wearThresholdMinUm: number;          // noise-adaptive: floor of the threshold (μm)
   showCommercialSphere: boolean;
   showWornSphere: boolean;
   showUnwornSphere: boolean;
@@ -395,6 +425,11 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   doubleSphereThresh2Min: 0.08,
   doubleSphereThresh2Max: 0.2,
   doubleSphereSweepStep: 0.02,
+  doubleSphereSeed: 0,
+  doubleSphereEstimator: 'stable-quartile',
+  wearThresholdMode: 'noise-adaptive',
+  wearThresholdK: 3,
+  wearThresholdMinUm: 10,
   showCommercialSphere: false,
   showWornSphere: true,
   showUnwornSphere: true,

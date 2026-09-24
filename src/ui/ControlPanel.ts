@@ -306,7 +306,43 @@ export class ControlPanel {
       .onChange(() => this.callbacks.onParamsChange(this.params));
     this.bestfitVisControllers.push(minCovCtrl);
 
+    // Worn-vertex threshold rule (SBF classification + DSM sphere-2 selection)
+    const thrLabelMap: Record<string, 'noise-adaptive' | 'relative-2pct'> = {
+      'Noise-adaptive (k·σ)': 'noise-adaptive',
+      'Legacy 1.02·R': 'relative-2pct',
+    };
+    const thrProxy = { value: this.params.wearThresholdMode === 'relative-2pct' ? 'Legacy 1.02·R' : 'Noise-adaptive (k·σ)' };
+    wearModel.add(thrProxy, 'value', Object.keys(thrLabelMap))
+      .name('Worn Threshold')
+      .onChange((v: string) => {
+        this.params.wearThresholdMode = thrLabelMap[v];
+        this.callbacks.onParamsChange(this.params);
+      });
+    wearModel.add(this.params, 'wearThresholdK', 1, 6, 0.5)
+      .name('Threshold k (×σ)')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    wearModel.add(this.params, 'wearThresholdMinUm', 0, 100, 1)
+      .name('Threshold min (μm)')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+
     const dsFolder = folder.addFolder('Double Sphere Sweep');
+    const dsSeed = dsFolder.add(this.params, 'doubleSphereSeed', 0, 999999, 1)
+      .name('Seed (0 = auto)')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.doubleSphereControllers.push(dsSeed);
+
+    const estLabelMap: Record<string, 'stable-quartile' | 'min-std-cell'> = {
+      'Median of most stable 25% (recommended)': 'stable-quartile',
+      'Min-dispersion cell (legacy)': 'min-std-cell',
+    };
+    const estProxy = { value: this.params.doubleSphereEstimator === 'min-std-cell' ? 'Min-dispersion cell (legacy)' : 'Median of most stable 25% (recommended)' };
+    const dsEst = dsFolder.add(estProxy, 'value', Object.keys(estLabelMap))
+      .name('Cell selection')
+      .onChange((v: string) => {
+        this.params.doubleSphereEstimator = estLabelMap[v];
+        this.callbacks.onParamsChange(this.params);
+      });
+    this.doubleSphereControllers.push(dsEst);
     const dsFactor = dsFolder.add(this.params, 'doubleSphereFactor', 0.9, 1.5, 0.005)
       .name('Factor')
       .onChange(() => this.callbacks.onParamsChange(this.params));

@@ -10,11 +10,12 @@ import type {
   AnalysisParams, CommercialSphereInfo, WearClassification,
   ZoneSphereResult, RimPlaneResult, WearVolumeResult, WearPlaneResult,
   LinearWearFilter, AnalysisRunResult, DoubleSphereMetricsResult,
-  DoubleSphereSweepCellResult, AnalysisMode
+  DoubleSphereSweepCellResult, AnalysisMode, WearThresholdMode
 } from '../types';
-import { separateFaces, trimRim, computeRimAnchor } from './MeshProcessor';
+import { separateFaces, trimRim, computeRimAnchor, findRimLoopVertices } from './MeshProcessor';
 import { smoothMesh, repairInnerFaceMesh, type GeodesicRepairData } from './MeshSmoother';
 import { computeTiltedRimNormal } from '../utils/geometry';
+import { mulberry32, seedFromPositions, robustSigma } from '../utils/random';
 import { fitSphereRobust, fitSphereFixedRadius, fitSphereFixedRadiusRobust } from './SphereFitter';
 import { fitEllipsoid } from './EllipsoidFitter';
 import { MeshGraph } from '../math/MeshGraph';
@@ -230,7 +231,7 @@ export class WearAnalysisPipeline {
   }
 
   /** Set the vertex exclusion mask. Vertices in this set (indices into separation.inner)
-   *  will be removed from trimRim output and from the double-sphere RANSAC point cloud. */
+   *  will be removed from trimRim output and from the double-sphere bootstrap point cloud. */
   public setExclusionMask(excluded: Set<number>): void {
     this.state.excludedInnerMeshVertices = excluded;
   }
@@ -315,25 +316,9 @@ export class WearAnalysisPipeline {
     const mesh = this.state.smoothedMesh || this.state.workingMesh;
     const innerMesh = this.state.separation.inner;
 
-    // 1. Boundary edges of untrimmed inner face → rim vertices
-    const innerFc = innerMesh.indices.length / 3;
-    const edgeFaceMap = new Map<string, number>();
-    for (let f = 0; f < innerFc; f++) {
-      for (let e = 0; e < 3; e++) {
-        const a = innerMesh.indices[f * 3 + e];
-        const b = innerMesh.indices[f * 3 + ((e + 1) % 3)];
-        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
-        edgeFaceMap.set(key, (edgeFaceMap.get(key) || 0) + 1);
-      }
-    }
-    const rimVerts = new Set<number>();
-    for (const [key, count] of edgeFaceMap) {
-      if (count === 1) {
-        const parts = key.split('_');
-        rimVerts.add(Number(parts[0]));
-        rimVerts.add(Number(parts[1]));
-      }
-    }
+    // 1. Rim vertices = largest-perimeter boundary loop of the untrimmed inner face
+    //    (holes and pinholes are separate, shorter loops and must not bias the rim plane).
+    const rimVerts = new Set<number>(findRimLoopVertices(innerMesh));
 
     // 2. Rim centroid
     let rimCx = 0, rimCy = 0, rimCz = 0;
@@ -460,7 +445,7 @@ export class WearAnalysisPipeline {
       this.stepComputeRimPlane(params.rimTrimPercent);
 
       this.progress('classifying', 0.86, 'Classifying wear zones...');
-      this.stepClassifyWear(params.rimTrimPercent);
+      this.stepClassifyWear(params.rimTrimPercent, params.wearThresholdMode, params.wearThresholdK, params.wearThresholdMinUm);
 
       this.progress('zone-spheres', 0.89, 'Fitting zone spheres...');
       this.stepFitZoneSpheres(params.linearWearFilter, params.minWornCoveragePct);
@@ -907,8 +892,8 @@ export class WearAnalysisPipeline {
     if (!this.state.separation) throw new Error('Run face separation first');
     if (!this.state.sphereFit) throw new Error('Run sphere fit first');
 
-    // ── Pre-RANSAC: cup rim geometry from the full untrimmed inner surface ──────
-    // The rim plane is computed here so its direction is independent of RANSAC.
+    // ── Pre-bootstrap: cup rim geometry from the full untrimmed inner surface ──────
+    // The rim plane is computed here so its direction is independent of the bootstrap.
     // normalVec is oriented toward the inner mesh centroid (always INTO the cup).
     // distToPole is the true max extent, so 100% trim puts the plane at the pole.
     // Use the volumetric copy (hole-filled, zero-smoothing) for rim topology so the
@@ -1016,7 +1001,7 @@ export class WearAnalysisPipeline {
     this.state.dsDistToPole = distToPolePre;
     this.state.dsRimVertices = rimVertsPre;
 
-    // ── RANSAC points: innerMesh vertices on the pole side of the rim plane ──
+    // ── Bootstrap points: innerMesh vertices on the pole side of the rim plane ──
     // The rim plane sits at rimTrimPercent% of the rim→pole distance.
     // normalVec points INTO the cup (toward the pole), so h = dot(p-planePoint, n)
     //   h >= 0  → vertex is between rim plane and pole  (keep)
@@ -1042,7 +1027,7 @@ export class WearAnalysisPipeline {
         ]);
       }
     }
-    console.log(`[DS RANSAC] rimTrim=${params.rimTrimPercent}%, points used for fitting: ${points.length} / ${innerMesh.vertexCount}`);
+    console.log(`[DS bootstrap] rimTrim=${params.rimTrimPercent}%, points used for fitting: ${points.length} / ${innerMesh.vertexCount}`);
     if (points.length < 20) {
       throw new Error(`Not enough vertices above rim plane for sphere fitting (${points.length}). Lower the Rim Trim % value.`);
     }
@@ -1057,7 +1042,7 @@ export class WearAnalysisPipeline {
       for (let i = 0; i < points.length; i += stride) sampled.push(points[i]);
       points.length = 0;
       for (const p of sampled) points.push(p);
-      console.log(`[DS RANSAC] downsampled to ${points.length} points (stride=${stride})`);
+      console.log(`[DS bootstrap] downsampled to ${points.length} points (stride=${stride})`);
     }
 
     const makeRange = (min: number, max: number, step: number): number[] => {
@@ -1097,11 +1082,17 @@ export class WearAnalysisPipeline {
       return arr;
     };
 
+    // Reproducible bootstrap: seeded PRNG. Seed 0 → derived from the mesh geometry,
+    // so the same STL + parameters always gives the same result.
+    const seed = params.doubleSphereSeed > 0 ? (params.doubleSphereSeed >>> 0) : seedFromPositions(innerMesh.positions);
+    const rand = mulberry32(seed);
+    console.log(`[DS bootstrap] seed=${seed}${params.doubleSphereSeed > 0 ? ' (user)' : ' (from mesh)'}`);
+
     const bootstrap = (pts: [number, number, number][], fraction = 0.85): [number, number, number][] => {
       const n = Math.max(20, Math.floor(pts.length * fraction));
       const out: [number, number, number][] = [];
       for (let i = 0; i < n; i++) {
-        out.push(pts[Math.floor(Math.random() * pts.length)]);
+        out.push(pts[Math.floor(rand() * pts.length)]);
       }
       return out;
     };
@@ -1142,18 +1133,37 @@ export class WearAnalysisPipeline {
           const sample1 = bootstrap(points);
           const sphere1 = fitWithThreshold(sample1, thresh1);
 
-          // Adaptive factor: start at params.doubleSphereFactor and back down to
-          // 1.001 so we always find a worn region even with minimal wear.
-          const factorCandidates = [params.doubleSphereFactor, 1.01, 1.005, 1.001];
           let filtered: [number, number, number][] = [];
-          for (const fc of factorCandidates) {
-            filtered = points.filter((p) => {
-              const dx = p[0] - sphere1.center.x;
-              const dy = p[1] - sphere1.center.y;
-              const dz = p[2] - sphere1.center.z;
-              return Math.sqrt(dx * dx + dy * dy + dz * dz) > sphere1.radius * fc;
-            });
-            if (filtered.length >= 20) break;
+          if (params.wearThresholdMode === 'noise-adaptive') {
+            // Points worn relative to sphere 1: residual above max(k·σ, min), σ = 1.4826·MAD
+            // of all residuals to sphere 1. Relaxes k (→2) before giving up.
+            const res = new Float64Array(points.length);
+            for (let i = 0; i < points.length; i++) {
+              const dx = points[i][0] - sphere1.center.x;
+              const dy = points[i][1] - sphere1.center.y;
+              const dz = points[i][2] - sphere1.center.z;
+              res[i] = Math.sqrt(dx * dx + dy * dy + dz * dz) - sphere1.radius;
+            }
+            const { median: m1, sigma: s1 } = robustSigma(res);
+            const legacyCap = Math.max(params.doubleSphereFactor - 1, 0.001) * sphere1.radius;
+            for (const k of [params.wearThresholdK, 2]) {
+              const thr = m1 + Math.min(Math.max(k * s1, params.wearThresholdMinUm / 1000), legacyCap);
+              filtered = [];
+              for (let i = 0; i < points.length; i++) if (res[i] > thr) filtered.push(points[i]);
+              if (filtered.length >= 20) break;
+            }
+          } else {
+            // Legacy adaptive factor: start at params.doubleSphereFactor and back down to 1.001.
+            const factorCandidates = [params.doubleSphereFactor, 1.01, 1.005, 1.001];
+            for (const fc of factorCandidates) {
+              filtered = points.filter((p) => {
+                const dx = p[0] - sphere1.center.x;
+                const dy = p[1] - sphere1.center.y;
+                const dz = p[2] - sphere1.center.z;
+                return Math.sqrt(dx * dx + dy * dy + dz * dz) > sphere1.radius * fc;
+              });
+              if (filtered.length >= 20) break;
+            }
           }
 
           // Diagnostic log on very first iteration to aid debugging
@@ -1209,7 +1219,22 @@ export class WearAnalysisPipeline {
     }
 
     let bestCell: DoubleSphereSweepCellResult | null = null;
-    for (const cell of cells) {
+    // Distribution of the linear-wear estimate across the whole sweep
+    const sortedD = cells.map(c => c.centerDistanceMean).sort((a, b) => a - b);
+    const qAt = (q: number) => sortedD.length ? sortedD[Math.min(sortedD.length - 1, Math.floor(q * (sortedD.length - 1) + 0.5))] : 0;
+    const cellDistanceMedian = qAt(0.5);
+    const cellDistanceIQR: [number, number] = [qAt(0.25), qAt(0.75)];
+    if (params.doubleSphereEstimator === 'stable-quartile' && cells.length > 0) {
+      // Median cell among the 25 % of cells with the lowest dispersion. The legacy rule
+      // (single lowest-dispersion cell) picks from dispersions estimated with only a few
+      // bootstrap runs, so the chosen cell — and the reported wear — jumps with the draw.
+      // Taking the median of the most stable quarter keeps the accuracy of low-dispersion
+      // cells while averaging out that selection noise.
+      const stable = [...cells].sort((a, b) => a.centerDistanceStd - b.centerDistanceStd)
+        .slice(0, Math.max(1, Math.ceil(cells.length / 4)))
+        .sort((a, b) => a.centerDistanceMean - b.centerDistanceMean);
+      bestCell = stable[Math.floor(stable.length / 2)];
+    } else for (const cell of cells) {
       if (!bestCell) {
         bestCell = cell;
         continue;
@@ -1231,6 +1256,11 @@ export class WearAnalysisPipeline {
       thresh2Values,
       cells,
       bestCell,
+      seed,
+      thresholdMode: params.wearThresholdMode,
+      estimator: params.doubleSphereEstimator,
+      cellDistanceMedian,
+      cellDistanceIQR,
     };
 
     // Snap the unworn sphere (sphere1) radius to the nearest commercial value,
@@ -1272,7 +1302,7 @@ export class WearAnalysisPipeline {
 
     // --- Rim plane + volumetric wear (uses pre-computed rim geometry) ---
     // rimCentroidPre / normalVecPre / distToPolePre already computed above,
-    // consistent with the RANSAC point filtering.
+    // consistent with the bootstrap point filtering.
     let dsRimPlane: RimPlaneResult | undefined;
     let dsWearVolumeResult: WearVolumeResult | undefined;
 
@@ -1296,7 +1326,7 @@ export class WearAnalysisPipeline {
     }
 
     // Compute per-vertex deviations for the heat map overlay.
-    // Use the RANSAC unworn sphere (sphere 1) as reference so that worn vertices
+    // Use the bootstrap unworn sphere (sphere 1) as reference so that worn vertices
     // show clearly positive deviation (red = deep wear, blue = intact surface).
     // Deviation = (r_actual - radius_unworn) * 1000 µm:
     //   > 0  worn area (inner surface has expanded = material removed)
@@ -1306,7 +1336,7 @@ export class WearAnalysisPipeline {
       const n = this.state.workingMesh.vertexCount;
       const devs = new Float32Array(n);
 
-      // Prefer the RANSAC unworn sphere; fall back to the initial sphere fit.
+      // Prefer the bootstrap unworn sphere; fall back to the initial sphere fit.
       let refCx: number, refCy: number, refCz: number, refR: number;
       if (bestCell) {
         refCx = bestCell.center1Mean[0];
@@ -1361,7 +1391,7 @@ export class WearAnalysisPipeline {
   /**
    * Re-compute only the rim plane position and volumetric wear for
    * double-sphere-metrics mode, using the pre-computed rim geometry stored
-   * during the initial analysis. No RANSAC needed — fast for live slider updates.
+   * during the initial analysis. No bootstrap needed — fast for live slider updates.
    */
   stepUpdateDoubleSphereRimPlane(rimTrimPercent: number): void {
     const results = this.state.results;
@@ -1440,10 +1470,16 @@ export class WearAnalysisPipeline {
 
   /**
    * Classify each vertex as worn or unworn.
-   * A vertex is worn if its distance to the commercial sphere center
-   * exceeds 102% of the commercial radius.
+   * Legacy rule ('relative-2pct'): worn if its distance to the commercial sphere
+   * centre exceeds 1.02·R. Default rule ('noise-adaptive'): worn if its depth below
+   * the reference surface exceeds max(k·σ, min), capped at 0.02·R (see below).
    */
-  stepClassifyWear(rimTrimPercent: number = 6): WearClassification {
+  stepClassifyWear(
+    rimTrimPercent: number = 6,
+    thresholdMode: WearThresholdMode = 'noise-adaptive',
+    thresholdK: number = 3,
+    thresholdMinUm: number = 10,
+  ): WearClassification {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
 
@@ -1455,8 +1491,51 @@ export class WearAnalysisPipeline {
     const mesh = this.state.workingMesh;
     const center = this.state.commercialSphere.center;
     const R = this.state.commercialSphere.commercialRadius;
-    const threshold = R * 1.02;
     const rimPlane = this.state.rimPlane;
+
+    // ── Worn threshold ────────────────────────────────────────────────────
+    // 'relative-2pct' (legacy): worn if dist > 1.02·R  (≈ 280 μm for R = 14 mm).
+    // 'noise-adaptive': worn if (dist − R) − baseline > max(k·σ, min), where
+    //   baseline = median offset of the reference surface from the commercial sphere
+    //   (absorbs liner/head radial clearance) and σ = 1.4826·MAD of that offset
+    //   (scanner + tessellation noise). Reference surface = the manually selected
+    //   non-worn vertices when available, otherwise every working-mesh vertex on the
+    //   pole side of the rim plane (MAD tolerates up to 50 % worn vertices).
+    let threshold = R * 1.02;
+    let baselineMm = 0, sigmaMm = 0, depthThrMm = 0.02 * R, noiseAboveLegacy = false;
+    if (thresholdMode === 'noise-adaptive') {
+      const manualRef = this._activeMode === 'manual-geodesic' && this.manualUnwornPositions !== null && this.manualUnwornCount >= 100;
+      const refPos = manualRef ? this.manualUnwornPositions! : mesh.positions;
+      const refN = refPos === mesh.positions ? mesh.vertexCount : this.manualUnwornCount;
+      const offsets: number[] = [];
+      for (let i = 0; i < refN; i++) {
+        const px = refPos[i * 3], py = refPos[i * 3 + 1], pz = refPos[i * 3 + 2];
+        if (refPos === mesh.positions && rimPlane) {
+          const h = (px - rimPlane.point.x) * rimPlane.normal.x + (py - rimPlane.point.y) * rimPlane.normal.y + (pz - rimPlane.point.z) * rimPlane.normal.z;
+          if (h < 0) continue;
+        }
+        const dx = px - center.x, dy = py - center.y, dz = pz - center.z;
+        offsets.push(Math.sqrt(dx * dx + dy * dy + dz * dz) - R);
+      }
+      const rs = robustSigma(offsets);
+      baselineMm = rs.median;
+      sigmaMm = rs.sigma;
+      const kSigma = Math.max(thresholdK * sigmaMm, thresholdMinUm / 1000);
+      if (manualRef) {
+        // The user's non-worn selection defines the unworn level: the baseline (e.g. the
+        // liner/head radial clearance) is trusted as is; only k·σ is capped at 0.02·R.
+        noiseAboveLegacy = kSigma > 0.02 * R;
+        depthThrMm = Math.min(kSigma, 0.02 * R);
+      } else {
+        // Automatic reference: under extensive wear the median itself can be worn, so the
+        // total offset (baseline + k·σ) is capped at the legacy 0.02·R. The rule is thus
+        // never less sensitive than 1.02·R. Hitting the cap means the surface deviates
+        // from the commercial sphere by more than noise (large clearance, creep or wear).
+        noiseAboveLegacy = baselineMm + kSigma > 0.02 * R;
+        depthThrMm = Math.min(baselineMm + kSigma, 0.02 * R) - baselineMm;
+      }
+      threshold = R + baselineMm + depthThrMm;
+    }
 
     const n = mesh.vertexCount;
     const isWorn = new Uint8Array(n);
@@ -1509,12 +1588,17 @@ export class WearAnalysisPipeline {
       unwornCount,
       wornPercent: (wornCount / denom) * 100,
       threshold,
+      thresholdMode,
+      noiseSigmaUm: sigmaMm * 1000,
+      baselineUm: baselineMm * 1000,
+      depthThresholdUm: (threshold - R) * 1000,
+      noiseAboveLegacy,
     };
 
     // Store deviations from commercial radius in μm for heatmap
     this.state.vertexDeviations = deviations;
 
-    console.log(`[Wear Classification] active=${activeCount}, worn=${wornCount} (${this.state.wearClassification.wornPercent.toFixed(1)}%), unworn=${unwornCount}, threshold=${threshold.toFixed(3)}mm`);
+    console.log(`[Wear Classification] active=${activeCount}, worn=${wornCount} (${this.state.wearClassification.wornPercent.toFixed(1)}%), unworn=${unwornCount}, threshold=${threshold.toFixed(3)}mm (${thresholdMode}, σ=${(sigmaMm * 1000).toFixed(1)}μm, baseline=${(baselineMm * 1000).toFixed(1)}μm)`);
     return this.state.wearClassification;
   }
 
@@ -1613,9 +1697,17 @@ export class WearAnalysisPipeline {
       wornFit = { center: this.state.commercialSphere.center.clone(), radius: R, rmsError: 0 };
     }
 
-    const unwornFit = unwornPositions.length >= 9
-      ? fitSphereFixedRadius(unwornArr, unwornPositions.length / 3, R)
-      : { center: this.state.commercialSphere.center.clone(), radius: R, rmsError: 0 };
+    // Manual-geodesic mode: the user's lasso IS the non-worn reference, so the unworn
+    // sphere is fitted to it (fixed commercial radius, robust) instead of to the
+    // vertices that merely fall below the worn threshold, which can be a thin,
+    // poorly conditioned band and may include shallow wear.
+    const useManualUnworn = this._activeMode === 'manual-geodesic'
+      && this.manualUnwornPositions !== null && this.manualUnwornCount >= 100;
+    const unwornFit = useManualUnworn
+      ? fitSphereFixedRadiusRobust(this.manualUnwornPositions!, this.manualUnwornCount, R)
+      : unwornPositions.length >= 9
+        ? fitSphereFixedRadius(unwornArr, unwornPositions.length / 3, R)
+        : { center: this.state.commercialSphere.center.clone(), radius: R, rmsError: 0 };
 
     this.state.zoneSpheres = {
       wornSphere: { center: wornFit.center, radius: R, rmsError: wornFit.rmsError },
