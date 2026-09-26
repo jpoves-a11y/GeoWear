@@ -32,6 +32,7 @@
 
 import * as THREE from 'three';
 import { gaussNewtonFixedRadius, fitSphere } from './SphereFitter';
+import { mulberry32 } from '../utils/random';
 import type { MeshData, TwoSphereResult } from '../types';
 
 function median(a: number[]): number {
@@ -54,11 +55,32 @@ export interface TwoSphereFitOptions {
   /** Swap the automatic identification: the original sphere is the one DEEPER in the cup
    *  (head displaced toward the rim, e.g. after subluxation or dislocation). */
   invert?: boolean;
+  /** Uncertainty replicates (warm-started refits). Omit to skip. */
+  uncertainty?: {
+    /** Spatial block-bootstrap replicates (default 12) */
+    bootstrap?: number;
+    /** Cut-plane shift toward the pole for the plane-sensitivity replicate (mm) */
+    planeShiftMm: number;
+    /** PRNG seed for the block bootstrap (default 1) */
+    seed?: number;
+  };
+}
+
+/** One uncertainty replicate: refitted centres, and the cut-plane shift it corresponds to (0 for bootstrap). */
+export interface TwoSphereReplicate {
+  kind: 'bootstrap' | 'plane';
+  planeShiftMm: number;
+  cA: [number, number, number];
+  cB: [number, number, number];
 }
 
 export interface TwoSphereFitOutput extends TwoSphereResult {
   /** Reference (non-worn) vertex positions, flat xyz */
   referencePositions: Float32Array;
+  /** Uncertainty replicates (empty when not requested or not detected) */
+  replicates: TwoSphereReplicate[];
+  /** RMS of the block-mean residuals (low-frequency non-sphericity), mm; null when not computed */
+  lowFreqRmsMm: number | null;
 }
 
 /**
@@ -208,6 +230,75 @@ export function fitTwoSphereUnion(
     const cosang = ((cB[0] - cA[0]) * nrm[0] + (cB[1] - cA[1]) * nrm[1] + (cB[2] - cA[2]) * nrm[2]) / sep;
     angleDeg = Math.acos(Math.max(-1, Math.min(1, cosang))) * 180 / Math.PI;
   }
+  // --- 5. uncertainty replicates (only when a two-sphere pattern was detected)
+  //   a) spatial block bootstrap: the analysed zone is split into 12 azimuthal sectors × 3 depth
+  //      bands; blocks are resampled with replacement, which keeps the spatial correlation of
+  //      scanner/paint errors (a vertex-wise bootstrap would underestimate it);
+  //   b) plane sensitivity: the cut plane is moved `planeShiftMm` toward the pole.
+  //   Each replicate is a warm-started refit from (cA, cB), so the sphere labels are preserved.
+  const replicates: TwoSphereReplicate[] = [];
+  let lowFreqRmsMm: number | null = null;
+  if (detected && opts.uncertainty) {
+    const nBoot = opts.uncertainty.bootstrap ?? 12;
+    const rand = mulberry32(opts.uncertainty.seed ?? 1);
+    const rStrideU = Math.max(1, Math.ceil(n / 30000));
+    // in-plane basis for the azimuth
+    const ref0 = Math.abs(nrm[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const d0 = ref0[0] * nrm[0] + ref0[1] * nrm[1] + ref0[2] * nrm[2];
+    let e1 = [ref0[0] - d0 * nrm[0], ref0[1] - d0 * nrm[1], ref0[2] - d0 * nrm[2]];
+    const l1 = Math.hypot(e1[0], e1[1], e1[2]); e1 = e1.map(v => v / l1);
+    const e2 = [nrm[1] * e1[2] - nrm[2] * e1[1], nrm[2] * e1[0] - nrm[0] * e1[2], nrm[0] * e1[1] - nrm[1] * e1[0]];
+    const hOf = (j: number) => (A[j * 3] - planePoint.x) * nrm[0] + (A[j * 3 + 1] - planePoint.y) * nrm[1] + (A[j * 3 + 2] - planePoint.z) * nrm[2];
+    let hMax = 0;
+    for (let j = 0; j < n; j++) { const h = hOf(j); if (h > hMax) hMax = h; }
+    const NS = 12, NB = 3, blocks: number[][] = Array.from({ length: NS * NB }, () => []);
+    for (let j = 0; j < n; j += rStrideU) {
+      const x = A[j * 3] - cA[0], y = A[j * 3 + 1] - cA[1], z = A[j * 3 + 2] - cA[2];
+      let az = Math.atan2(x * e2[0] + y * e2[1] + z * e2[2], x * e1[0] + y * e1[1] + z * e1[2]);
+      if (az < 0) az += 2 * Math.PI;
+      const sct = Math.min(NS - 1, Math.floor(az / (2 * Math.PI) * NS));
+      const band = Math.min(NB - 1, Math.floor(hOf(j) / Math.max(hMax, 1e-9) * NB));
+      blocks[sct * NB + band].push(j);
+    }
+    const nonEmpty = blocks.filter(b => b.length > 0);
+    for (let b = 0; b < nBoot; b++) {
+      const idx: number[] = [];
+      for (let t = 0; t < nonEmpty.length; t++) {
+        const blk = nonEmpty[Math.floor(rand() * nonEmpty.length)];
+        for (const j of blk) idx.push(j);
+      }
+      const r = unionFit(Int32Array.from(idx), cA, cB, 25);
+      if (r.n1 >= 30 && r.n2 >= 30) replicates.push({ kind: 'bootstrap', planeShiftMm: 0, cA: r.cP as [number, number, number], cB: r.cQ as [number, number, number] });
+    }
+    // c) low-frequency non-sphericity (uneven paint, form error): RMS of the block-mean residuals of
+    //    each sphere's own support. Such smooth deformations are indistinguishable from a small
+    //    centre shift and are not revealed by resampling, so they are reported separately.
+    {
+      const acc = new Map<number, { s: number; c: number }>();
+      for (const blkIdx of blocks.keys()) {
+        for (const j of blocks[blkIdx]) {
+          const a = dist(cA, j), b = dist(cB, j);
+          const onA = b - a > 2 * sigma, onB = a - b > 2 * sigma;
+          if (!onA && !onB) continue;
+          const key = blkIdx * 2 + (onA ? 0 : 1);
+          const e = acc.get(key) ?? { s: 0, c: 0 };
+          e.s += (onA ? a : b) - R; e.c++;
+          acc.set(key, e);
+        }
+      }
+      let num = 0, den = 0;
+      for (const e of acc.values()) if (e.c >= 20) { const mb = e.s / e.c; num += e.c * mb * mb; den += e.c; }
+      lowFreqRmsMm = den > 0 ? Math.sqrt(num / den) : 0;
+    }
+    const dh = opts.uncertainty.planeShiftMm;
+    if (dh > 0) {
+      const idx: number[] = [];
+      for (let j = 0; j < n; j += rStrideU) if (hOf(j) >= dh) idx.push(j);
+      const r = unionFit(Int32Array.from(idx), cA, cB, 25);
+      if (r.n1 >= 30 && r.n2 >= 30) replicates.push({ kind: 'plane', planeShiftMm: dh, cA: r.cP as [number, number, number], cB: r.cQ as [number, number, number] });
+    }
+  }
+
   const ref = new Float32Array(sel);
   return {
     detected,
@@ -228,5 +319,7 @@ export function fitTwoSphereUnion(
     freeSphereRadius: free.radius,
     iterations: iters,
     referencePositions: ref,
+    replicates,
+    lowFreqRmsMm,
   };
 }

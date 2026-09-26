@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && npx wrangler pages deploy dist"
+    "deploy": "npm run build && npx wrangler pages deploy dist",
+    "test": "vite build --config vite.test.config.ts --logLevel warn && node .test-dist/phantom.test.mjs"
   },
   "keywords": [],
   "author": "",

@@ -575,9 +575,13 @@ export class App {
       this.currentResults = results;
       // Show/hide the compare-mode visualisation selector depending on the mode.
       if (results.analysisMode === 'compare-all-modes') {
-        this.compareVisualizationMode = 'sphere-bestfit';
-        this.controls.showVisualizationControls('sphere-bestfit');
-        this.controls.showCompareSelector((mode) => this.setCompareVisualizationMode(mode));
+        // Default view: the validated Two-Sphere Auto result (fallback: Sphere BestFit)
+        const initial = results.twoSphereAuto && this.pipeline?.compareModePipelineStates?.twoSphereAuto
+          ? 'two-sphere-auto' as const : 'sphere-bestfit' as const;
+        if (initial === 'two-sphere-auto') this.pipeline!.state = this.pipeline!.compareModePipelineStates!.twoSphereAuto!;
+        this.compareVisualizationMode = initial;
+        this.controls.showVisualizationControls(initial);
+        this.controls.showCompareSelector((mode) => this.setCompareVisualizationMode(mode), initial);
       } else if (results.analysisMode === 'manual-geodesic') {
         this.controls.showVisualizationControls('manual-geodesic');
         this.controls.hideCompareSelector();
@@ -1868,6 +1872,10 @@ export class App {
   private getExportableResults(): AnalysisResults | null {
     if (!this.currentResults) return null;
     if (this.currentResults.analysisMode === 'compare-all-modes') {
+      if (this.currentResults.twoSphereAuto) {
+        this.status.setStatus('Compare mode export uses Two-Sphere Auto results by default');
+        return this.currentResults.twoSphereAuto;
+      }
       this.status.setStatus('Compare mode export uses Sphere BestFit results by default');
       return this.currentResults.sphereBestfit;
     }
