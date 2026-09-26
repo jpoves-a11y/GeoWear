@@ -41,9 +41,9 @@ export class ResultsPanel {
 
     if (results.analysisMode === 'compare-all-modes') {
       this.addCompareTopSummary(results);
-      this.renderSingleResult(results.sphereBestfit, 'Sphere BestFit', 'sbf');
-      this.renderSingleResult(results.doubleSphereMetrics, 'Double Sphere Metrics', 'dsm');
       if (results.twoSphereAuto) this.renderSingleResult(results.twoSphereAuto, 'Two-Sphere Auto', 'ts');
+      this.renderSingleResult(results.sphereBestfit, 'Sphere BestFit (legacy)', 'sbf');
+      this.renderSingleResult(results.doubleSphereMetrics, 'Double Sphere Metrics (legacy)', 'dsm');
       window.dispatchEvent(new Event('resize'));
       return;
     }
@@ -61,6 +61,16 @@ export class ResultsPanel {
 
     if (results.analysisMode === 'manual-geodesic') {
       this.addManualGeodesicComparisonSummary(results);
+    }
+
+    // Legacy modes: not validated with known-wear phantoms
+    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'double-sphere-metrics') {
+      const warn = this.createSection('Legacy mode — not validated');
+      this.addMetric(warn, 'Warning', results.analysisMode === 'sphere-bestfit'
+        ? 'Automatic reference sphere: underestimates the volume when wear is extensive. Use Two-Sphere Auto or Manual Geodesic.'
+        : 'Free-radius spheres, ignores the rim inclination: underestimates the volume and misses wear near the pole. Use Two-Sphere Auto or Manual Geodesic.',
+        undefined, 'warning');
+      this.container.appendChild(warn);
     }
 
     // KPI cards at the top for quick overview
@@ -123,13 +133,13 @@ export class ResultsPanel {
 
     const modeLabel =
       results.analysisMode === 'sphere-bestfit'
-        ? 'Sphere BestFit'
+        ? 'Sphere BestFit (legacy)'
         : results.analysisMode === 'manual-geodesic'
           ? 'Manual Geodesic'
           : results.analysisMode === 'two-sphere-auto'
             ? 'Two-Sphere Auto'
           : results.analysisMode === 'double-sphere-metrics'
-            ? 'Double Sphere Metrics'
+            ? 'Double Sphere Metrics (legacy)'
             : 'Pure Geodesic';
     this.addMetric(section, 'Mode', modeLabel);
     this.addMetric(section, 'Vertices', results.vertexCount.toLocaleString());
@@ -192,8 +202,8 @@ export class ResultsPanel {
         <thead>
           <tr>
             <th class="col-metric">Métrica</th>
-            <th class="col-sbf">Sphere BestFit</th>
-            <th class="col-dsm">Double Sphere</th>
+            <th class="col-sbf">Sphere BestFit<br><small>(legacy)</small></th>
+            <th class="col-dsm">Double Sphere<br><small>(legacy)</small></th>
             ${ts ? '<th class="col-ts">Two-Sphere Auto</th>' : ''}
           </tr>
         </thead>
@@ -390,7 +400,7 @@ export class ResultsPanel {
         cards.push({
           label: 'Linear Wear',
           value: lw.toFixed(1),
-          unit: 'μm',
+          unit: results.twoSphere?.linearWearSdMm != null ? `μm ± ${(results.twoSphere.linearWearSdMm * 1000).toFixed(1)}` : 'μm',
           cls: unreliable ? 'warning' : (lw > 50 ? 'danger' : lw > 20 ? 'warning' : 'success'),
           warn: unreliable
             ? (results.twoSphere && !results.twoSphere.detected ? 'not detectable'
@@ -412,7 +422,7 @@ export class ResultsPanel {
         cards.push({
           label: 'Volumetric Wear',
           value: vw.toFixed(4),
-          unit: 'mm³',
+          unit: results.twoSphere?.volumeSdMm3 != null ? `mm³ ± ${results.twoSphere.volumeSdMm3.toFixed(1)}` : 'mm³',
           cls: vw > 0.1 ? 'danger' : 'success',
         });
         if (this.yearsInVivo > 0) {
@@ -724,6 +734,20 @@ export class ResultsPanel {
       ts.detected ? 'Directional wear detected' : 'No directional wear detected',
       undefined, ts.detected ? 'success' : 'warning');
     this.addMetric(section, 'Linear Wear', (ts.linearWearMm * 1000).toFixed(1), 'μm', 'danger', true);
+    if (ts.linearWearSdMm != null) {
+      this.addMetric(section, 'Linear Wear uncertainty (SD)', (ts.linearWearSdMm * 1000).toFixed(1), 'μm');
+    }
+    if (ts.volumeSdMm3 != null) {
+      this.addMetric(section, 'Volumetric Wear uncertainty (SD)', ts.volumeSdMm3.toFixed(1), 'mm³');
+    }
+    if (ts.linearSdBootstrapMm != null && ts.linearSdPlaneMm != null) {
+      this.addMetric(section, 'SD components · bootstrap / cut plane ±1 % / surface form',
+        `${(ts.linearSdBootstrapMm * 1000).toFixed(1)} / ${(ts.linearSdPlaneMm * 1000).toFixed(1)} / ${((ts.linearSdSystematicMm ?? 0) * 1000).toFixed(1)} μm · ` +
+        `${(ts.volumeSdBootstrapMm3 ?? 0).toFixed(1)} / ${(ts.volumeSdPlaneMm3 ?? 0).toFixed(1)} / ${(ts.volumeSdSystematicMm3 ?? 0).toFixed(1)} mm³`);
+    }
+    if (ts.lowFreqRmsUm != null) {
+      this.addMetric(section, 'Surface form error (low-frequency RMS)', ts.lowFreqRmsUm.toFixed(1), 'μm');
+    }
     this.addMetric(section, 'Original sphere', ts.inverted
       ? 'Inverted by user (head displaced toward the rim)'
       : 'Auto (head displaced into the cup)', undefined, ts.inverted ? 'warning' : undefined);

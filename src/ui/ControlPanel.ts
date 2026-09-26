@@ -119,27 +119,27 @@ export class ControlPanel {
   private manualNonWornCountController: any = null;
   // Analysis mode display name mapping
   private readonly modeLabelMap: Record<string, string> = {
-    'Sphere BestFit': 'sphere-bestfit',
-    'Double Sphere Metrics': 'double-sphere-metrics',
+    'Sphere BestFit (legacy)': 'sphere-bestfit',
+    'Double Sphere Metrics (legacy)': 'double-sphere-metrics',
     'Manual Geodesic': 'manual-geodesic',
     'Two-Sphere Auto': 'two-sphere-auto',
     'Compare All Modes': 'compare-all-modes',
   };
   private readonly modeReverseMap: Record<string, string> = {
-    'sphere-bestfit': 'Sphere BestFit',
-    'double-sphere-metrics': 'Double Sphere Metrics',
+    'sphere-bestfit': 'Sphere BestFit (legacy)',
+    'double-sphere-metrics': 'Double Sphere Metrics (legacy)',
     'manual-geodesic': 'Manual Geodesic',
     'two-sphere-auto': 'Two-Sphere Auto',
     'compare-all-modes': 'Compare All Modes',
   };
-  private analysisModelProxy = { mode: 'Compare All Modes' };
+  private analysisModelProxy = { mode: 'Two-Sphere Auto' };
 
   // Compare-mode visualisation selector (inline inside Visualization folder)
-  private compareVisModeProxy = { mode: 'Sphere BestFit' };
+  private compareVisModeProxy = { mode: 'Two-Sphere Auto' };
   private compareVisModeCallback: ((mode: CompareVisMode) => void) | null = null;
   private readonly compareVisModeMap: Record<string, CompareVisMode> = {
-    'Sphere BestFit': 'sphere-bestfit',
-    'Double Sphere Metrics': 'double-sphere-metrics',
+    'Sphere BestFit (legacy)': 'sphere-bestfit',
+    'Double Sphere Metrics (legacy)': 'double-sphere-metrics',
     'Two-Sphere Auto': 'two-sphere-auto',
   };
 
@@ -252,7 +252,7 @@ export class ControlPanel {
 
     // --- Wear Model sub-section ---
     const wearModel = folder.addFolder('Wear Model');
-    wearModel.add(this.analysisModelProxy, 'mode', ['Sphere BestFit', 'Double Sphere Metrics', 'Manual Geodesic', 'Two-Sphere Auto', 'Compare All Modes'])
+    wearModel.add(this.analysisModelProxy, 'mode', ['Two-Sphere Auto', 'Manual Geodesic', 'Compare All Modes', 'Sphere BestFit (legacy)', 'Double Sphere Metrics (legacy)'])
       .name('Analysis Mode')
       .onChange((v: string) => {
         this.params.analysisMode = this.modeLabelMap[v] as AnalysisParams['analysisMode'];
@@ -456,7 +456,7 @@ export class ControlPanel {
     this.visCompareSelectorCtrl = folder.add(
       this.compareVisModeProxy,
       'mode',
-      ['Sphere BestFit', 'Double Sphere Metrics', 'Two-Sphere Auto'],
+      ['Two-Sphere Auto', 'Sphere BestFit (legacy)', 'Double Sphere Metrics (legacy)'],
     )
       .name('🔍 View Mode')
       .onChange((v: string) => {
@@ -922,14 +922,16 @@ export class ControlPanel {
    */
   public showCompareSelector(
     onChange: (mode: CompareVisMode) => void,
+    initial: CompareVisMode = 'sphere-bestfit',
   ): void {
     this.compareVisModeCallback = onChange;
-    this.compareVisModeProxy.mode = 'Sphere BestFit';
+    const label = Object.entries(this.compareVisModeMap).find(([, m]) => m === initial)?.[0];
+    this.compareVisModeProxy.mode = label ?? 'Two-Sphere Auto';
     if (this.visCompareSelectorCtrl) {
       this.visCompareSelectorCtrl.updateDisplay();
       this.visCompareSelectorCtrl.show();
     }
-    this.updateVisControlsForMode('sphere-bestfit');
+    this.updateVisControlsForMode(initial);
   }
 
   /** Hide the compare sub-mode selector. */

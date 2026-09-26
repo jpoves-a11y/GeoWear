@@ -220,6 +220,20 @@ export interface TwoSphereResult {
   nearPole: boolean;
   /** The user inverted the automatic choice (head displaced toward the rim instead of into the cup) */
   inverted: boolean;
+  /** Standard uncertainty of the linear wear (mm): √(block-bootstrap² + cut-plane² + systematic²); null if not detected */
+  linearWearSdMm?: number | null;
+  /** Standard uncertainty of the volumetric wear (mm³); null if not detected */
+  volumeSdMm3?: number | null;
+  /** Components: spatial block bootstrap, cut-plane sensitivity (±1 % of the cup depth) */
+  linearSdBootstrapMm?: number | null;
+  linearSdPlaneMm?: number | null;
+  volumeSdBootstrapMm3?: number | null;
+  volumeSdPlaneMm3?: number | null;
+  /** Systematic component from low-frequency non-sphericity (uneven paint / form error) */
+  linearSdSystematicMm?: number | null;
+  volumeSdSystematicMm3?: number | null;
+  /** RMS of the block-mean residuals of each sphere's support (μm) */
+  lowFreqRmsUm?: number | null;
   /** Scanner noise estimated from local roughness (μm) */
   noiseSigmaUm: number;
   /** Fraction of analysed vertices lying on the original sphere */
@@ -463,7 +477,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showReferenceShape: false,
   contextOpaque: false,
   density: 0.935,
-  analysisMode: 'compare-all-modes',
+  analysisMode: 'two-sphere-auto',
   commercialRadius: 0,
   linearWearFilter: 'combined',
   minWornCoveragePct: 1.0,

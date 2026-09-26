@@ -32,11 +32,13 @@ const HEADERS = [
   'Semilla DSM',
   'Dirección del desgaste respecto al eje (º)',
   'Modelo de dos esferas',
+  'Incertidumbre lineal, DE (μm)',
+  'Incertidumbre volumétrica, DE (mm³)',
 ] as const;
 
 const MODE_LABELS: Record<string, string> = {
-  'sphere-bestfit': 'Sphere BestFit',
-  'double-sphere-metrics': 'Double Sphere Metrics',
+  'sphere-bestfit': 'Sphere BestFit (legacy)',
+  'double-sphere-metrics': 'Double Sphere Metrics (legacy)',
   'manual-geodesic': 'Manual Geodesic',
   'two-sphere-auto': 'Two-Sphere Auto',
   'pure-geodesic': 'Pure Geodesic',
@@ -68,6 +70,8 @@ interface WearValues {
   /** Two-sphere mode: penetration direction to the cup axis (º) and detection status — '' when not applicable */
   directionDeg: number | '';
   twoSphereStatus: string;
+  linearSdUm: number | '';
+  volumeSdMm3: number | '';
 }
 
 function extractWearValues(result: AnalysisResults): WearValues {
@@ -111,7 +115,9 @@ function extractWearValues(result: AnalysisResults): WearValues {
     : 'Detectado';
   const twoSphereStatusFull = ts?.inverted ? `${twoSphereStatus} · dirección invertida manualmente` : twoSphereStatus;
 
-  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull };
+  const linearSdUm = ts?.linearWearSdMm != null ? round2(ts.linearWearSdMm * 1000) : '';
+  const volumeSdMm3 = ts?.volumeSdMm3 != null ? round2(ts.volumeSdMm3) : '';
+  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull, linearSdUm, volumeSdMm3 };
 }
 
 type RowArray = (string | number)[];
@@ -141,6 +147,8 @@ function buildRowArray(
     wear.seed,
     wear.directionDeg,
     wear.twoSphereStatus,
+    wear.linearSdUm,
+    wear.volumeSdMm3,
   ];
 }
 

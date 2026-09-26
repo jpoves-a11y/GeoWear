@@ -1,0 +1,26 @@
+# Build the web app and run the phantom regression tests on every pull request
+# (and on pushes to main). A red ✗ means the change breaks the build or the
+# validated accuracy of the wear calculation — do not merge until it is green.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check and build
+        run: npm run build
+      - name: Phantom regression tests
+        run: npm test

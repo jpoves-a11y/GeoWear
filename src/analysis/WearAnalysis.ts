@@ -1479,12 +1479,64 @@ export class WearAnalysisPipeline {
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
     if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
     const cs = this.state.commercialSphere;
+    const plane = this.state.rimPlane;
+    // Plane-sensitivity shift: 1 % of the cup depth (the Rim-trim slider step is 0.5 %)
+    const hr = this.state.trimResult?.heightRange;
+    const planeShiftMm = hr ? 0.01 * Math.abs(hr[1] - hr[0]) : 0.2;
     const fit = fitTwoSphereUnion(
       this.state.workingMesh, cs.commercialRadius,
-      this.state.rimPlane.point, this.state.rimPlane.normal,
-      { init: [cs.center.x, cs.center.y, cs.center.z], invert },
+      plane.point, plane.normal,
+      { init: [cs.center.x, cs.center.y, cs.center.z], invert, uncertainty: { bootstrap: 12, planeShiftMm, seed: 1 } },
     );
-    const { referencePositions, ...result } = fit;
+    const { referencePositions, replicates, lowFreqRmsMm, ...result } = fit;
+    result.lowFreqRmsUm = lowFreqRmsMm != null ? lowFreqRmsMm * 1000 : null;
+
+    // --- Uncertainty of linear and volumetric wear from the replicates
+    if (result.detected && replicates.length > 0) {
+      const R = cs.commercialRadius;
+      const innerMesh = this.state.innerMeshForVolume ?? this.state.separation!.inner;
+      const n = plane.normal.clone().normalize();
+      const volAt = (cA: [number, number, number], shift: number, meshVol?: number): number => {
+        const pp = plane.point.clone().addScaledVector(n, shift);
+        const mv = meshVol ?? computeMeshEnclosedVolume(innerMesh, pp, n);
+        return Math.max(0, mv - computeSphereCap(new THREE.Vector3(cA[0], cA[1], cA[2]), R, pp, n));
+      };
+      const mv0 = computeMeshEnclosedVolume(innerMesh, plane.point, n);
+      const oc = result.originalCenter;
+      const vol0 = volAt([oc.x, oc.y, oc.z], 0, mv0);
+      const lin = (r: { cA: number[]; cB: number[] }) => Math.hypot(r.cB[0] - r.cA[0], r.cB[1] - r.cA[1], r.cB[2] - r.cA[2]);
+      const sd = (v: number[]) => {
+        if (v.length < 2) return 0;
+        const m = v.reduce((a, b) => a + b, 0) / v.length;
+        return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / (v.length - 1));
+      };
+      const boot = replicates.filter(r => r.kind === 'bootstrap');
+      const pl = replicates.find(r => r.kind === 'plane');
+      const linBoot = sd(boot.map(lin));
+      const volBoot = sd(boot.map(r => volAt(r.cA, 0, mv0)));
+      const linPlane = pl ? Math.abs(lin(pl) - result.linearWearMm) : 0;
+      const volPlane = pl ? Math.abs(volAt(pl.cA, pl.planeShiftMm) - vol0) : 0;
+      // Systematic component from low-frequency non-sphericity (uneven paint, form error): a smooth
+      // deformation of RMS s shifts the fitted centres by ≈ κ·s. κ calibrated on known-wear phantoms
+      // with uneven paint so that ±2 SD covers ≈ 95 % of the errors (κ_lin = 3.5; κ_vol = 2.2 applied
+      // to the centre shift along the plane normal, times the cap cross-section at the cut plane).
+      const lf = lowFreqRmsMm ?? 0;
+      const dPlane = (oc.x - plane.point.x) * n.x + (oc.y - plane.point.y) * n.y + (oc.z - plane.point.z) * n.z;
+      const capSection = Math.PI * Math.max(0, R * R - dPlane * dPlane);
+      const linSys = 3.5 * lf;
+      const volSys = 2.2 * lf * capSection;
+      result.linearSdBootstrapMm = linBoot;
+      result.linearSdPlaneMm = linPlane;
+      result.linearSdSystematicMm = linSys;
+      result.volumeSdBootstrapMm3 = volBoot;
+      result.volumeSdPlaneMm3 = volPlane;
+      result.volumeSdSystematicMm3 = volSys;
+      result.linearWearSdMm = Math.sqrt(linBoot ** 2 + linPlane ** 2 + linSys ** 2);
+      result.volumeSdMm3 = Math.sqrt(volBoot ** 2 + volPlane ** 2 + volSys ** 2);
+    } else {
+      result.linearWearSdMm = null;
+      result.volumeSdMm3 = null;
+    }
     this.state.twoSphere = result;
     this.state.commercialSphere = { ...cs, center: result.originalCenter.clone() };
     if (fit.referenceVertexCount >= 100) {
@@ -1497,7 +1549,9 @@ export class WearAnalysisPipeline {
     console.log(`[Two-sphere] detected=${result.detected}, inverted=${result.inverted}, linear=${(result.linearWearMm * 1000).toFixed(1)}μm, ` +
       `angle=${result.directionAngleDeg?.toFixed(1) ?? '—'}°, σ=${result.noiseSigmaUm.toFixed(1)}μm, ` +
       `ms(1/2/free)=${result.msOneSphereUm2.toFixed(0)}/${result.msTwoSpheresUm2.toFixed(0)}/${result.msFreeSphereUm2.toFixed(0)}μm², ` +
-      `reference=${result.referenceVertexCount}/${result.activeVertexCount} vertices`);
+      `reference=${result.referenceVertexCount}/${result.activeVertexCount} vertices, ` +
+      `SD lin=${result.linearWearSdMm != null ? (result.linearWearSdMm * 1000).toFixed(1) + 'μm' : '—'}, ` +
+      `SD vol=${result.volumeSdMm3 != null ? result.volumeSdMm3.toFixed(1) + 'mm³' : '—'}`);
     return result;
   }
 
