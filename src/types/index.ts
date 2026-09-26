@@ -186,11 +186,25 @@ export interface RimPlaneResult {
   rimVertices: number[];        // indices of rim boundary vertices
 }
 
+/** Alternative volume using the ACTUAL radius of the unworn cavity (free-radius fit to the
+ *  non-worn reference) instead of the nominal commercial radius. Excludes uniform enlargement
+ *  (design clearance, machining tolerance, creep) — and any uniformly distributed wear. */
+export interface MeasuredRadiusVolume {
+  radius: number;               // mm — fitted radius of the unworn reference
+  center: THREE.Vector3;
+  wearVolume: number;           // mm³ — mesh volume − cap of the measured sphere
+  supportVertexCount: number;
+  /** Reference large enough and radius within ±0.5 mm of the nominal one */
+  reliable: boolean;
+}
+
 /** Wear volume result */
 export interface WearVolumeResult {
   meshEnclosedVolume: number;   // mm³ — volume between rim plane and inner mesh
   sphereCapVolume: number;      // mm³ — volume of unworn sphere cut by rim plane
   wearVolume: number;           // mm³ — difference = wear
+  /** Same volume with the measured radius of the unworn cavity (Manual Geodesic / Two-Sphere Auto) */
+  measuredRadius?: MeasuredRadiusVolume;
 }
 
 /** Wear plane through pole and max-wear point, perpendicular to rim plane */
@@ -234,6 +248,18 @@ export interface TwoSphereResult {
   volumeSdSystematicMm3?: number | null;
   /** RMS of the block-mean residuals of each sphere's support (μm) */
   lowFreqRmsUm?: number | null;
+  /** Volume that the OTHER direction choice would give (spheres swapped), mm³; null if not detected */
+  alternativeVolumeMm3?: number | null;
+  /** Concentricity of the liner's outer (back) surface with each sphere — a hint for the direction
+   *  choice, since the back surface is usually concentric with the original cavity. */
+  outerShell?: {
+    radius: number; rmsUm: number;
+    distToOriginalMm: number; distToDisplacedMm: number;
+    /** 'current' = supports the chosen original sphere; 'alternative' = supports the swap; 'undetermined' */
+    favours: 'current' | 'alternative' | 'undetermined';
+  } | null;
+  /** Automatic radius selection: candidates evaluated with the two-sphere model (auto radius only) */
+  radiusSelection?: { snapped: number; chosen: number; candidates: { radius: number; rmsUm: number }[] } | null;
   /** Scanner noise estimated from local roughness (μm) */
   noiseSigmaUm: number;
   /** Fraction of analysed vertices lying on the original sphere */

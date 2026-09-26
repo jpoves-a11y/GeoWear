@@ -185,6 +185,8 @@ export class App {
       onExportSTL: () => this.exportSTL(),
       onExportPDF: () => this.exportPDF(),
       onExportExcel: () => this.exportExcel(),
+      onSaveSettings: () => this.saveSettings(),
+      onLoadSettings: () => this.loadSettings(),
       onShowResults: () => {
         if (this.currentResults) {
           this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
@@ -545,6 +547,9 @@ export class App {
     try {
       this.pipeline.setExclusionMask(this.excludedInnerMeshVertices);
       this.pipeline.setRimInclination(this.params.rimInclinationAngle, this.params.rimInclinationAzimuth);
+      if (this.manualHoleSeeds.length > 0) {
+        this.pipeline.setManualHoleSeeds(this.manualHoleSeeds.map(s => [s.x, s.y, s.z] as [number, number, number]));
+      }
       // Manual Geodesic mode: require a manual non-worn selection before running
       if (this.params.analysisMode === 'manual-geodesic') {
         if (!this.manualNonWornPositions || this.manualNonWornCount < 100) {
@@ -1841,6 +1846,115 @@ export class App {
   private exportPNG(): void {
     this.exporter.exportPNG(this.fileName);
     this.status.setStatus('PNG exported');
+  }
+
+  // ---- Measurement settings (save / load) ----
+
+  /**
+   * Save everything needed to repeat this measurement exactly: analysis parameters, the manual
+   * rim plane (if one was picked), hole seeds, exclusion zone and manual non-worn selection.
+   * Coordinates are mesh-local, so the file is only valid for the same STL.
+   */
+  private saveSettings(): void {
+    const v = (x: THREE.Vector3 | null) => (x ? [x.x, x.y, x.z] : null);
+    const settings = {
+      format: 'geowear-settings',
+      version: 1,
+      fileName: this.fileName,
+      vertexCount: this.currentMeshData?.vertexCount ?? null,
+      savedAt: new Date().toISOString(),
+      params: { ...this.controls.params },
+      manualPlane: {
+        confirmedNormal: v(this._confirmedManualNormal),
+        center: v(this._manualRimCenter),
+        polePoint: v(this._polePoint),
+        rawNormal: v(this._manualRimNormal),
+        normalFlipped: this._normalFlipped,
+      },
+      holeSeeds: this.manualHoleSeeds.map(s => [s.x, s.y, s.z]),
+      excludedInnerVertices: [...this.excludedInnerMeshVertices],
+      manualNonWornPositions: this.manualNonWornPositions ? Array.from(this.manualNonWornPositions, x => Math.round(x * 1e5) / 1e5) : null,
+    };
+    const base = (this.fileName || 'geowear').replace(/\.stl$/i, '');
+    const blob = new Blob([JSON.stringify(settings)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${base}_geowear-settings.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    this.status.setStatus(`Settings saved (${a.download})`);
+  }
+
+  /** Load a settings file saved with saveSettings() and apply it to the loaded STL. */
+  private loadSettings(): void {
+    if (!this.currentMeshData) { this.status.setStatus('Load the STL first, then its settings file'); return; }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const s = JSON.parse(await file.text());
+        if (s?.format !== 'geowear-settings') throw new Error('Not a GeoWear settings file');
+        const warnings: string[] = [];
+        if (s.fileName && this.fileName && s.fileName !== this.fileName) warnings.push(`saved for "${s.fileName}"`);
+        if (s.vertexCount && this.currentMeshData && s.vertexCount !== this.currentMeshData.vertexCount) warnings.push('different vertex count');
+
+        // Parameters (unknown keys are ignored; missing keys keep their current value)
+        const p: Partial<AnalysisParams> = {};
+        for (const k of Object.keys(DEFAULT_PARAMS) as (keyof AnalysisParams)[]) {
+          if (s.params && k in s.params) (p as any)[k] = s.params[k];
+        }
+        this.controls.applyParamsUI(p);
+        this.params = { ...this.controls.params };
+
+        // Manual rim plane
+        const vec = (a: number[] | null | undefined) => (Array.isArray(a) && a.length === 3 ? new THREE.Vector3(a[0], a[1], a[2]) : null);
+        const mp = s.manualPlane ?? {};
+        this._confirmedManualNormal = vec(mp.confirmedNormal);
+        this._manualRimCenter = vec(mp.center);
+        this._polePoint = vec(mp.polePoint);
+        this._manualRimNormal = vec(mp.rawNormal);
+        this._normalFlipped = !!mp.normalFlipped;
+        this.controls.refreshRimSliders();
+
+        // Hole seeds
+        this.manualHoleSeeds = (s.holeSeeds ?? []).map((a: number[]) => new THREE.Vector3(a[0], a[1], a[2]));
+        this.controls.updateHoleSeedUI(false, this.manualHoleSeeds.length);
+
+        // Exclusion zone
+        this.excludedInnerMeshVertices = new Set<number>(s.excludedInnerVertices ?? []);
+        const sep = this.pipeline?.state.separation;
+        if (sep && this.excludedInnerMeshVertices.size > 0) this.meshViewer.setExcludedVerticesHighlight(this.excludedInnerMeshVertices, sep.inner);
+        else this.meshViewer.setExcludedVerticesHighlight(null, null);
+        this.controls.updateExclusionCount(this.excludedInnerMeshVertices.size);
+
+        // Manual non-worn selection
+        if (Array.isArray(s.manualNonWornPositions) && s.manualNonWornPositions.length >= 3) {
+          this.manualNonWornPositions = new Float32Array(s.manualNonWornPositions);
+          this.manualNonWornCount = this.manualNonWornPositions.length / 3;
+          this.meshViewer.setManualNonWornHighlight(this.manualNonWornPositions);
+        } else {
+          this.manualNonWornPositions = null;
+          this.manualNonWornCount = 0;
+        }
+        this.controls.updateManualSelectionCount(this.manualNonWornCount);
+
+        // Refresh the rim-plane preview with the restored plane
+        this._rimAnchorCache = null;
+        this.updateRimPreview();
+        this.scene.requestRender();
+        this.status.setStatus(
+          `Settings loaded from ${file.name}` + (warnings.length ? ` — WARNING: ${warnings.join(', ')}` : '') +
+          '. Press Run Full Analysis to measure.');
+      } catch (e) {
+        this.status.setStatus(`Could not load settings: ${(e as Error).message}`);
+      }
+    };
+    input.click();
   }
 
   private exportCSV(): void {
