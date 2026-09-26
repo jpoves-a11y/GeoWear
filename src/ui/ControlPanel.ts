@@ -43,6 +43,8 @@ export interface ControlCallbacks {
   onExportSTL: () => void;
   onExportPDF: () => void;
   onExportExcel: () => void;
+  onSaveSettings: () => void;
+  onLoadSettings: () => void;
   onShowResults: () => void;
   onParamsChange: (params: AnalysisParams) => void;
   // Exclusion zone
@@ -115,6 +117,8 @@ export class ControlPanel {
   private manualNonWornFolder: GUI | null = null;
   // Two-sphere direction selector (shown for Two-Sphere Auto and Compare All Modes)
   private twoSphereDirectionCtrl: any = null;
+  // Dropdown proxies re-synchronised when settings are loaded from a file
+  private selectProxies: { filter?: { value: string }; thr?: { value: string }; dir?: { value: string }; est?: { value: string } } = {};
   private manualNonWornCountProxy: { info: string } = { info: 'No vertices selected' };
   private manualNonWornCountController: any = null;
   // Analysis mode display name mapping
@@ -302,6 +306,7 @@ export class ControlPanel {
       'Combined (recommended)': 'combined',
     };
     const filterProxy = { value: 'Combined (recommended)' };
+    this.selectProxies.filter = filterProxy;
     const filterCtrl = wearModel.add(filterProxy, 'value',
       ['None', 'Robust IRLS', 'Spatial DBSCAN', 'Combined (recommended)'])
       .name('Linear Wear Filter')
@@ -322,6 +327,7 @@ export class ControlPanel {
       'Legacy 1.02·R': 'relative-2pct',
     };
     const thrProxy = { value: this.params.wearThresholdMode === 'relative-2pct' ? 'Legacy 1.02·R' : 'Noise-adaptive (k·σ)' };
+    this.selectProxies.thr = thrProxy;
     wearModel.add(thrProxy, 'value', Object.keys(thrLabelMap))
       .name('Worn Threshold')
       .onChange((v: string) => {
@@ -341,6 +347,7 @@ export class ControlPanel {
       'Inverted (toward the rim)': 'inverted',
     };
     const dirProxy = { value: this.params.twoSphereDirection === 'inverted' ? 'Inverted (toward the rim)' : 'Auto (into the cup)' };
+    this.selectProxies.dir = dirProxy;
     this.twoSphereDirectionCtrl = wearModel.add(dirProxy, 'value', Object.keys(dirLabelMap))
       .name('Two-Sphere Direction')
       .onChange((v: string) => {
@@ -359,6 +366,7 @@ export class ControlPanel {
       'Min-dispersion cell (legacy)': 'min-std-cell',
     };
     const estProxy = { value: this.params.doubleSphereEstimator === 'min-std-cell' ? 'Min-dispersion cell (legacy)' : 'Median of most stable 25% (recommended)' };
+    this.selectProxies.est = estProxy;
     const dsEst = dsFolder.add(estProxy, 'value', Object.keys(estLabelMap))
       .name('Cell selection')
       .onChange((v: string) => {
@@ -652,6 +660,27 @@ export class ControlPanel {
    * Resets ControlPanel.params AND the commercial-radius proxy to defaults,
    * then refreshes every controller so the GUI reflects DEFAULT_PARAMS.
    */
+  /**
+   * Apply parameters loaded from a settings file: copies them into the live params object
+   * (controllers stay bound to it), re-synchronises every dropdown proxy and refreshes the GUI.
+   */
+  public applyParamsUI(p: Partial<AnalysisParams>): void {
+    Object.assign(this.params, p);
+    this.analysisModelProxy.mode = this.modeReverseMap[this.params.analysisMode] ?? 'Two-Sphere Auto';
+    const R = this.params.commercialRadius;
+    const listed = R > 0 && Number.isInteger(R) && R % 2 === 0 && R >= 10 && R <= 40;
+    this.commercialRadiusProxy.value = R <= 0 ? 'Auto' : listed ? `${R} mm` : 'Other...';
+    if (R > 0 && !listed) { this.commercialRadiusProxy.customValue = R; this.customRadiusController?.show(); }
+    else this.customRadiusController?.hide();
+    const filterLabels: Record<string, string> = { 'none': 'None', 'robust-irls': 'Robust IRLS', 'dbscan-spatial': 'Spatial DBSCAN', 'combined': 'Combined (recommended)' };
+    if (this.selectProxies.filter) this.selectProxies.filter.value = filterLabels[this.params.linearWearFilter] ?? 'Combined (recommended)';
+    if (this.selectProxies.thr) this.selectProxies.thr.value = this.params.wearThresholdMode === 'relative-2pct' ? 'Legacy 1.02·R' : 'Noise-adaptive (k·σ)';
+    if (this.selectProxies.dir) this.selectProxies.dir.value = this.params.twoSphereDirection === 'inverted' ? 'Inverted (toward the rim)' : 'Auto (into the cup)';
+    if (this.selectProxies.est) this.selectProxies.est.value = this.params.doubleSphereEstimator === 'min-std-cell' ? 'Min-dispersion cell (legacy)' : 'Median of most stable 25% (recommended)';
+    this.gui.controllersRecursive().forEach(c => c.updateDisplay());
+    this.updateStepVisibility();
+  }
+
   public resetParamsUI(): void {
     Object.assign(this.params, DEFAULT_PARAMS);
     this.commercialRadiusProxy.value = 'Auto';
@@ -775,6 +804,8 @@ export class ControlPanel {
       'Colored Mesh (STL)': () => this.callbacks.onExportSTL(),
       'Report (PDF)': () => this.callbacks.onExportPDF(),
       'Wear Data (Excel)': () => this.callbacks.onExportExcel(),
+      '💾 Save Measurement Settings': () => this.callbacks.onSaveSettings(),
+      '📂 Load Measurement Settings': () => this.callbacks.onLoadSettings(),
     };
 
     folder.add(exports, 'Screenshot (PNG)');
@@ -782,6 +813,8 @@ export class ControlPanel {
     folder.add(exports, 'Colored Mesh (STL)');
     folder.add(exports, 'Report (PDF)');
     folder.add(exports, 'Wear Data (Excel)');
+    folder.add(exports, '💾 Save Measurement Settings');
+    folder.add(exports, '📂 Load Measurement Settings');
 
     folder.close();
   }

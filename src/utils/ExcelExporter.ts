@@ -34,6 +34,10 @@ const HEADERS = [
   'Modelo de dos esferas',
   'Incertidumbre lineal, DE (μm)',
   'Incertidumbre volumétrica, DE (mm³)',
+  'Desgaste volumétrico con radio medido (mm³)',
+  'Radio medido de la cavidad (mm)',
+  'Volumen con la dirección contraria (mm³)',
+  'Concentricidad de la cara externa',
 ] as const;
 
 const MODE_LABELS: Record<string, string> = {
@@ -72,6 +76,10 @@ interface WearValues {
   twoSphereStatus: string;
   linearSdUm: number | '';
   volumeSdMm3: number | '';
+  volumeMeasuredRadius: number | '';
+  measuredRadius: number | '';
+  alternativeVolume: number | '';
+  outerShell: string;
 }
 
 function extractWearValues(result: AnalysisResults): WearValues {
@@ -117,7 +125,15 @@ function extractWearValues(result: AnalysisResults): WearValues {
 
   const linearSdUm = ts?.linearWearSdMm != null ? round2(ts.linearWearSdMm * 1000) : '';
   const volumeSdMm3 = ts?.volumeSdMm3 != null ? round2(ts.volumeSdMm3) : '';
-  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull, linearSdUm, volumeSdMm3 };
+  const mr = result.wearVolumeResult?.measuredRadius;
+  const volumeMeasuredRadius = mr ? round2(mr.wearVolume) : '';
+  const measuredRadius = mr ? round4(mr.radius) : '';
+  const alternativeVolume = ts?.alternativeVolumeMm3 != null ? round2(ts.alternativeVolumeMm3) : '';
+  const outerShell = !ts?.outerShell ? ''
+    : ts.outerShell.favours === 'current' ? 'Apoya la dirección elegida'
+    : ts.outerShell.favours === 'alternative' ? 'Apoya la dirección contraria'
+    : 'Indeterminada';
+  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull, linearSdUm, volumeSdMm3, volumeMeasuredRadius, measuredRadius, alternativeVolume, outerShell };
 }
 
 type RowArray = (string | number)[];
@@ -149,6 +165,10 @@ function buildRowArray(
     wear.twoSphereStatus,
     wear.linearSdUm,
     wear.volumeSdMm3,
+    wear.volumeMeasuredRadius,
+    wear.measuredRadius,
+    wear.alternativeVolume,
+    wear.outerShell,
   ];
 }
 

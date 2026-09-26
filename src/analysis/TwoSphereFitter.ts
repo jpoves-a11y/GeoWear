@@ -81,6 +81,9 @@ export interface TwoSphereFitOutput extends TwoSphereResult {
   replicates: TwoSphereReplicate[];
   /** RMS of the block-mean residuals (low-frequency non-sphericity), mm; null when not computed */
   lowFreqRmsMm: number | null;
+  /** Vertices supporting the ORIGINAL sphere (flat xyz): clearly outside the displaced sphere when
+   *  wear was detected, all analysed vertices otherwise. Used for the measured-radius volume. */
+  originalSupport: Float32Array;
 }
 
 /**
@@ -299,6 +302,13 @@ export function fitTwoSphereUnion(
     }
   }
 
+  // --- support of the original sphere (for a free-radius fit of the actual cavity radius)
+  const sup: number[] = [];
+  for (let j = 0; j < n; j++) {
+    if (detected && dist(cB, j) - dist(cA, j) <= 2 * sigma) continue;
+    sup.push(A[j * 3], A[j * 3 + 1], A[j * 3 + 2]);
+  }
+
   const ref = new Float32Array(sel);
   return {
     detected,
@@ -321,5 +331,6 @@ export function fitTwoSphereUnion(
     referencePositions: ref,
     replicates,
     lowFreqRmsMm,
+    originalSupport: new Float32Array(sup),
   };
 }

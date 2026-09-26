@@ -27,7 +27,7 @@ interface Case {
   params?: Partial<AnalysisParams>;
   check: (m: Measured, t: Truth) => string[]; // returns failure messages
 }
-interface Measured { linearUm: number; volumeMm3: number; detected?: boolean; angleDeg?: number | null; linSdUm?: number | null; volSdMm3?: number | null; raw: AnalysisResults }
+interface Measured { linearUm: number; volumeMm3: number; detected?: boolean; angleDeg?: number | null; linSdUm?: number | null; volSdMm3?: number | null; volMeasuredRadius?: number | null; radiusUsed?: number; altVolumeMm3?: number | null; raw: AnalysisResults }
 interface Truth { linearUm: number; volumeMm3: number }
 
 const relErr = (m: number, t: number) => Math.abs(m - t) / Math.max(t, 1e-9);
@@ -68,6 +68,9 @@ async function measure(c: Case): Promise<{ m: Measured; t: Truth }> {
     detected: ts?.detected, angleDeg: ts?.directionAngleDeg ?? null,
     linSdUm: ts?.linearWearSdMm != null ? ts.linearWearSdMm * 1000 : null,
     volSdMm3: ts?.volumeSdMm3 ?? null,
+    volMeasuredRadius: r.wearVolumeResult?.measuredRadius?.wearVolume ?? null,
+    radiusUsed: r.commercialSphere?.commercialRadius,
+    altVolumeMm3: ts?.alternativeVolumeMm3 ?? null,
     raw: r,
   };
   const Rtrue = L.R + (L.dR ?? 0);
@@ -125,6 +128,25 @@ const cases: Case[] = [
     check: (m) => [
       ...(m.detected === false ? [] : ['uniform enlargement taken as directional wear']),
       ...(m.linearUm === 0 ? [] : [`linear ${m.linearUm.toFixed(1)} µm (expected 0)`]),
+      // the measured-radius volume removes the uniform enlargement
+      ...(m.volMeasuredRadius != null && m.volMeasuredRadius < 5 ? [] : [`measured-radius volume ${m.volMeasuredRadius} mm³ (expected < 5)`]),
+    ],
+  },
+  {
+    name: 'Two-Sphere · 1 mm at 45° with cavity radius +0.1 mm: measured-radius volume stays exact',
+    liner: { delta: 1.0, alphaDeg: 45, R: 14, noiseUm: 20, dR: 0.1 },
+    check: (m, t) => [
+      ...within('measured-radius volume (mm³)', m.volMeasuredRadius ?? NaN, t.volumeMm3, 0.03),
+      ...(m.volumeMm3 > t.volumeMm3 ? [] : ['nominal-radius volume should include the enlargement']),
+    ],
+  },
+  {
+    name: 'Two-Sphere · automatic commercial radius (R16 cup, 3 mm wear)',
+    liner: { delta: 3.0, alphaDeg: 45, R: 16, noiseUm: 20 },
+    params: { commercialRadius: 0 },
+    check: (m, t) => [
+      ...(m.radiusUsed === 16 ? [] : [`radius ${m.radiusUsed} mm chosen (expected 16)`]),
+      ...within('linear (µm)', m.linearUm, t.linearUm, 0.03),
     ],
   },
   {
@@ -135,6 +157,8 @@ const cases: Case[] = [
       ...within('linear (µm)', m.linearUm, t.linearUm, 0.05),
       ...(m.angleDeg != null && Math.abs(m.angleDeg - 135) <= 10 ? [] : [`direction ${m.angleDeg?.toFixed(1)}° (expected 135 ± 10°)`]),
       ...(relErr(m.volumeMm3, t.volumeMm3) > 0.2 ? [] : ['inverted volume should differ from the true (non-inverted) volume']),
+      // the "other direction" volume reported with the inverted choice is the true (auto) one
+      ...within('alternative volume (mm³)', m.altVolumeMm3 ?? NaN, t.volumeMm3, 0.05),
     ],
   },
   {

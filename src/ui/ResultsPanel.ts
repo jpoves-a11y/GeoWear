@@ -748,6 +748,22 @@ export class ResultsPanel {
     if (ts.lowFreqRmsUm != null) {
       this.addMetric(section, 'Surface form error (low-frequency RMS)', ts.lowFreqRmsUm.toFixed(1), 'μm');
     }
+    if (ts.alternativeVolumeMm3 != null) {
+      this.addMetric(section, ts.inverted ? 'Volume if Auto direction' : 'Volume if Inverted direction',
+        ts.alternativeVolumeMm3.toFixed(2), 'mm³');
+    }
+    if (ts.outerShell) {
+      const o = ts.outerShell;
+      const verdict = o.favours === 'current' ? 'supports the current choice'
+        : o.favours === 'alternative' ? 'supports the OPPOSITE direction' : 'undetermined';
+      this.addMetric(section, 'Outer-shell concentricity',
+        `${verdict} (outer centre ${o.distToOriginalMm.toFixed(2)} mm from original / ${o.distToDisplacedMm.toFixed(2)} mm from displaced; outer RMS ${o.rmsUm.toFixed(0)} μm)`,
+        undefined, o.favours === 'alternative' ? 'warning' : undefined);
+    }
+    if (ts.radiusSelection && ts.radiusSelection.chosen !== ts.radiusSelection.snapped) {
+      this.addMetric(section, 'Radius selection',
+        `${ts.radiusSelection.chosen} mm chosen by the two-sphere fit (general fit suggested ${ts.radiusSelection.snapped} mm)`, undefined, 'warning');
+    }
     this.addMetric(section, 'Original sphere', ts.inverted
       ? 'Inverted by user (head displaced toward the rim)'
       : 'Auto (head displaced into the cup)', undefined, ts.inverted ? 'warning' : undefined);
@@ -818,6 +834,15 @@ export class ResultsPanel {
       wv.wearVolume > 0.1 ? 'danger' : 'success');
     this.addMetric(section, 'Wear Mass', (wv.wearVolume * density).toFixed(4), 'mg',
       wv.wearVolume > 0.1 ? 'danger' : 'success');
+
+    if (wv.measuredRadius) {
+      const m = wv.measuredRadius;
+      this.addMetric(section, 'Wear Volume · measured radius', m.wearVolume.toFixed(4), 'mm³', m.reliable ? undefined : 'warning');
+      this.addMetric(section, 'Measured cavity radius', `${m.radius.toFixed(3)} (nominal ${(results.commercialSphere?.commercialRadius ?? 0).toFixed(1)})`, 'mm');
+      this.addMetric(section, 'Note', m.reliable
+        ? 'Measured-radius volume excludes uniform enlargement (design clearance, machining, creep) and any uniformly distributed wear'
+        : 'Measured radius unreliable (small non-worn reference or radius > 0.5 mm from nominal)', undefined, m.reliable ? undefined : 'warning');
+    }
 
     if (this.yearsInVivo > 0) {
       const volRate = wv.wearVolume / this.yearsInVivo;

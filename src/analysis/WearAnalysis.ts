@@ -229,6 +229,11 @@ export class WearAnalysisPipeline {
     this.onProgress = onProgress;
   }
 
+  /** Give the browser a chance to repaint (progress bar, status) between heavy steps. */
+  private yieldToUI(): Promise<void> {
+    return new Promise<void>(resolve => setTimeout(resolve, 0));
+  }
+
   private progress(stage: string, progress: number, message: string): void {
     if (this.onProgress) {
       this.onProgress(stage, progress, message);
@@ -281,6 +286,8 @@ export class WearAnalysisPipeline {
   /** Pre-extracted 3D positions of manually selected non-worn vertices (flat xyz Float32Array).
    *  Used by the 'manual-geodesic' mode instead of geodesic-based classification. */
   private manualUnwornPositions: Float32Array | null = null;
+  /** Two-sphere mode: vertices supporting the original sphere (for the measured-radius volume). */
+  private twoSphereSupport: Float32Array | null = null;
   private manualUnwornCount: number = 0;
 
   /** Provide the pre-extracted 3D positions of the non-worn reference vertices,
@@ -396,6 +403,7 @@ export class WearAnalysisPipeline {
 
     // Step 1: Separate faces (skipped if a separation was pre-injected via setSeparation)
     this.progress('separating', 0, 'Detecting inner surface...');
+    await this.yieldToUI();
     this.state.originalMesh = meshData;
     if (!this.state.separation) {
       this.stepSeparateFaces(meshData);
@@ -404,91 +412,119 @@ export class WearAnalysisPipeline {
     // Optional: repair inner face scan defects before trimming/analysis
     if (params.repairInnerFace) {
       this.progress('repair-inner', 0.06, 'Repairing inner face holes...');
+      await this.yieldToUI();
       this.stepRepairInnerFace(2, params.holeRepairMaxLoopSize);
     }
 
     // Step 2: Trim rim
     this.progress('trimming', 0.1, `Trimming rim (${params.rimTrimPercent}%)...`);
+    await this.yieldToUI();
     this.stepTrimRim(params.rimTrimPercent);
 
     // Step 2b: Repair working (trimmed) mesh holes after trim
     if (params.repairInnerFace) {
       this.progress('repair-working', 0.13, 'Repairing trimmed mesh holes...');
+      await this.yieldToUI();
       this.stepRepairWorkingMesh(2, params.holeRepairMaxLoopSize);
     }
 
     // Step 2c: Smooth mesh for geodesic/sphere analysis
     this.progress('smoothing', 0.15, `Smoothing mesh (${params.smoothingIterations} iterations)...`);
+    await this.yieldToUI();
     this.stepSmooth(params.smoothingIterations);
 
     if (params.analysisMode === 'double-sphere-metrics') {
       // Double-sphere does not need geodesics — fit sphere directly with all vertices
       this.progress('fitting', 0.8, 'Fitting reference sphere (all vertices)...');
+      await this.yieldToUI();
       this.stepFitSphere();
     } else if (params.analysisMode === 'two-sphere-auto') {
       // Automatic two-sphere: detect rim+pole (no geodesics), general sphere fit only for the
       // commercial radius and as the starting centre; the reference comes from the union fit.
       this.progress('rim-detect', 0.2, 'Detecting rim and pole...');
+      await this.yieldToUI();
       this.stepDetectRimAndPole();
       this.progress('fitting', 0.6, 'Fitting general sphere...');
+      await this.yieldToUI();
       this.stepFitSphere();
     } else if (params.analysisMode === 'manual-geodesic') {
       // Manual Geodesic: detect rim+pole (no geodesic tracing), then fit sphere from manual selection
       this.progress('rim-detect', 0.2, 'Detecting rim and pole...');
+      await this.yieldToUI();
       this.stepDetectRimAndPole();
       this.progress('fitting', 0.8, 'Fitting reference sphere (manually selected non-worn vertices)...');
+      await this.yieldToUI();
       this.stepFitSphereManual();
     } else {
       // Step 3: Build graph and compute geodesics (before sphere fit)
       this.progress('geodesics', 0.2, `Computing ${params.geodesicCount} geodesics...`);
+      await this.yieldToUI();
       await this.stepComputeGeodesicsAsync(params.geodesicCount);
 
       // Step 4: Fit sphere (using only regular geodesic vertices)
       this.progress('fitting', 0.8, 'Fitting reference sphere (regular geodesics only)...');
+      await this.yieldToUI();
       this.stepFitSphere();
     }
 
     if (params.analysisMode === 'sphere-bestfit' || params.analysisMode === 'manual-geodesic' || params.analysisMode === 'two-sphere-auto') {
       // --- Sphere BestFit / Manual Geodesic / Automatic two-sphere pipeline ---
       this.progress('commercial', 0.83, 'Determining commercial radius...');
+      await this.yieldToUI();
       this.stepDetermineCommercialRadius(params.commercialRadius);
 
       this.progress('rim-plane', 0.85, 'Computing rim plane...');
+
+      await this.yieldToUI();
       this.stepComputeRimPlane(params.rimTrimPercent);
 
       if (params.analysisMode === 'two-sphere-auto') {
         this.progress('two-sphere', 0.86, 'Fitting original and displaced spheres...');
-        this.stepFitTwoSphereUnion(params.twoSphereDirection === 'inverted');
+        await this.yieldToUI();
+        await this.stepFitTwoSphereUnion(params.twoSphereDirection === 'inverted', params.commercialRadius === 0);
       }
 
       this.progress('classifying', 0.88, 'Classifying wear zones...');
+
+      await this.yieldToUI();
       this.stepClassifyWear(params.rimTrimPercent, params.wearThresholdMode, params.wearThresholdK, params.wearThresholdMinUm);
 
       if (params.analysisMode === 'two-sphere-auto') {
         this.stepSetTwoSphereZoneSpheres();
       } else {
         this.progress('zone-spheres', 0.89, 'Fitting zone spheres...');
+        await this.yieldToUI();
         this.stepFitZoneSpheres(params.linearWearFilter, params.minWornCoveragePct);
       }
 
       this.progress('wear-volume', 0.93, 'Computing wear volume...');
+
+      await this.yieldToUI();
       this.stepComputeWearVolumeBestFit();
 
       this.progress('wear-plane', 0.97, 'Computing wear plane...');
+
+      await this.yieldToUI();
       this.stepComputeWearPlane();
     } else if (params.analysisMode === 'pure-geodesic') {
       // --- Pure Geodesic pipeline --- (geodesic-based anomaly detection)
       this.progress('fitting', 0.85, 'Fitting ellipsoid...');
+      await this.yieldToUI();
       this.stepFitEllipsoid();
 
       this.progress('analyzing', 0.85, 'Analyzing deviations...');
+
+      await this.yieldToUI();
       this.stepAnalyzeDeviations(params.thresholdMicrons);
 
       this.progress('volumes', 0.92, 'Computing defect volumes...');
+
+      await this.yieldToUI();
       this.stepComputeVolumes(params.thresholdMicrons, params.density);
     } else {
       // --- Double Sphere Metrics pipeline ---
       this.progress('double-sphere', 0.85, 'Running double-sphere sweep...');
+      await this.yieldToUI();
       await this.stepDoubleSphereMetrics(params);
     }
 
@@ -496,6 +532,8 @@ export class WearAnalysisPipeline {
     this.state.results!.processingTimeMs = endTime - startTime;
 
     this.progress('complete', 1.0, 'Analysis complete!');
+
+    await this.yieldToUI();
     return this.state.results!;
   }
 
@@ -1474,12 +1512,36 @@ export class WearAnalysisPipeline {
    * centre (used for the cap volume, the heat map and the wear plane) and the vertices on
    * it become the non-worn reference set for the noise-adaptive classification.
    */
-  stepFitTwoSphereUnion(invert: boolean = false): TwoSphereResult {
+  async stepFitTwoSphereUnion(invert: boolean = false, autoRadius: boolean = false): Promise<TwoSphereResult> {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
     if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
-    const cs = this.state.commercialSphere;
+    let cs = this.state.commercialSphere;
     const plane = this.state.rimPlane;
+
+    // --- Automatic radius: the general sphere fit is inflated by wear, so the snapped radius can be
+    //     one size too large. Evaluate the neighbouring even radii with the two-sphere model and keep
+    //     the one that explains the surface best (smallest mean squared residual).
+    let radiusSelection: TwoSphereResult['radiusSelection'] = null;
+    if (autoRadius) {
+      const snapped = cs.commercialRadius;
+      const candidates: { radius: number; rmsUm: number }[] = [];
+      for (const Rc of [snapped - 2, snapped, snapped + 2]) {
+        if (Rc < 10) continue;
+        const f = fitTwoSphereUnion(this.state.workingMesh, Rc, plane.point, plane.normal,
+          { init: [cs.center.x, cs.center.y, cs.center.z], searchPoints: 3000 });
+        candidates.push({ radius: Rc, rmsUm: Math.sqrt(f.msTwoSpheresUm2) });
+        this.progress('two-sphere', 0.86, `Testing commercial radius ${Rc} mm...`);
+        await this.yieldToUI();
+      }
+      const best = candidates.reduce((a, b) => (b.rmsUm < a.rmsUm ? b : a), candidates.find(c => c.radius === snapped)!);
+      radiusSelection = { snapped, chosen: best.radius, candidates };
+      if (best.radius !== snapped) {
+        console.log(`[Two-sphere] auto radius: snapped ${snapped} mm → ${best.radius} mm (two-sphere RMS ${candidates.map(c => `${c.radius}:${c.rmsUm.toFixed(1)}`).join(', ')} μm)`);
+        cs = { ...cs, commercialRadius: best.radius };
+        this.state.commercialSphere = cs;
+      }
+    }
     // Plane-sensitivity shift: 1 % of the cup depth (the Rim-trim slider step is 0.5 %)
     const hr = this.state.trimResult?.heightRange;
     const planeShiftMm = hr ? 0.01 * Math.abs(hr[1] - hr[0]) : 0.2;
@@ -1488,8 +1550,29 @@ export class WearAnalysisPipeline {
       plane.point, plane.normal,
       { init: [cs.center.x, cs.center.y, cs.center.z], invert, uncertainty: { bootstrap: 12, planeShiftMm, seed: 1 } },
     );
-    const { referencePositions, replicates, lowFreqRmsMm, ...result } = fit;
+    const { referencePositions, replicates, lowFreqRmsMm, originalSupport, ...result } = fit;
     result.lowFreqRmsUm = lowFreqRmsMm != null ? lowFreqRmsMm * 1000 : null;
+    result.radiusSelection = radiusSelection;
+    this.twoSphereSupport = originalSupport;
+
+    // --- The other direction choice (spheres swapped) and the outer-shell concentricity hint
+    result.alternativeVolumeMm3 = null;
+    result.outerShell = null;
+    if (result.detected) {
+      const innerMesh = this.state.innerMeshForVolume ?? this.state.separation!.inner;
+      const mv = computeMeshEnclosedVolume(innerMesh, plane.point, plane.normal);
+      result.alternativeVolumeMm3 = Math.max(0, mv - computeSphereCap(result.displacedCenter, cs.commercialRadius, plane.point, plane.normal));
+      const outer = this.state.separation?.outer;
+      if (outer && outer.vertexCount >= 100) {
+        const of = fitSphereRobust(outer.positions, outer.vertexCount);
+        const dA = of.center.distanceTo(result.originalCenter), dB = of.center.distanceTo(result.displacedCenter);
+        const margin = Math.max(0.5, of.rmsError);
+        result.outerShell = {
+          radius: of.radius, rmsUm: of.rmsError * 1000, distToOriginalMm: dA, distToDisplacedMm: dB,
+          favours: Math.abs(dA - dB) <= margin ? 'undetermined' : dA < dB ? 'current' : 'alternative',
+        };
+      }
+    }
 
     // --- Uncertainty of linear and volumetric wear from the replicates
     if (result.detected && replicates.length > 0) {
@@ -2137,6 +2220,25 @@ export class WearAnalysisPipeline {
       sphereCapVolume,
       wearVolume,
     };
+
+    // Alternative volume with the ACTUAL radius of the unworn cavity (free-radius fit to the
+    // non-worn reference): excludes uniform enlargement (clearance, machining, creep).
+    const support = this._activeMode === 'two-sphere-auto' ? this.twoSphereSupport
+      : this._activeMode === 'manual-geodesic' ? this.manualUnwornPositions : null;
+    if (support && support.length / 3 >= 100) {
+      const nSup = support.length / 3;
+      const mf = fitSphereRobust(support, nSup);
+      const capM = computeSphereCap(mf.center, mf.radius, planePoint, planeNormal);
+      const activeCount = this.state.twoSphere?.activeVertexCount ?? nSup;
+      this.state.wearVolume.measuredRadius = {
+        radius: mf.radius,
+        center: mf.center.clone(),
+        wearVolume: Math.max(0, meshEnclosedVolume - capM),
+        supportVertexCount: nSup,
+        reliable: Math.abs(mf.radius - capRadius) <= 0.5 && nSup >= 500 && nSup / Math.max(1, activeCount) >= 0.1,
+      };
+      console.log(`[Wear Volume] measured radius R=${mf.radius.toFixed(4)}mm (nominal ${capRadius}), volume=${this.state.wearVolume.measuredRadius.wearVolume.toFixed(2)}mm³`);
+    }
 
     // Initialize results for bestfit / manual-geodesic mode
     this.state.results = {
