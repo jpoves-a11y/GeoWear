@@ -30,12 +30,15 @@ const HEADERS = [
   'Ruido σ (μm)',
   'Umbral sobre R (μm)',
   'Semilla DSM',
+  'Dirección del desgaste respecto al eje (º)',
+  'Modelo de dos esferas',
 ] as const;
 
 const MODE_LABELS: Record<string, string> = {
   'sphere-bestfit': 'Sphere BestFit',
   'double-sphere-metrics': 'Double Sphere Metrics',
   'manual-geodesic': 'Manual Geodesic',
+  'two-sphere-auto': 'Two-Sphere Auto',
   'pure-geodesic': 'Pure Geodesic',
 };
 
@@ -62,6 +65,9 @@ interface WearValues {
   thresholdOverRUm: number | '';
   /** Double-sphere bootstrap seed — '' when not applicable */
   seed: number | '';
+  /** Two-sphere mode: penetration direction to the cup axis (º) and detection status — '' when not applicable */
+  directionDeg: number | '';
+  twoSphereStatus: string;
 }
 
 function extractWearValues(result: AnalysisResults): WearValues {
@@ -70,7 +76,10 @@ function extractWearValues(result: AnalysisResults): WearValues {
 
   const mode = result.analysisMode;
 
-  if (mode === 'sphere-bestfit' || mode === 'manual-geodesic') {
+  if (mode === 'two-sphere-auto') {
+    linearWearUm = (result.twoSphere?.linearWearMm ?? 0) * 1000;
+    volumetricWearMm3 = result.wearVolumeResult?.wearVolume ?? 0;
+  } else if (mode === 'sphere-bestfit' || mode === 'manual-geodesic') {
     if (result.zoneSpheres) {
       linearWearUm =
         dist3(result.zoneSpheres.wornSphere.center, result.zoneSpheres.unwornSphere.center) *
@@ -94,8 +103,14 @@ function extractWearValues(result: AnalysisResults): WearValues {
   const noiseSigmaUm = wc?.noiseSigmaUm != null ? round2(wc.noiseSigmaUm) : '';
   const thresholdOverRUm = wc?.depthThresholdUm != null ? round2(wc.depthThresholdUm) : '';
   const seed = ds?.seed ?? '';
+  const ts = result.twoSphere;
+  const directionDeg = ts?.directionAngleDeg != null ? round2(ts.directionAngleDeg) : '';
+  const twoSphereStatus = !ts ? ''
+    : !ts.detected ? 'No detectado (bajo el límite de detección o cavidad agrandada uniformemente)'
+    : ts.nearPole ? 'Detectado · penetración < 30º del eje (fiabilidad reducida)'
+    : 'Detectado';
 
-  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed };
+  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus };
 }
 
 type RowArray = (string | number)[];
@@ -123,6 +138,8 @@ function buildRowArray(
     wear.noiseSigmaUm,
     wear.thresholdOverRUm,
     wear.seed,
+    wear.directionDeg,
+    wear.twoSphereStatus,
   ];
 }
 
@@ -143,10 +160,14 @@ export function extractRows(
   if (result.analysisMode === 'compare-all-modes') {
     const sbfWear = extractWearValues(result.sphereBestfit);
     const dsmWear = extractWearValues(result.doubleSphereMetrics);
-    return [
+    const rows = [
       buildRowArray(prosthesisName, MODE_LABELS['sphere-bestfit'], sbfWear, params),
       buildRowArray('', MODE_LABELS['double-sphere-metrics'], dsmWear, params),
     ];
+    if (result.twoSphereAuto) {
+      rows.push(buildRowArray('', MODE_LABELS['two-sphere-auto'], extractWearValues(result.twoSphereAuto), params));
+    }
+    return rows;
   }
 
   const wear = extractWearValues(result as AnalysisResults);

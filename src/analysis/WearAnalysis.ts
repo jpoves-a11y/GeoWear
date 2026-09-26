@@ -10,7 +10,7 @@ import type {
   AnalysisParams, CommercialSphereInfo, WearClassification,
   ZoneSphereResult, RimPlaneResult, WearVolumeResult, WearPlaneResult,
   LinearWearFilter, AnalysisRunResult, DoubleSphereMetricsResult,
-  DoubleSphereSweepCellResult, AnalysisMode, WearThresholdMode
+  DoubleSphereSweepCellResult, AnalysisMode, WearThresholdMode, TwoSphereResult
 } from '../types';
 import { separateFaces, trimRim, computeRimAnchor, findRimLoopVertices } from './MeshProcessor';
 import { smoothMesh, repairInnerFaceMesh, type GeodesicRepairData } from './MeshSmoother';
@@ -23,6 +23,7 @@ import { computeGeodesics } from './GeodesicSolver';
 import { analyzeDeviations, computeVertexDeviations } from './DeviationAnalyzer';
 import { clusterAnomalies, findPrimaryWearZone } from './AnomalyRegistry';
 import { computeDefectVolumes, computeWearVector, computeMeshEnclosedVolume, computeSphereCap } from './VolumeComputer';
+import { fitTwoSphereUnion } from './TwoSphereFitter';
 
 /** Shallow-clone a MeshData, creating independent typed-array copies. */
 function cloneMeshData(m: MeshData): MeshData {
@@ -114,6 +115,8 @@ export interface PipelineState {
   rimPlane: RimPlaneResult | null;
   wearVolume: WearVolumeResult | null;
   wearPlane: WearPlaneResult | null;
+  // Automatic two-sphere mode result
+  twoSphere: TwoSphereResult | null;
   // Pre-computed rim geometry for double-sphere mode (stored for live rim-trim slider)
   dsRimCentroid: THREE.Vector3 | null;
   dsRimNormal: THREE.Vector3 | null;
@@ -173,6 +176,7 @@ export class WearAnalysisPipeline {
   public compareModePipelineStates: {
     sphereBestfit: PipelineState;
     doubleSphereMetrics: PipelineState;
+    twoSphereAuto?: PipelineState;
   } | null = null;
 
   public state: PipelineState = {
@@ -199,6 +203,7 @@ export class WearAnalysisPipeline {
     rimPlane: null,
     wearVolume: null,
     wearPlane: null,
+    twoSphere: null,
     dsRimCentroid: null,
     dsRimNormal: null,
     dsDistToPole: null,
@@ -420,6 +425,13 @@ export class WearAnalysisPipeline {
       // Double-sphere does not need geodesics — fit sphere directly with all vertices
       this.progress('fitting', 0.8, 'Fitting reference sphere (all vertices)...');
       this.stepFitSphere();
+    } else if (params.analysisMode === 'two-sphere-auto') {
+      // Automatic two-sphere: detect rim+pole (no geodesics), general sphere fit only for the
+      // commercial radius and as the starting centre; the reference comes from the union fit.
+      this.progress('rim-detect', 0.2, 'Detecting rim and pole...');
+      this.stepDetectRimAndPole();
+      this.progress('fitting', 0.6, 'Fitting general sphere...');
+      this.stepFitSphere();
     } else if (params.analysisMode === 'manual-geodesic') {
       // Manual Geodesic: detect rim+pole (no geodesic tracing), then fit sphere from manual selection
       this.progress('rim-detect', 0.2, 'Detecting rim and pole...');
@@ -436,19 +448,28 @@ export class WearAnalysisPipeline {
       this.stepFitSphere();
     }
 
-    if (params.analysisMode === 'sphere-bestfit' || params.analysisMode === 'manual-geodesic') {
-      // --- Sphere BestFit / Manual Geodesic pipeline ---
+    if (params.analysisMode === 'sphere-bestfit' || params.analysisMode === 'manual-geodesic' || params.analysisMode === 'two-sphere-auto') {
+      // --- Sphere BestFit / Manual Geodesic / Automatic two-sphere pipeline ---
       this.progress('commercial', 0.83, 'Determining commercial radius...');
       this.stepDetermineCommercialRadius(params.commercialRadius);
 
       this.progress('rim-plane', 0.85, 'Computing rim plane...');
       this.stepComputeRimPlane(params.rimTrimPercent);
 
-      this.progress('classifying', 0.86, 'Classifying wear zones...');
+      if (params.analysisMode === 'two-sphere-auto') {
+        this.progress('two-sphere', 0.86, 'Fitting original and displaced spheres...');
+        this.stepFitTwoSphereUnion();
+      }
+
+      this.progress('classifying', 0.88, 'Classifying wear zones...');
       this.stepClassifyWear(params.rimTrimPercent, params.wearThresholdMode, params.wearThresholdK, params.wearThresholdMinUm);
 
-      this.progress('zone-spheres', 0.89, 'Fitting zone spheres...');
-      this.stepFitZoneSpheres(params.linearWearFilter, params.minWornCoveragePct);
+      if (params.analysisMode === 'two-sphere-auto') {
+        this.stepSetTwoSphereZoneSpheres();
+      } else {
+        this.progress('zone-spheres', 0.89, 'Fitting zone spheres...');
+        this.stepFitZoneSpheres(params.linearWearFilter, params.minWornCoveragePct);
+      }
 
       this.progress('wear-volume', 0.93, 'Computing wear volume...');
       this.stepComputeWearVolumeBestFit();
@@ -487,12 +508,12 @@ export class WearAnalysisPipeline {
     });
 
     const runOne = async (
-      mode: 'sphere-bestfit' | 'double-sphere-metrics',
+      mode: 'sphere-bestfit' | 'double-sphere-metrics' | 'two-sphere-auto',
       offset: number,
       label: string,
     ): Promise<{ result: AnalysisResults; pipeline: WearAnalysisPipeline }> => {
       const subPipeline = new WearAnalysisPipeline((stage, progress, message) => {
-        const scaled = Math.min(0.999, offset + progress / 2);
+        const scaled = Math.min(0.999, offset + progress / 3);
         this.progress(stage, scaled, `[${label}] ${message}`);
       });
       // Propagate user-configured rim plane and exclusion mask to each sub-pipeline
@@ -507,14 +528,17 @@ export class WearAnalysisPipeline {
     };
 
     const bestfitRun = await runOne('sphere-bestfit', 0, 'Sphere BestFit');
-    const doubleRun = await runOne('double-sphere-metrics', 1 / 2, 'Double Sphere');
+    const doubleRun = await runOne('double-sphere-metrics', 1 / 3, 'Double Sphere');
+    const twoRun = await runOne('two-sphere-auto', 2 / 3, 'Two-sphere auto');
     const bestfit = bestfitRun.result;
     const doubleMetrics = doubleRun.result;
+    const twoSphereAuto = twoRun.result;
 
     // Store sub-pipeline states so the caller can switch 3D visualisation.
     this.compareModePipelineStates = {
       sphereBestfit: bestfitRun.pipeline.state,
       doubleSphereMetrics: doubleRun.pipeline.state,
+      twoSphereAuto: twoRun.pipeline.state,
     };
     // Default 3D visualisation: sphere-bestfit (richest visual output).
     this.state = bestfitRun.pipeline.state;
@@ -526,9 +550,12 @@ export class WearAnalysisPipeline {
       analysisMode: 'compare-all-modes',
       sphereBestfit: bestfit,
       doubleSphereMetrics: doubleMetrics,
+      twoSphereAuto,
       summary: {
         sphereBestfitWearVolumeMm3: bestfit.wearVolumeResult?.wearVolume ?? bestfit.totalWearVolume,
         doubleSphereLinearWearMm: doubleMetrics.doubleSphereMetrics?.bestCell?.centerDistanceMean ?? 0,
+        twoSphereLinearWearMm: twoSphereAuto.twoSphere?.linearWearMm ?? 0,
+        twoSphereWearVolumeMm3: twoSphereAuto.wearVolumeResult?.wearVolume ?? 0,
       },
       processingTimeMs,
     };
@@ -704,7 +731,8 @@ export class WearAnalysisPipeline {
     }
 
     // Fallback: fit with all vertices
-    console.warn('Sphere fit: not enough regular geodesic points, using all mesh vertices');
+    if (this.state.geodesics.length > 0) console.warn('Sphere fit: not enough regular geodesic points, using all mesh vertices');
+    else console.log('Sphere fit: using all mesh vertices');
     this.state.sphereFit = fitSphereRobust(
       mesh.positions,
       mesh.vertexCount
@@ -1439,6 +1467,59 @@ export class WearAnalysisPipeline {
    * even integer (mm), or snaps UP if within 0.2 mm of the next even value.
    * Accepts any positive even manual override.
    */
+  /**
+   * Automatic two-sphere mode: fit the original cavity sphere and the displaced head
+   * sphere jointly (both with the commercial radius) on the vertices below the cut plane.
+   * The original sphere becomes the reference: its centre replaces the commercial-sphere
+   * centre (used for the cap volume, the heat map and the wear plane) and the vertices on
+   * it become the non-worn reference set for the noise-adaptive classification.
+   */
+  stepFitTwoSphereUnion(): TwoSphereResult {
+    if (!this.state.workingMesh) throw new Error('No working mesh available');
+    if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
+    if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
+    const cs = this.state.commercialSphere;
+    const fit = fitTwoSphereUnion(
+      this.state.workingMesh, cs.commercialRadius,
+      this.state.rimPlane.point, this.state.rimPlane.normal,
+      { init: [cs.center.x, cs.center.y, cs.center.z] },
+    );
+    const { referencePositions, ...result } = fit;
+    this.state.twoSphere = result;
+    this.state.commercialSphere = { ...cs, center: result.originalCenter.clone() };
+    if (fit.referenceVertexCount >= 100) {
+      this.manualUnwornPositions = referencePositions;
+      this.manualUnwornCount = fit.referenceVertexCount;
+    } else {
+      this.manualUnwornPositions = null;
+      this.manualUnwornCount = 0;
+    }
+    console.log(`[Two-sphere] detected=${result.detected}, linear=${(result.linearWearMm * 1000).toFixed(1)}μm, ` +
+      `angle=${result.directionAngleDeg?.toFixed(1) ?? '—'}°, σ=${result.noiseSigmaUm.toFixed(1)}μm, ` +
+      `ms(1/2/free)=${result.msOneSphereUm2.toFixed(0)}/${result.msTwoSpheresUm2.toFixed(0)}/${result.msFreeSphereUm2.toFixed(0)}μm², ` +
+      `reference=${result.referenceVertexCount}/${result.activeVertexCount} vertices`);
+    return result;
+  }
+
+  /** Zone spheres for the automatic two-sphere mode: unworn = original sphere, worn = displaced sphere. */
+  stepSetTwoSphereZoneSpheres(): ZoneSphereResult {
+    const ts = this.state.twoSphere;
+    if (!ts) throw new Error('Run the two-sphere fit first');
+    const wc = this.state.wearClassification;
+    this.state.zoneSpheres = {
+      wornSphere: { center: ts.displacedCenter.clone(), radius: ts.radius, rmsError: Math.sqrt(ts.msTwoSpheresUm2) / 1000 },
+      unwornSphere: { center: ts.originalCenter.clone(), radius: ts.radius, rmsError: Math.sqrt(ts.msTwoSpheresUm2) / 1000 },
+      rawWornVertexCount: wc?.wornCount,
+      filteredWornVertexCount: wc?.wornCount,
+      discardedClusters: 0,
+      linearWearUnreliable: !ts.detected || ts.nearPole,
+      unreliableReason: !ts.detected
+        ? 'No directional wear detected (below the detection limit, or a uniformly enlarged cavity)'
+        : ts.nearPole ? `Penetration ${ts.directionAngleDeg!.toFixed(0)}° from the cup axis (< 30°): small unworn reference, reduced accuracy` : '',
+    };
+    return this.state.zoneSpheres;
+  }
+
   stepDetermineCommercialRadius(manualRadius: number = 0): CommercialSphereInfo {
     if (!this.state.sphereFit) throw new Error('Run sphere fit first');
 
@@ -1504,7 +1585,7 @@ export class WearAnalysisPipeline {
     let threshold = R * 1.02;
     let baselineMm = 0, sigmaMm = 0, depthThrMm = 0.02 * R, noiseAboveLegacy = false;
     if (thresholdMode === 'noise-adaptive') {
-      const manualRef = this._activeMode === 'manual-geodesic' && this.manualUnwornPositions !== null && this.manualUnwornCount >= 100;
+      const manualRef = (this._activeMode === 'manual-geodesic' || this._activeMode === 'two-sphere-auto') && this.manualUnwornPositions !== null && this.manualUnwornCount >= 100;
       const refPos = manualRef ? this.manualUnwornPositions! : mesh.positions;
       const refN = refPos === mesh.positions ? mesh.vertexCount : this.manualUnwornCount;
       const offsets: number[] = [];
@@ -2023,6 +2104,7 @@ export class WearAnalysisPipeline {
       zoneSpheres: this.state.zoneSpheres ?? undefined,
       rimPlane: this.state.rimPlane ?? undefined,
       wearVolumeResult: this.state.wearVolume,
+      twoSphere: this.state.twoSphere ?? undefined,
       processingTimeMs: 0,
       vertexCount: innerMesh.vertexCount,
       faceCount: innerMesh.faceCount,

@@ -12,7 +12,7 @@ import { HeatMapRenderer } from './viewer/HeatMapRenderer';
 import { GeodesicRenderer } from './viewer/GeodesicRenderer';
 import { GeodesicInteractionManager } from './viewer/GeodesicInteractionManager';
 import { AnnotationManager } from './viewer/Annotations';
-import { ControlPanel, type ControlCallbacks } from './ui/ControlPanel';
+import { ControlPanel, type ControlCallbacks, type CompareVisMode } from './ui/ControlPanel';
 import { ResultsPanel } from './ui/ResultsPanel';
 import { ExportManager } from './ui/ExportManager';
 import { StatusBar } from './ui/StatusBar';
@@ -70,7 +70,7 @@ export class App {
   private currentMeshData: MeshData | null = null;
   private currentResults: AnalysisRunResult | null = null;
   /** Which sub-mode is currently rendered when analysisMode === 'compare-all-modes'. */
-  private compareVisualizationMode: 'sphere-bestfit' | 'double-sphere-metrics' = 'sphere-bestfit';
+  private compareVisualizationMode: CompareVisMode = 'sphere-bestfit';
   private fileName: string = '';
   private isRunning = false;
   private stlWorker: Worker | null = null;
@@ -1283,14 +1283,18 @@ export class App {
    * Switch which sub-mode is rendered in compare-all-modes.
    * Swaps pipeline.state to the selected mode's sub-pipeline state and re-renders.
    */
-  public setCompareVisualizationMode(mode: 'sphere-bestfit' | 'double-sphere-metrics'): void {
+  public setCompareVisualizationMode(mode: CompareVisMode): void {
     if (!this.pipeline || !this.pipeline.compareModePipelineStates) return;
-    this.compareVisualizationMode = mode;
+    const states = this.pipeline.compareModePipelineStates;
     const stateMap = {
-      'sphere-bestfit': this.pipeline.compareModePipelineStates.sphereBestfit,
-      'double-sphere-metrics': this.pipeline.compareModePipelineStates.doubleSphereMetrics,
+      'sphere-bestfit': states.sphereBestfit,
+      'double-sphere-metrics': states.doubleSphereMetrics,
+      'two-sphere-auto': states.twoSphereAuto,
     };
-    this.pipeline.state = stateMap[mode];
+    const next = stateMap[mode];
+    if (!next) return;
+    this.compareVisualizationMode = mode;
+    this.pipeline.state = next;
     this.autoScaleColorRange();
     this.applyVisualization();
     this.updateRimDiscOnly();
@@ -1344,7 +1348,7 @@ export class App {
     }
 
     // --- BestFit / Manual Geodesic mode visualization ---
-    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'double-sphere-metrics' || results.analysisMode === 'manual-geodesic') {
+    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'double-sphere-metrics' || results.analysisMode === 'manual-geodesic' || results.analysisMode === 'two-sphere-auto') {
       if (results.commercialSphere) {
         this.meshViewer.displayCommercialSphere(
           results.commercialSphere.center,
@@ -1449,6 +1453,7 @@ export class App {
     if (
       (results.analysisMode === 'sphere-bestfit' ||
        results.analysisMode === 'manual-geodesic' ||
+       results.analysisMode === 'two-sphere-auto' ||
        results.analysisMode === 'double-sphere-metrics') &&
       results.zoneSpheres
     ) {
@@ -1783,7 +1788,7 @@ export class App {
     const mode = this.pipeline?.state.results?.analysisMode ?? null;
     // Sphere-mode-only elements (commercial/worn/unworn spheres, wear plane, volume
     // overlays) must be hidden when rendering pure-geodesic or double-sphere states.
-    const isSphereModeViz = mode === 'sphere-bestfit' || mode === 'double-sphere-metrics' || mode === 'manual-geodesic';
+    const isSphereModeViz = mode === 'sphere-bestfit' || mode === 'double-sphere-metrics' || mode === 'manual-geodesic' || mode === 'two-sphere-auto';
 
     this.toggleHeatMap(this.params.showHeatmap);
     this.annotations.setVisible(this.params.showAnnotations);
