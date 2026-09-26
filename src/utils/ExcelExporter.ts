@@ -109,8 +109,9 @@ function extractWearValues(result: AnalysisResults): WearValues {
     : !ts.detected ? 'No detectado (bajo el límite de detección o cavidad agrandada uniformemente)'
     : ts.nearPole ? 'Detectado · penetración < 30º del eje (fiabilidad reducida)'
     : 'Detectado';
+  const twoSphereStatusFull = ts?.inverted ? `${twoSphereStatus} · dirección invertida manualmente` : twoSphereStatus;
 
-  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus };
+  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull };
 }
 
 type RowArray = (string | number)[];

@@ -113,6 +113,8 @@ export class ControlPanel {
   private holeSeedClearController: any = null;
   // Manual non-worn zone section (Manual Geodesic mode)
   private manualNonWornFolder: GUI | null = null;
+  // Two-sphere direction selector (shown for Two-Sphere Auto and Compare All Modes)
+  private twoSphereDirectionCtrl: any = null;
   private manualNonWornCountProxy: { info: string } = { info: 'No vertices selected' };
   private manualNonWornCountController: any = null;
   // Analysis mode display name mapping
@@ -332,6 +334,19 @@ export class ControlPanel {
     wearModel.add(this.params, 'wearThresholdMinUm', 0, 100, 1)
       .name('Threshold min (μm)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
+
+    // Two-sphere mode: which fitted sphere is the original cavity
+    const dirLabelMap: Record<string, 'auto' | 'inverted'> = {
+      'Auto (into the cup)': 'auto',
+      'Inverted (toward the rim)': 'inverted',
+    };
+    const dirProxy = { value: this.params.twoSphereDirection === 'inverted' ? 'Inverted (toward the rim)' : 'Auto (into the cup)' };
+    this.twoSphereDirectionCtrl = wearModel.add(dirProxy, 'value', Object.keys(dirLabelMap))
+      .name('Two-Sphere Direction')
+      .onChange((v: string) => {
+        this.params.twoSphereDirection = dirLabelMap[v];
+        this.callbacks.onParamsChange(this.params);
+      });
 
     const dsFolder = folder.addFolder('Double Sphere Sweep');
     const dsSeed = dsFolder.add(this.params, 'doubleSphereSeed', 0, 999999, 1)
@@ -833,6 +848,9 @@ export class ControlPanel {
     const isPureOnly = this.params.analysisMode === 'pure-geodesic';
     const isManualGeodesic = this.params.analysisMode === 'manual-geodesic';
     const isTwoSphere = this.params.analysisMode === 'two-sphere-auto';
+    if (this.twoSphereDirectionCtrl) {
+      (isTwoSphere || isCompareMode) ? this.twoSphereDirectionCtrl.show() : this.twoSphereDirectionCtrl.hide();
+    }
 
     // Step buttons
     for (const ctrl of this.bestfitStepControllers) {

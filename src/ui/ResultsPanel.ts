@@ -724,6 +724,9 @@ export class ResultsPanel {
       ts.detected ? 'Directional wear detected' : 'No directional wear detected',
       undefined, ts.detected ? 'success' : 'warning');
     this.addMetric(section, 'Linear Wear', (ts.linearWearMm * 1000).toFixed(1), 'μm', 'danger', true);
+    this.addMetric(section, 'Original sphere', ts.inverted
+      ? 'Inverted by user (head displaced toward the rim)'
+      : 'Auto (head displaced into the cup)', undefined, ts.inverted ? 'warning' : undefined);
     if (ts.directionAngleDeg !== null) {
       this.addMetric(section, 'Direction to cup axis', ts.directionAngleDeg.toFixed(1), '°', ts.nearPole ? 'warning' : undefined);
     }

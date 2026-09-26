@@ -150,6 +150,11 @@ export interface WearClassification {
 /** Double-sphere cell selection: legacy minimum-dispersion cell, or the median cell of the most stable quarter */
 export type DoubleSphereEstimator = 'min-std-cell' | 'stable-quartile';
 
+/** Two-sphere mode: which fitted sphere is the original cavity.
+ *  'auto' = the head penetrates INTO the cup (original = sphere closer to the opening);
+ *  'inverted' = the opposite (e.g. rim wear after subluxation or dislocation). */
+export type TwoSphereDirection = 'auto' | 'inverted';
+
 /** Rule for deciding which vertices are worn */
 export type WearThresholdMode = 'relative-2pct' | 'noise-adaptive';
 
@@ -213,6 +218,8 @@ export interface TwoSphereResult {
   directionAngleDeg: number | null;
   /** Penetration within 30° of the cup axis: the unworn reference is small and accuracy is reduced */
   nearPole: boolean;
+  /** The user inverted the automatic choice (head displaced toward the rim instead of into the cup) */
+  inverted: boolean;
   /** Scanner noise estimated from local roughness (μm) */
   noiseSigmaUm: number;
   /** Fraction of analysed vertices lying on the original sphere */
@@ -422,6 +429,7 @@ export interface AnalysisParams {
   wearThresholdMode: WearThresholdMode; // worn-vertex rule (SBF classification + DSM sphere-2 selection)
   wearThresholdK: number;              // noise-adaptive: threshold = max(k·σ, min)
   wearThresholdMinUm: number;          // noise-adaptive: floor of the threshold (μm)
+  twoSphereDirection: TwoSphereDirection; // two-sphere mode: automatic (into the cup) or inverted
   showCommercialSphere: boolean;
   showWornSphere: boolean;
   showUnwornSphere: boolean;
@@ -471,6 +479,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   wearThresholdMode: 'noise-adaptive',
   wearThresholdK: 3,
   wearThresholdMinUm: 10,
+  twoSphereDirection: 'auto',
   showCommercialSphere: false,
   showWornSphere: true,
   showUnwornSphere: true,
