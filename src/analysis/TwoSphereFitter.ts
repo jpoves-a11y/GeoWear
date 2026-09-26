@@ -51,6 +51,9 @@ export interface TwoSphereFitOptions {
   gain?: number;
   /** Maximum number of vertices used in the multi-start search (default 5000) */
   searchPoints?: number;
+  /** Swap the automatic identification: the original sphere is the one DEEPER in the cup
+   *  (head displaced toward the rim, e.g. after subluxation or dislocation). */
+  invert?: boolean;
 }
 
 export interface TwoSphereFitOutput extends TwoSphereResult {
@@ -183,6 +186,7 @@ export function fitTwoSphereUnion(
   const proj = (c: number[]) => c[0] * nrm[0] + c[1] * nrm[1] + c[2] * nrm[2];
   let cA = cP, cB = cQ;
   if (proj(cQ) < proj(cP)) { cA = cQ; cB = cP; }
+  if (opts.invert) { const t = cA; cA = cB; cB = t; }
   const sep = Math.hypot(cB[0] - cA[0], cB[1] - cA[1], cB[2] - cA[2]);
   const detected = found
     && sep > (opts.minSepSigma ?? 2) * sigma
@@ -213,6 +217,7 @@ export function fitTwoSphereUnion(
     linearWearMm: linearMm,
     directionAngleDeg: angleDeg,
     nearPole: angleDeg !== null && angleDeg < 30,
+    inverted: !!opts.invert,
     noiseSigmaUm: sigma * 1000,
     unwornFraction: detected ? nA / n : 1,
     referenceVertexCount: ref.length / 3,

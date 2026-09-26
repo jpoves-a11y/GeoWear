@@ -458,7 +458,7 @@ export class WearAnalysisPipeline {
 
       if (params.analysisMode === 'two-sphere-auto') {
         this.progress('two-sphere', 0.86, 'Fitting original and displaced spheres...');
-        this.stepFitTwoSphereUnion();
+        this.stepFitTwoSphereUnion(params.twoSphereDirection === 'inverted');
       }
 
       this.progress('classifying', 0.88, 'Classifying wear zones...');
@@ -1474,7 +1474,7 @@ export class WearAnalysisPipeline {
    * centre (used for the cap volume, the heat map and the wear plane) and the vertices on
    * it become the non-worn reference set for the noise-adaptive classification.
    */
-  stepFitTwoSphereUnion(): TwoSphereResult {
+  stepFitTwoSphereUnion(invert: boolean = false): TwoSphereResult {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
     if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
@@ -1482,7 +1482,7 @@ export class WearAnalysisPipeline {
     const fit = fitTwoSphereUnion(
       this.state.workingMesh, cs.commercialRadius,
       this.state.rimPlane.point, this.state.rimPlane.normal,
-      { init: [cs.center.x, cs.center.y, cs.center.z] },
+      { init: [cs.center.x, cs.center.y, cs.center.z], invert },
     );
     const { referencePositions, ...result } = fit;
     this.state.twoSphere = result;
@@ -1494,7 +1494,7 @@ export class WearAnalysisPipeline {
       this.manualUnwornPositions = null;
       this.manualUnwornCount = 0;
     }
-    console.log(`[Two-sphere] detected=${result.detected}, linear=${(result.linearWearMm * 1000).toFixed(1)}μm, ` +
+    console.log(`[Two-sphere] detected=${result.detected}, inverted=${result.inverted}, linear=${(result.linearWearMm * 1000).toFixed(1)}μm, ` +
       `angle=${result.directionAngleDeg?.toFixed(1) ?? '—'}°, σ=${result.noiseSigmaUm.toFixed(1)}μm, ` +
       `ms(1/2/free)=${result.msOneSphereUm2.toFixed(0)}/${result.msTwoSpheresUm2.toFixed(0)}/${result.msFreeSphereUm2.toFixed(0)}μm², ` +
       `reference=${result.referenceVertexCount}/${result.activeVertexCount} vertices`);
