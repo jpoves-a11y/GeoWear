@@ -43,6 +43,7 @@ export class ResultsPanel {
       this.addCompareTopSummary(results);
       this.renderSingleResult(results.sphereBestfit, 'Sphere BestFit', 'sbf');
       this.renderSingleResult(results.doubleSphereMetrics, 'Double Sphere Metrics', 'dsm');
+      if (results.twoSphereAuto) this.renderSingleResult(results.twoSphereAuto, 'Two-Sphere Auto', 'ts');
       window.dispatchEvent(new Event('resize'));
       return;
     }
@@ -53,7 +54,7 @@ export class ResultsPanel {
     window.dispatchEvent(new Event('resize'));
   }
 
-  private renderSingleResult(results: AnalysisResults, titlePrefix?: string, modeKey?: 'sbf' | 'dsm'): void {
+  private renderSingleResult(results: AnalysisResults, titlePrefix?: string, modeKey?: 'sbf' | 'dsm' | 'ts'): void {
     if (titlePrefix && modeKey) {
       this.addModeDetailHeader(titlePrefix, modeKey);
     }
@@ -71,8 +72,11 @@ export class ResultsPanel {
     // Sphere fit section
     this.addSphereFitSection(results);
 
-    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'manual-geodesic') {
-      // --- Sphere BestFit / Manual Geodesic mode sections ---
+    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'manual-geodesic' || results.analysisMode === 'two-sphere-auto') {
+      // --- Sphere BestFit / Manual Geodesic / Two-sphere mode sections ---
+      if (results.twoSphere) {
+        this.addTwoSphereSection(results);
+      }
       if (results.commercialSphere) {
         this.addCommercialSphereSection(results);
       }
@@ -122,6 +126,8 @@ export class ResultsPanel {
         ? 'Sphere BestFit'
         : results.analysisMode === 'manual-geodesic'
           ? 'Manual Geodesic'
+          : results.analysisMode === 'two-sphere-auto'
+            ? 'Two-Sphere Auto'
           : results.analysisMode === 'double-sphere-metrics'
             ? 'Double Sphere Metrics'
             : 'Pure Geodesic';
@@ -145,6 +151,12 @@ export class ResultsPanel {
 
     const sbf = results.sphereBestfit;
     const dsm = results.doubleSphereMetrics;
+    const ts = results.twoSphereAuto;
+    const tsDepth: number | null = ts?.wearPlane?.maxWearDepth ?? null;
+    const tsLinear: number | null = ts?.twoSphere ? ts.twoSphere.linearWearMm * 1000 : null;
+    const tsVol: number | null = ts?.wearVolumeResult?.wearVolume ?? null;
+    const warnTs = ts?.zoneSpheres?.linearWearUnreliable ?? false;
+    const tsCol = (html: string) => (ts ? html : '');
 
     // Max wear depth (μm)
     const sbfDepth: number | null = sbf.wearPlane?.maxWearDepth ?? null;
@@ -182,6 +194,7 @@ export class ResultsPanel {
             <th class="col-metric">Métrica</th>
             <th class="col-sbf">Sphere BestFit</th>
             <th class="col-dsm">Double Sphere</th>
+            ${ts ? '<th class="col-ts">Two-Sphere Auto</th>' : ''}
           </tr>
         </thead>
         <tbody>${rows.join('')}</tbody>
@@ -194,13 +207,15 @@ export class ResultsPanel {
       <td class="col-metric">Profundidad máxima de desgaste</td>
       ${cell(sbfDepth, 1, 'μm')}
       ${cell(dsmDepth, 1, 'μm')}
+      ${tsCol(cell(tsDepth, 1, 'μm'))}
     </tr>`);
 
     // Linear Wear row
     rows.push(`<tr>
-      <td class="col-metric">Desgaste lineal${warnSbf || warnDsm ? ' ⚠' : ''}</td>
+      <td class="col-metric">Desgaste lineal${warnSbf || warnDsm || warnTs ? ' ⚠' : ''}</td>
       ${cell(sbfLinear, 1, 'μm')}
       ${cell(dsmLinear, 1, 'μm')}
+      ${tsCol(cell(tsLinear, 1, 'μm'))}
     </tr>`);
 
     // Volumetric Wear row
@@ -208,6 +223,7 @@ export class ResultsPanel {
       <td class="col-metric">Volumen desgastado</td>
       ${cell(sbfVol, 4, 'mm³')}
       ${cell(dsmVol, 4, 'mm³')}
+      ${tsCol(cell(tsVol, 4, 'mm³'))}
     </tr>`);
 
     // Worn % row (only SBF has it)
@@ -219,6 +235,7 @@ export class ResultsPanel {
           <span class="cmp-unit">%</span>
         </td>
         <td class="col-val"><span class="cmp-na">—</span></td>
+        ${tsCol(cell(ts?.wearClassification?.wornPercent ?? null, 1, '%'))}
       </tr>`);
     }
 
@@ -241,11 +258,13 @@ export class ResultsPanel {
         <td class="col-metric">Tasa de desgaste lineal</td>
         ${rateCell(sbfLinear != null ? sbfLinear / 1000 : null, 4, 'mm/yr')}
         ${rateCell(dsmLinear != null ? dsmLinear / 1000 : null, 4, 'mm/yr')}
+        ${tsCol(rateCell(tsLinear != null ? tsLinear / 1000 : null, 4, 'mm/yr'))}
       </tr>`);
       rateRows.push(`<tr>
         <td class="col-metric">Tasa volumétrica</td>
         ${rateCell(sbfVol, 4, 'mm³/yr')}
         ${rateCell(dsmVol, 4, 'mm³/yr')}
+        ${tsCol(rateCell(tsVol, 4, 'mm³/yr'))}
       </tr>`);
 
       const rateTitle = document.createElement('div');
@@ -343,7 +362,7 @@ export class ResultsPanel {
   // Mode detail header (used in compare-all sub-sections)
   // -------------------------------------------------------
 
-  private addModeDetailHeader(modeName: string, modeKey: 'sbf' | 'dsm'): void {
+  private addModeDetailHeader(modeName: string, modeKey: 'sbf' | 'dsm' | 'ts'): void {
     const wrap = document.createElement('div');
     wrap.style.cssText = 'padding: 14px 16px 0; display:flex; align-items:center; gap:8px;';
     wrap.innerHTML = `
@@ -363,7 +382,7 @@ export class ResultsPanel {
 
     const cards: Array<{label: string; value: string; unit: string; cls: string; warn?: string}> = [];
 
-    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'manual-geodesic') {
+    if (results.analysisMode === 'sphere-bestfit' || results.analysisMode === 'manual-geodesic' || results.analysisMode === 'two-sphere-auto') {
       // Linear wear
       if (results.zoneSpheres) {
         const lw = results.zoneSpheres.wornSphere.center.distanceTo(results.zoneSpheres.unwornSphere.center) * 1000;
@@ -373,7 +392,10 @@ export class ResultsPanel {
           value: lw.toFixed(1),
           unit: 'μm',
           cls: unreliable ? 'warning' : (lw > 50 ? 'danger' : lw > 20 ? 'warning' : 'success'),
-          warn: unreliable ? '⚠ reliability issue' : undefined,
+          warn: unreliable
+            ? (results.twoSphere && !results.twoSphere.detected ? 'not detectable'
+              : results.twoSphere?.nearPole ? '⚠ near pole' : '⚠ reliability issue')
+            : undefined,
         });
         if (this.yearsInVivo > 0) {
           cards.push({
@@ -695,6 +717,32 @@ export class ResultsPanel {
     this.container.appendChild(section);
   }
 
+  private addTwoSphereSection(results: AnalysisResults): void {
+    const section = this.createSection('Two-Sphere Fit');
+    const ts = results.twoSphere!;
+    this.addMetric(section, 'Status',
+      ts.detected ? 'Directional wear detected' : 'No directional wear detected',
+      undefined, ts.detected ? 'success' : 'warning');
+    this.addMetric(section, 'Linear Wear', (ts.linearWearMm * 1000).toFixed(1), 'μm', 'danger', true);
+    if (ts.directionAngleDeg !== null) {
+      this.addMetric(section, 'Direction to cup axis', ts.directionAngleDeg.toFixed(1), '°', ts.nearPole ? 'warning' : undefined);
+    }
+    if (ts.nearPole) {
+      this.addMetric(section, 'Warning', 'Penetration < 30° from the cup axis: small unworn reference, reduced accuracy', undefined, 'warning');
+    }
+    if (!ts.detected) {
+      this.addMetric(section, 'Note', 'Below the detection limit, or a uniformly enlarged cavity (no two-sphere pattern)', undefined, 'warning');
+    }
+    this.addMetric(section, 'Sphere radius (both)', ts.radius.toFixed(3), 'mm');
+    this.addMetric(section, 'Scanner noise σ', ts.noiseSigmaUm.toFixed(1), 'μm');
+    this.addMetric(section, 'Unworn surface', (ts.unwornFraction * 100).toFixed(1), '%');
+    this.addMetric(section, 'Reference vertices', `${ts.referenceVertexCount.toLocaleString()} / ${ts.activeVertexCount.toLocaleString()}`);
+    this.addMetric(section, 'RMS residual · 1 sphere', Math.sqrt(ts.msOneSphereUm2).toFixed(1), 'μm');
+    this.addMetric(section, 'RMS residual · 2 spheres', Math.sqrt(ts.msTwoSpheresUm2).toFixed(1), 'μm');
+    this.addMetric(section, 'RMS residual · free radius', `${Math.sqrt(ts.msFreeSphereUm2).toFixed(1)} (R = ${ts.freeSphereRadius.toFixed(3)} mm)`, 'μm');
+    this.container.appendChild(section);
+  }
+
   private addZoneSpheresSection(results: AnalysisResults): void {
     const section = this.createSection('Zone Spheres');
     const zs = results.zoneSpheres!;
@@ -834,6 +882,7 @@ export class ResultsPanel {
       'Wear Volume': '📊',
       'Maximum Wear Point': '📌',
       'Double Sphere Metrics': '🔄',
+      'Two-Sphere Fit': '⚪',
       'Double Sphere Sweep Table': '🗃️',
       'Geodesic Details': '🌐',
     };

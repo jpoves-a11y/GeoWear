@@ -65,6 +65,11 @@ export interface ControlCallbacks {
   onViewerControlsChange: (mode: 'basic' | 'alternative') => void;
 }
 
+/** Mode whose results are rendered in the 3D view */
+export type RenderedMode = 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' | 'manual-geodesic' | 'two-sphere-auto';
+/** Modes selectable in the compare-all-modes view switcher */
+export type CompareVisMode = 'sphere-bestfit' | 'double-sphere-metrics' | 'two-sphere-auto';
+
 export class ControlPanel {
   private gui: GUI;
   public params: AnalysisParams;
@@ -115,22 +120,25 @@ export class ControlPanel {
     'Sphere BestFit': 'sphere-bestfit',
     'Double Sphere Metrics': 'double-sphere-metrics',
     'Manual Geodesic': 'manual-geodesic',
+    'Two-Sphere Auto': 'two-sphere-auto',
     'Compare All Modes': 'compare-all-modes',
   };
   private readonly modeReverseMap: Record<string, string> = {
     'sphere-bestfit': 'Sphere BestFit',
     'double-sphere-metrics': 'Double Sphere Metrics',
     'manual-geodesic': 'Manual Geodesic',
+    'two-sphere-auto': 'Two-Sphere Auto',
     'compare-all-modes': 'Compare All Modes',
   };
   private analysisModelProxy = { mode: 'Compare All Modes' };
 
   // Compare-mode visualisation selector (inline inside Visualization folder)
   private compareVisModeProxy = { mode: 'Sphere BestFit' };
-  private compareVisModeCallback: ((mode: 'sphere-bestfit' | 'double-sphere-metrics') => void) | null = null;
-  private readonly compareVisModeMap: Record<string, 'sphere-bestfit' | 'double-sphere-metrics'> = {
+  private compareVisModeCallback: ((mode: CompareVisMode) => void) | null = null;
+  private readonly compareVisModeMap: Record<string, CompareVisMode> = {
     'Sphere BestFit': 'sphere-bestfit',
     'Double Sphere Metrics': 'double-sphere-metrics',
+    'Two-Sphere Auto': 'two-sphere-auto',
   };
 
   constructor(callbacks: ControlCallbacks) {
@@ -242,7 +250,7 @@ export class ControlPanel {
 
     // --- Wear Model sub-section ---
     const wearModel = folder.addFolder('Wear Model');
-    wearModel.add(this.analysisModelProxy, 'mode', ['Sphere BestFit', 'Double Sphere Metrics', 'Manual Geodesic', 'Compare All Modes'])
+    wearModel.add(this.analysisModelProxy, 'mode', ['Sphere BestFit', 'Double Sphere Metrics', 'Manual Geodesic', 'Two-Sphere Auto', 'Compare All Modes'])
       .name('Analysis Mode')
       .onChange((v: string) => {
         this.params.analysisMode = this.modeLabelMap[v] as AnalysisParams['analysisMode'];
@@ -433,7 +441,7 @@ export class ControlPanel {
     this.visCompareSelectorCtrl = folder.add(
       this.compareVisModeProxy,
       'mode',
-      ['Sphere BestFit', 'Double Sphere Metrics'],
+      ['Sphere BestFit', 'Double Sphere Metrics', 'Two-Sphere Auto'],
     )
       .name('🔍 View Mode')
       .onChange((v: string) => {
@@ -784,9 +792,9 @@ export class ControlPanel {
    * Update overlay/rendering visibility controls to match the given rendered mode.
    * Called when analysis mode changes or when the compare sub-mode selector changes.
    */
-  private updateVisControlsForMode(mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' | 'manual-geodesic'): void {
+  private updateVisControlsForMode(mode: RenderedMode): void {
     const isPure = mode === 'pure-geodesic';
-    const isBestFit = mode === 'sphere-bestfit' || mode === 'manual-geodesic';
+    const isBestFit = mode === 'sphere-bestfit' || mode === 'manual-geodesic' || mode === 'two-sphere-auto';
     const isSphere = isBestFit || mode === 'double-sphere-metrics';
     // Geodesics are computed for pure-geodesic and sphere-bestfit, but NOT manual-geodesic
     const hasGeodesics = mode === 'pure-geodesic' || mode === 'sphere-bestfit';
@@ -824,6 +832,7 @@ export class ControlPanel {
     const isCompareMode = this.params.analysisMode === 'compare-all-modes';
     const isPureOnly = this.params.analysisMode === 'pure-geodesic';
     const isManualGeodesic = this.params.analysisMode === 'manual-geodesic';
+    const isTwoSphere = this.params.analysisMode === 'two-sphere-auto';
 
     // Step buttons
     for (const ctrl of this.bestfitStepControllers) {
@@ -845,11 +854,12 @@ export class ControlPanel {
     if (this.visCompareSelectorCtrl) this.visCompareSelectorCtrl.hide();
 
     // Visualization overlays: preview controls for the expected rendered mode
-    const renderedMode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' | 'manual-geodesic' =
+    const renderedMode: RenderedMode =
       isCompareMode ? 'sphere-bestfit'
       : isBestFit   ? 'sphere-bestfit'
       : isDoubleSphere ? 'double-sphere-metrics'
       : isManualGeodesic ? 'manual-geodesic'
+      : isTwoSphere ? 'two-sphere-auto'
       : 'pure-geodesic';
     this.updateVisControlsForMode(renderedMode);
   }
@@ -870,7 +880,7 @@ export class ControlPanel {
    * Called by app.ts after analysis completes.
    */
   public showVisualizationControls(
-    mode: 'pure-geodesic' | 'sphere-bestfit' | 'double-sphere-metrics' | 'manual-geodesic',
+    mode: RenderedMode,
   ): void {
     this.visRenderFolder?.show();
     this.visOverlayFolder?.show();
@@ -893,7 +903,7 @@ export class ControlPanel {
    * Also updates the visualization controls to match the initial sphere-bestfit view.
    */
   public showCompareSelector(
-    onChange: (mode: 'sphere-bestfit' | 'double-sphere-metrics') => void,
+    onChange: (mode: CompareVisMode) => void,
   ): void {
     this.compareVisModeCallback = onChange;
     this.compareVisModeProxy.mode = 'Sphere BestFit';

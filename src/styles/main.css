@@ -711,6 +711,7 @@ html, body {
 .wear-compare-table th.col-pg  { color: #8b5cf6; }
 .wear-compare-table th.col-sbf { color: var(--accent-primary); }
 .wear-compare-table th.col-dsm { color: #d97706; }
+.wear-compare-table th.col-ts  { color: #059669; }
 
 .wear-compare-table td {
   padding: 7px 4px;
@@ -772,6 +773,7 @@ html, body {
 .mode-badge.pg  { background: rgba(139,92,246,0.14); color: #8b5cf6; }
 .mode-badge.sbf { background: rgba(0,119,204,0.14);  color: var(--accent-primary); }
 .mode-badge.dsm { background: rgba(217,119,6,0.14);  color: #d97706; }
+.mode-badge.ts  { background: rgba(5,150,105,0.14);  color: #059669; }
 
 .results-section.mode-detail {
   border-top: 3px solid var(--border-color);

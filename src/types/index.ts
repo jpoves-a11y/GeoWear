@@ -196,12 +196,47 @@ export interface WearPlaneResult {
   planeNormal: THREE.Vector3;     // normal of the wear plane
 }
 
+/** Automatic two-sphere union fit (mode 'two-sphere-auto'): original cavity sphere and
+ *  displaced head sphere, both with the commercial radius. */
+export interface TwoSphereResult {
+  /** A directional wear pattern was detected (two-sphere model accepted) */
+  detected: boolean;
+  /** Fixed radius used for both spheres (commercial radius, mm) */
+  radius: number;
+  /** Centre of the original (unworn) cavity sphere */
+  originalCenter: THREE.Vector3;
+  /** Centre of the displaced (head) sphere; equals originalCenter if not detected */
+  displacedCenter: THREE.Vector3;
+  /** Linear wear = |displaced − original| (mm); 0 if not detected */
+  linearWearMm: number;
+  /** Angle between the penetration vector and the cup axis (0° = toward the pole), null if not detected */
+  directionAngleDeg: number | null;
+  /** Penetration within 30° of the cup axis: the unworn reference is small and accuracy is reduced */
+  nearPole: boolean;
+  /** Scanner noise estimated from local roughness (μm) */
+  noiseSigmaUm: number;
+  /** Fraction of analysed vertices lying on the original sphere */
+  unwornFraction: number;
+  /** Vertices used as non-worn reference */
+  referenceVertexCount: number;
+  /** Vertices analysed (pole side of the cut plane) */
+  activeVertexCount: number;
+  /** Mean squared residuals (μm²): single fixed-R sphere, two-sphere union, single free-radius sphere */
+  msOneSphereUm2: number;
+  msTwoSpheresUm2: number;
+  msFreeSphereUm2: number;
+  /** Radius of the free-radius single sphere (mm) */
+  freeSphereRadius: number;
+  iterations: number;
+}
+
 /** Complete analysis results */
 export type AnalysisMode =
   | 'pure-geodesic'
   | 'sphere-bestfit'
   | 'double-sphere-metrics'
   | 'manual-geodesic'
+  | 'two-sphere-auto'
   | 'compare-all-modes';
 
 export interface DoubleSphereSweepCellResult {
@@ -273,6 +308,9 @@ export interface AnalysisResults {
   wearVolumeResult?: WearVolumeResult;
   wearPlane?: WearPlaneResult;
   doubleSphereMetrics?: DoubleSphereMetricsResult;
+
+  // --- Automatic two-sphere mode fields ---
+  twoSphere?: TwoSphereResult;
   
   // Processing info
   processingTimeMs: number;
@@ -284,9 +322,12 @@ export interface MultiModeComparisonResults {
   analysisMode: 'compare-all-modes';
   sphereBestfit: AnalysisResults;
   doubleSphereMetrics: AnalysisResults;
+  twoSphereAuto?: AnalysisResults;
   summary: {
     sphereBestfitWearVolumeMm3: number;
     doubleSphereLinearWearMm: number;
+    twoSphereLinearWearMm?: number;
+    twoSphereWearVolumeMm3?: number;
   };
   processingTimeMs: number;
 }
