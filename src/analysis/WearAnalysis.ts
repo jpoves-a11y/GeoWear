@@ -12,6 +12,9 @@ import type {
   LinearWearFilter, AnalysisRunResult, DoubleSphereMetricsResult,
   DoubleSphereSweepCellResult, AnalysisMode, WearThresholdMode, TwoSphereResult
 } from '../types';
+import { acquisitionSurfaceUncertaintyUm } from '../types';
+import type { SphericityResult } from '../types';
+import { computeSphericity } from './Sphericity';
 import { separateFaces, trimRim, computeRimAnchor, findRimLoopVertices } from './MeshProcessor';
 import { smoothMesh, repairInnerFaceMesh, type GeodesicRepairData } from './MeshSmoother';
 import { computeTiltedRimNormal } from '../utils/geometry';
@@ -170,6 +173,7 @@ export class WearAnalysisPipeline {
   /** Records the mode currently being executed so shared step methods (e.g.
    *  stepComputeWearVolumeBestFit) can embed the correct analysisMode in results. */
   private _activeMode: Exclude<AnalysisMode, 'compare-all-modes'> = 'pure-geodesic';
+  private sphericity: SphericityResult | null = null;
 
   /** Populated after a 'compare-all-modes' run; holds each sub-pipeline's state
    *  so the caller can swap to any mode's 3D visualisation on demand. */
@@ -421,6 +425,11 @@ export class WearAnalysisPipeline {
     await this.yieldToUI();
     this.stepTrimRim(params.rimTrimPercent);
 
+    // Sphericity of the bearing surface (trimmed, before any post-trim fill/smoothing)
+    this.progress('sphericity', 0.12, 'Computing sphericity...');
+    await this.yieldToUI();
+    this.sphericity = this.state.workingMesh ? computeSphericity(this.state.workingMesh) : null;
+
     // Step 2b: Repair working (trimmed) mesh holes after trim
     if (params.repairInnerFace) {
       this.progress('repair-working', 0.13, 'Repairing trimmed mesh holes...');
@@ -481,7 +490,7 @@ export class WearAnalysisPipeline {
       if (params.analysisMode === 'two-sphere-auto') {
         this.progress('two-sphere', 0.86, 'Fitting original and displaced spheres...');
         await this.yieldToUI();
-        await this.stepFitTwoSphereUnion(params.twoSphereDirection === 'inverted', params.commercialRadius === 0);
+        await this.stepFitTwoSphereUnion(params.twoSphereDirection === 'inverted', params.commercialRadius === 0, acquisitionSurfaceUncertaintyUm(params));
       }
 
       this.progress('classifying', 0.88, 'Classifying wear zones...');
@@ -530,6 +539,7 @@ export class WearAnalysisPipeline {
 
     const endTime = performance.now();
     this.state.results!.processingTimeMs = endTime - startTime;
+    this.state.results!.sphericity = this.sphericity;
 
     this.progress('complete', 1.0, 'Analysis complete!');
 
@@ -589,6 +599,7 @@ export class WearAnalysisPipeline {
       sphereBestfit: bestfit,
       doubleSphereMetrics: doubleMetrics,
       twoSphereAuto,
+      sphericity: twoSphereAuto.sphericity ?? bestfit.sphericity ?? null,
       summary: {
         sphereBestfitWearVolumeMm3: bestfit.wearVolumeResult?.wearVolume ?? bestfit.totalWearVolume,
         doubleSphereLinearWearMm: doubleMetrics.doubleSphereMetrics?.bestCell?.centerDistanceMean ?? 0,
@@ -1512,7 +1523,11 @@ export class WearAnalysisPipeline {
    * centre (used for the cap volume, the heat map and the wear plane) and the vertices on
    * it become the non-worn reference set for the noise-adaptive classification.
    */
-  async stepFitTwoSphereUnion(invert: boolean = false, autoRadius: boolean = false): Promise<TwoSphereResult> {
+  /**
+   * @param surfaceUncertaintyUm  standard uncertainty of the local surface position from the acquisition
+   *   (paint coat, scanner/CT accuracy), see acquisitionSurfaceUncertaintyUm(); 0 = not specified.
+   */
+  async stepFitTwoSphereUnion(invert: boolean = false, autoRadius: boolean = false, surfaceUncertaintyUm: number = 0): Promise<TwoSphereResult> {
     if (!this.state.workingMesh) throw new Error('No working mesh available');
     if (!this.state.commercialSphere) throw new Error('Run commercial radius determination first');
     if (!this.state.rimPlane) throw new Error('Run rim plane computation first');
@@ -1614,8 +1629,33 @@ export class WearAnalysisPipeline {
       result.volumeSdBootstrapMm3 = volBoot;
       result.volumeSdPlaneMm3 = volPlane;
       result.volumeSdSystematicMm3 = volSys;
-      result.linearWearSdMm = Math.sqrt(linBoot ** 2 + linPlane ** 2 + linSys ** 2);
-      result.volumeSdMm3 = Math.sqrt(volBoot ** 2 + volPlane ** 2 + volSys ** 2);
+      // Acquisition (type B) component: an offset of the measured surface that differs between the worn
+      // zone and the unworn reference shifts the penetration one-to-one, so with independent zones
+      // u_lin = √2·u_s. For the volume, the worn-zone offset changes the enclosed volume by u_s·A_worn and
+      // the reference offset moves the original sphere (fixed R) and its cap by ≈ u_s·capSection.
+      const us = Math.max(0, surfaceUncertaintyUm) / 1000;
+      const cB = result.displacedCenter;
+      const W = this.state.workingMesh!;
+      let wornArea = 0;
+      for (let f = 0; f < W.faceCount; f++) {
+        const a = W.indices[f * 3] * 3, b = W.indices[f * 3 + 1] * 3, c = W.indices[f * 3 + 2] * 3;
+        const P = W.positions;
+        const gx = (P[a] + P[b] + P[c]) / 3, gy = (P[a + 1] + P[b + 1] + P[c + 1]) / 3, gz = (P[a + 2] + P[b + 2] + P[c + 2]) / 3;
+        const dA2 = (gx - oc.x) ** 2 + (gy - oc.y) ** 2 + (gz - oc.z) ** 2;
+        const dB2 = (gx - cB.x) ** 2 + (gy - cB.y) ** 2 + (gz - cB.z) ** 2;
+        if (dB2 >= dA2) continue;
+        const e1x = P[b] - P[a], e1y = P[b + 1] - P[a + 1], e1z = P[b + 2] - P[a + 2];
+        const e2x = P[c] - P[a], e2y = P[c + 1] - P[a + 1], e2z = P[c + 2] - P[a + 2];
+        wornArea += 0.5 * Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x);
+      }
+      const linAcq = Math.SQRT2 * us;
+      const volAcq = us * Math.hypot(wornArea, capSection);
+      result.wornAreaMm2 = wornArea;
+      result.surfaceUncertaintyUm = surfaceUncertaintyUm > 0 ? surfaceUncertaintyUm : null;
+      result.linearSdAcquisitionMm = surfaceUncertaintyUm > 0 ? linAcq : null;
+      result.volumeSdAcquisitionMm3 = surfaceUncertaintyUm > 0 ? volAcq : null;
+      result.linearWearSdMm = Math.sqrt(linBoot ** 2 + linPlane ** 2 + linSys ** 2 + linAcq ** 2);
+      result.volumeSdMm3 = Math.sqrt(volBoot ** 2 + volPlane ** 2 + volSys ** 2 + volAcq ** 2);
     } else {
       result.linearWearSdMm = null;
       result.volumeSdMm3 = null;

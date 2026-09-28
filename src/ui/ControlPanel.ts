@@ -5,7 +5,8 @@
 
 import GUI from 'lil-gui';
 import type { AnalysisParams } from '../types';
-import { DEFAULT_PARAMS } from '../types';
+import { DEFAULT_PARAMS, SCAN_TYPE_LABELS } from '../types';
+import type { ScanType } from '../types';
 
 export interface ControlCallbacks {
   onLoadSTL: () => void;
@@ -117,6 +118,10 @@ export class ControlPanel {
   private manualNonWornFolder: GUI | null = null;
   // Two-sphere direction selector (shown for Two-Sphere Auto and Compare All Modes)
   private twoSphereDirectionCtrl: any = null;
+  // Scan acquisition (type, paint, other uncertainty)
+  private scanTypeProxy: { value: string } = { value: SCAN_TYPE_LABELS.unspecified };
+  private scanDetailsFolder: any = null;
+  private paintThicknessCtrl: any = null;
   // Dropdown proxies re-synchronised when settings are loaded from a file
   private selectProxies: { filter?: { value: string }; thr?: { value: string }; dir?: { value: string }; est?: { value: string } } = {};
   private manualNonWornCountProxy: { info: string } = { info: 'No vertices selected' };
@@ -354,6 +359,30 @@ export class ControlPanel {
         this.params.twoSphereDirection = dirLabelMap[v];
         this.callbacks.onParamsChange(this.params);
       });
+
+    // --- Scan acquisition: method, paint coat and other uncertainties (feed the type-B term of the
+    //     two-sphere uncertainty and are exported with the results) ---
+    const scanLabelToType = Object.fromEntries(
+      (Object.keys(SCAN_TYPE_LABELS) as ScanType[]).map(k => [SCAN_TYPE_LABELS[k], k])) as Record<string, ScanType>;
+    this.scanTypeProxy.value = SCAN_TYPE_LABELS[this.params.scanType] ?? SCAN_TYPE_LABELS.unspecified;
+    wearModel.add(this.scanTypeProxy, 'value', Object.keys(scanLabelToType))
+      .name('Tipo de escaneo')
+      .onChange((v: string) => {
+        this.params.scanType = scanLabelToType[v] ?? 'unspecified';
+        this.updateScanDetailsVisibility();
+        this.callbacks.onParamsChange(this.params);
+      });
+    this.scanDetailsFolder = wearModel.addFolder('Pintura e incertidumbres del escaneo');
+    this.scanDetailsFolder.add(this.params, 'scanPainted')
+      .name('Superficie pintada')
+      .onChange(() => { this.updateScanDetailsVisibility(); this.callbacks.onParamsChange(this.params); });
+    this.paintThicknessCtrl = this.scanDetailsFolder.add(this.params, 'paintThicknessUm', 0, 500, 1)
+      .name('Espesor de pintura (μm)')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.scanDetailsFolder.add(this.params, 'otherUncertaintyUm', 0, 1000, 1)
+      .name('Otras incertidumbres (± μm)')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+    this.updateScanDetailsVisibility();
 
     const dsFolder = folder.addFolder('Double Sphere Sweep');
     const dsSeed = dsFolder.add(this.params, 'doubleSphereSeed', 0, 999999, 1)
@@ -666,6 +695,8 @@ export class ControlPanel {
    */
   public applyParamsUI(p: Partial<AnalysisParams>): void {
     Object.assign(this.params, p);
+    this.scanTypeProxy.value = SCAN_TYPE_LABELS[this.params.scanType] ?? SCAN_TYPE_LABELS.unspecified;
+    this.updateScanDetailsVisibility();
     this.analysisModelProxy.mode = this.modeReverseMap[this.params.analysisMode] ?? 'Two-Sphere Auto';
     const R = this.params.commercialRadius;
     const listed = R > 0 && Number.isInteger(R) && R % 2 === 0 && R >= 10 && R <= 40;
@@ -681,8 +712,19 @@ export class ControlPanel {
     this.updateStepVisibility();
   }
 
+  /** The paint / uncertainty sub-folder only appears once a scan type is chosen; thickness only when painted. */
+  private updateScanDetailsVisibility(): void {
+    if (!this.scanDetailsFolder) return;
+    if (this.params.scanType === 'unspecified') { this.scanDetailsFolder.hide(); return; }
+    this.scanDetailsFolder.show();
+    this.scanDetailsFolder.open();
+    this.params.scanPainted ? this.paintThicknessCtrl?.show() : this.paintThicknessCtrl?.hide();
+  }
+
   public resetParamsUI(): void {
     Object.assign(this.params, DEFAULT_PARAMS);
+    this.scanTypeProxy.value = SCAN_TYPE_LABELS.unspecified;
+    this.updateScanDetailsVisibility();
     this.commercialRadiusProxy.value = 'Auto';
     this.commercialRadiusProxy.customValue = 28;
     this.customRadiusController?.hide();

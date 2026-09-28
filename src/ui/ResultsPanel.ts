@@ -3,7 +3,7 @@
 // Analysis results display and interactive table
 // ============================================================
 
-import type { AnalysisResults, AnalysisRunResult, Geodesic, MultiModeComparisonResults } from '../types';
+import type { AnalysisResults, AnalysisRunResult, Geodesic, MultiModeComparisonResults, SphericityResult } from '../types';
 
 export class ResultsPanel {
   private container: HTMLElement;
@@ -41,6 +41,7 @@ export class ResultsPanel {
 
     if (results.analysisMode === 'compare-all-modes') {
       this.addCompareTopSummary(results);
+      if (results.sphericity) this.addSphericitySection(results.sphericity);
       if (results.twoSphereAuto) this.renderSingleResult(results.twoSphereAuto, 'Two-Sphere Auto', 'ts');
       this.renderSingleResult(results.sphereBestfit, 'Sphere BestFit (legacy)', 'sbf');
       this.renderSingleResult(results.doubleSphereMetrics, 'Double Sphere Metrics (legacy)', 'dsm');
@@ -78,6 +79,9 @@ export class ResultsPanel {
 
     // Full summary section
     this.addSummarySection(results);
+
+    // Sphericity is a property of the surface: shown once (in compare mode it is shown above the modes)
+    if (!modeKey && results.sphericity) this.addSphericitySection(results.sphericity);
 
     // Sphere fit section
     this.addSphereFitSection(results);
@@ -126,6 +130,19 @@ export class ResultsPanel {
   hide(): void {
     this.sidebar.classList.add('hidden');
     window.dispatchEvent(new Event('resize'));
+  }
+
+  private addSphericitySection(s: SphericityResult): void {
+    const section = this.createSection('Sphericity');
+    this.addMetric(section, 'Sphericity (form deviation, peak-to-valley)', s.sphericityUm.toFixed(1), 'μm', undefined, true);
+    this.addMetric(section, 'Form error RMS', s.formRmsUm.toFixed(1), 'μm');
+    this.addMetric(section, 'Least-squares sphere radius', s.radiusMm.toFixed(3), 'mm');
+    this.addMetric(section, 'Raw point-wise P–V / RMS (incl. scanner noise)',
+      `${s.rawPeakToValleyUm.toFixed(0)} / ${s.pointRmsUm.toFixed(1)}`, 'μm');
+    this.addMetric(section, 'Method',
+      `radial deviation from the least-squares sphere of the trimmed bearing surface (excluding ${s.edgeBandMm} mm along its borders), averaged over ${s.cellSizeMm} mm cells ` +
+      `(${s.cellCount} cells, ${s.pointCount} points), P0.5–P99.5 — same value for every analysis mode`);
+    this.container.appendChild(section);
   }
 
   private addSummarySection(results: AnalysisResults): void {
@@ -745,6 +762,11 @@ export class ResultsPanel {
         `${(ts.linearSdBootstrapMm * 1000).toFixed(1)} / ${(ts.linearSdPlaneMm * 1000).toFixed(1)} / ${((ts.linearSdSystematicMm ?? 0) * 1000).toFixed(1)} μm · ` +
         `${(ts.volumeSdBootstrapMm3 ?? 0).toFixed(1)} / ${(ts.volumeSdPlaneMm3 ?? 0).toFixed(1)} / ${(ts.volumeSdSystematicMm3 ?? 0).toFixed(1)} mm³`);
     }
+    if (ts.linearSdAcquisitionMm != null) {
+      this.addMetric(section, 'SD component · acquisition (paint + other, entered)',
+        `${(ts.linearSdAcquisitionMm * 1000).toFixed(1)} μm · ${(ts.volumeSdAcquisitionMm3 ?? 0).toFixed(1)} mm³ ` +
+        `(surface u = ${(ts.surfaceUncertaintyUm ?? 0).toFixed(1)} μm, worn area ${(ts.wornAreaMm2 ?? 0).toFixed(0)} mm²)`);
+    }
     if (ts.lowFreqRmsUm != null) {
       this.addMetric(section, 'Surface form error (low-frequency RMS)', ts.lowFreqRmsUm.toFixed(1), 'μm');
     }
@@ -935,6 +957,7 @@ export class ResultsPanel {
       'Maximum Wear Point': '📌',
       'Double Sphere Metrics': '🔄',
       'Two-Sphere Fit': '⚪',
+      'Sphericity': '🔵',
       'Double Sphere Sweep Table': '🗃️',
       'Geodesic Details': '🌐',
     };

@@ -5,6 +5,7 @@
 // ============================================================
 
 import type { AnalysisRunResult, AnalysisResults, AnalysisParams } from '../types';
+import { SCAN_TYPE_LABELS } from '../types';
 
 // SheetJS is loaded as a global script from CDN in index.html.
 // Typed as 'any' to avoid requiring the xlsx npm package at build time.
@@ -38,6 +39,13 @@ const HEADERS = [
   'Radio medido de la cavidad (mm)',
   'Volumen con la dirección contraria (mm³)',
   'Concentricidad de la cara externa',
+  'Radio comercial usado (mm)',
+  'Tipo de escaneo',
+  'Espesor de pintura (μm)',
+  'Otras incertidumbres (± μm)',
+  'Incertidumbre de adquisición, lineal (μm)',
+  'Incertidumbre de adquisición, volumétrica (mm³)',
+  'Esfericidad (μm)',
 ] as const;
 
 const MODE_LABELS: Record<string, string> = {
@@ -80,6 +88,10 @@ interface WearValues {
   measuredRadius: number | '';
   alternativeVolume: number | '';
   outerShell: string;
+  radiusUsed: number | '';
+  linearAcqUm: number | '';
+  volumeAcqMm3: number | '';
+  sphericityUm: number | '';
 }
 
 function extractWearValues(result: AnalysisResults): WearValues {
@@ -133,7 +145,11 @@ function extractWearValues(result: AnalysisResults): WearValues {
     : ts.outerShell.favours === 'current' ? 'Apoya la dirección elegida'
     : ts.outerShell.favours === 'alternative' ? 'Apoya la dirección contraria'
     : 'Indeterminada';
-  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull, linearSdUm, volumeSdMm3, volumeMeasuredRadius, measuredRadius, alternativeVolume, outerShell };
+  const radiusUsed = result.commercialSphere?.commercialRadius ?? '';
+  const linearAcqUm = ts?.linearSdAcquisitionMm != null ? round2(ts.linearSdAcquisitionMm * 1000) : '';
+  const volumeAcqMm3 = ts?.volumeSdAcquisitionMm3 != null ? round2(ts.volumeSdAcquisitionMm3) : '';
+  const sphericityUm = result.sphericity ? round2(result.sphericity.sphericityUm) : '';
+  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull, linearSdUm, volumeSdMm3, volumeMeasuredRadius, measuredRadius, alternativeVolume, outerShell, radiusUsed, linearAcqUm, volumeAcqMm3, sphericityUm };
 }
 
 type RowArray = (string | number)[];
@@ -169,6 +185,13 @@ function buildRowArray(
     wear.measuredRadius,
     wear.alternativeVolume,
     wear.outerShell,
+    wear.radiusUsed,
+    SCAN_TYPE_LABELS[params.scanType ?? 'unspecified'],
+    params.scanType !== 'unspecified' ? (params.scanPainted ? params.paintThicknessUm : 'Sin pintura') : '',
+    params.scanType !== 'unspecified' ? params.otherUncertaintyUm : '',
+    wear.linearAcqUm,
+    wear.volumeAcqMm3,
+    wear.sphericityUm,
   ];
 }
 
@@ -187,14 +210,16 @@ export function extractRows(
   params: AnalysisParams,
 ): RowArray[] {
   if (result.analysisMode === 'compare-all-modes') {
-    const sbfWear = extractWearValues(result.sphereBestfit);
-    const dsmWear = extractWearValues(result.doubleSphereMetrics);
+    // One sphericity per sample: first row only
+    const sph: number | '' = result.sphericity ? round2(result.sphericity.sphericityUm) : '';
+    const sbfWear = { ...extractWearValues(result.sphereBestfit), sphericityUm: sph };
+    const dsmWear = { ...extractWearValues(result.doubleSphereMetrics), sphericityUm: '' as const };
     const rows = [
       buildRowArray(prosthesisName, MODE_LABELS['sphere-bestfit'], sbfWear, params),
       buildRowArray('', MODE_LABELS['double-sphere-metrics'], dsmWear, params),
     ];
     if (result.twoSphereAuto) {
-      rows.push(buildRowArray('', MODE_LABELS['two-sphere-auto'], extractWearValues(result.twoSphereAuto), params));
+      rows.push(buildRowArray('', MODE_LABELS['two-sphere-auto'], { ...extractWearValues(result.twoSphereAuto), sphericityUm: '' }, params));
     }
     return rows;
   }
@@ -273,6 +298,11 @@ export function mergeWorkbook(
   aoa[0] = header;
 
   if (blockStart !== -1) {
+    // Keep anything the user typed to the right of the exported columns (dates, operator, comments…)
+    for (let k = 0; k < newRows.length && blockStart + k < blockEnd; k++) {
+      const old = aoa[blockStart + k] ?? [];
+      for (let c = HEADERS.length; c < old.length; c++) (newRows[k] as any[])[c] = old[c] ?? '';
+    }
     aoa.splice(blockStart, blockEnd - blockStart, ...newRows);
   } else {
     aoa.push(...newRows);
