@@ -162,6 +162,41 @@ const cases: Case[] = [
     ],
   },
   {
+    name: 'Two-Sphere Auto · 1 mm at 45° with paint 50 µm and ±50 µm scanner accuracy entered (acquisition SD term)',
+    liner: { delta: 1.0, alphaDeg: 45, R: 14, noiseUm: 15, lfUm: 10, seed: 3 },
+    params: { scanType: 'structured-light', scanPainted: true, paintThicknessUm: 50, otherUncertaintyUm: 50 },
+    check: (m, t) => {
+      const ts = m.raw.twoSphere!;
+      // u_s = √((50/(2√3))² + (50/√3)²) = 32.3 µm → linear term √2·u_s = 45.6 µm
+      const acq = (ts.linearSdAcquisitionMm ?? 0) * 1000;
+      const errs = [...within('linear (µm)', m.linearUm, t.linearUm, 0.05)];
+      if (Math.abs(acq - 45.6) > 0.5) errs.push(`acquisition linear SD ${acq.toFixed(1)} µm, expected 45.6 µm`);
+      if ((m.linSdUm ?? 0) < acq) errs.push('total linear SD must include the acquisition term');
+      if (!((ts.volumeSdAcquisitionMm3 ?? 0) > 0)) errs.push('acquisition volume SD missing');
+      return errs;
+    },
+  },
+  {
+    name: 'Sphericity · unworn cup with 15 µm scanner noise stays small (noise filtered out)',
+    liner: { delta: 0, alphaDeg: 45, R: 14, noiseUm: 15, seed: 4 },
+    check: (m) => {
+      const s = m.raw.sphericity;
+      if (!s) return ['sphericity missing'];
+      return s.sphericityUm < 30 ? [] : [`sphericity ${s.sphericityUm.toFixed(1)} µm ≥ 30 µm for a perfect sphere with noise`];
+    },
+  },
+  {
+    name: 'Sphericity · 1 mm at 45° gives ≈ 0.45 mm of form deviation, identical in every mode',
+    liner: { delta: 1.0, alphaDeg: 45, R: 14, noiseUm: 15, lfUm: 10, seed: 4 },
+    mode: 'manual-geodesic',
+    check: (m) => {
+      const s = m.raw.sphericity;
+      if (!s) return ['sphericity missing'];
+      // same surface measured in Two-Sphere Auto, Sphere BestFit and DSM: 411.5 µm
+      return s.sphericityUm > 380 && s.sphericityUm < 520 ? [] : [`sphericity ${s.sphericityUm.toFixed(1)} µm outside 380–520 µm`];
+    },
+  },
+  {
     name: 'Manual Geodesic · 0.5 mm at 45° with a simulated operator selection',
     liner: { delta: 0.5, alphaDeg: 45, R: 14, noiseUm: 20 },
     mode: 'manual-geodesic',

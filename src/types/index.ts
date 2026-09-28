@@ -153,6 +153,28 @@ export type DoubleSphereEstimator = 'min-std-cell' | 'stable-quartile';
 /** Two-sphere mode: which fitted sphere is the original cavity.
  *  'auto' = the head penetrates INTO the cup (original = sphere closer to the opening);
  *  'inverted' = the opposite (e.g. rim wear after subluxation or dislocation). */
+/** Digitisation method of the retrieved liner */
+export type ScanType = 'unspecified' | 'structured-light' | 'ct' | 'other';
+
+export const SCAN_TYPE_LABELS: Record<ScanType, string> = {
+  'unspecified': 'Sin especificar',
+  'structured-light': 'Escáner de luz azul estructurada',
+  'ct': 'Tomografía computarizada (CT / micro-CT)',
+  'other': 'Otro',
+};
+
+/**
+ * Standard uncertainty (μm) of the local surface position from the user's acquisition inputs (GUM type B,
+ * rectangular distributions): paint coat of nominal thickness t whose local thickness can be anywhere in
+ * [0, t] → t/(2√3); other uncertainty given as a ± limit a → a/√3. Zero when the scan type is unspecified.
+ */
+export function acquisitionSurfaceUncertaintyUm(p: Pick<AnalysisParams, 'scanType' | 'scanPainted' | 'paintThicknessUm' | 'otherUncertaintyUm'>): number {
+  if (!p.scanType || p.scanType === 'unspecified') return 0;
+  const t = p.scanPainted ? Math.max(0, p.paintThicknessUm || 0) : 0;
+  const a = Math.max(0, p.otherUncertaintyUm || 0);
+  return Math.sqrt((t / (2 * Math.sqrt(3))) ** 2 + (a / Math.sqrt(3)) ** 2);
+}
+
 export type TwoSphereDirection = 'auto' | 'inverted';
 
 /** Rule for deciding which vertices are worn */
@@ -248,6 +270,14 @@ export interface TwoSphereResult {
   volumeSdSystematicMm3?: number | null;
   /** RMS of the block-mean residuals of each sphere's support (μm) */
   lowFreqRmsUm?: number | null;
+  /** Acquisition (type B) component entered by the user — paint coat and other surface-position
+   *  uncertainties (scanner accuracy, CT surface threshold…); already included in the SDs above. */
+  linearSdAcquisitionMm?: number | null;
+  volumeSdAcquisitionMm3?: number | null;
+  /** Standard uncertainty of the local surface position used for that component (μm) */
+  surfaceUncertaintyUm?: number | null;
+  /** Area of the worn (displaced-sphere) surface inside the cup, mm² */
+  wornAreaMm2?: number | null;
   /** Volume that the OTHER direction choice would give (spheres swapped), mm³; null if not detected */
   alternativeVolumeMm3?: number | null;
   /** Concentricity of the liner's outer (back) surface with each sphere — a hint for the direction
@@ -318,7 +348,28 @@ export interface DoubleSphereMetricsResult {
   cellDistanceIQR?: [number, number];
 }
 
+/** Sphericity (form deviation) of the trimmed bearing surface — independent of the wear model */
+export interface SphericityResult {
+  /** Radial peak-to-valley from the least-squares sphere, on ≈1 mm cell means (P0.5–P99.5), μm */
+  sphericityUm: number;
+  /** RMS of the cell-mean deviations (noise-filtered form error), μm */
+  formRmsUm: number;
+  /** Raw point-wise max − min and RMS (include scanner noise), μm */
+  rawPeakToValleyUm: number;
+  pointRmsUm: number;
+  /** Least-squares sphere (free radius) */
+  radiusMm: number;
+  center: [number, number, number];
+  cellSizeMm: number;
+  /** Border band excluded (trim cut, hole edges), mm */
+  edgeBandMm: number;
+  cellCount: number;
+  pointCount: number;
+}
+
 export interface AnalysisResults {
+  /** Sphericity of the bearing surface (same for every analysis mode) */
+  sphericity?: SphericityResult | null;
   // Analysis mode
   analysisMode: Exclude<AnalysisMode, 'compare-all-modes'>;
 
@@ -370,6 +421,8 @@ export interface MultiModeComparisonResults {
   sphereBestfit: AnalysisResults;
   doubleSphereMetrics: AnalysisResults;
   twoSphereAuto?: AnalysisResults;
+  /** One sphericity for the sample, whatever the modes run */
+  sphericity?: SphericityResult | null;
   summary: {
     sphereBestfitWearVolumeMm3: number;
     doubleSphereLinearWearMm: number;
@@ -470,6 +523,10 @@ export interface AnalysisParams {
   wearThresholdK: number;              // noise-adaptive: threshold = max(k·σ, min)
   wearThresholdMinUm: number;          // noise-adaptive: floor of the threshold (μm)
   twoSphereDirection: TwoSphereDirection; // two-sphere mode: automatic (into the cup) or inverted
+  scanType: ScanType;            // how the liner was digitised (metadata + enables the acquisition uncertainty inputs)
+  scanPainted: boolean;          // inner surface coated with scanning spray/paint
+  paintThicknessUm: number;      // nominal paint coat thickness (μm); local thickness assumed anywhere in [0, t]
+  otherUncertaintyUm: number;    // other surface-position uncertainty, ± limit in μm (scanner accuracy, CT threshold…)
   showCommercialSphere: boolean;
   showWornSphere: boolean;
   showUnwornSphere: boolean;
@@ -520,6 +577,10 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   wearThresholdK: 3,
   wearThresholdMinUm: 10,
   twoSphereDirection: 'auto',
+  scanType: 'unspecified',
+  scanPainted: false,
+  paintThicknessUm: 50,
+  otherUncertaintyUm: 0,
   showCommercialSphere: false,
   showWornSphere: true,
   showUnwornSphere: true,
