@@ -107,3 +107,29 @@ export function trueWearVolumeAbovePlane(R: number, d: [number, number, number],
   }
   return V;
 }
+
+/** Remove the inner faces whose centroid lies within r (mm) of the point at polar angle th / azimuth ph
+ *  (degrees) on the original sphere — simulates scan holes. Unreferenced vertices are dropped. */
+export function punchHoles(m: MeshData, nInner: number, R: number, off: [number, number, number],
+  holes: { th: number; ph: number; r: number }[]): MeshData {
+  const cs = holes.map(h => {
+    const t = h.th * Math.PI / 180, p = h.ph * Math.PI / 180;
+    return { c: [Math.sin(t) * Math.cos(p) * R + off[0], Math.sin(t) * Math.sin(p) * R + off[1], -Math.cos(t) * R + off[2]], r: h.r };
+  });
+  const keep: number[] = [];
+  for (let f = 0; f < m.faceCount; f++) {
+    const a = m.indices[f * 3], b = m.indices[f * 3 + 1], c = m.indices[f * 3 + 2];
+    let cut = false;
+    if (a < nInner && b < nInner && c < nInner) {
+      const g = [0, 1, 2].map(k => (m.positions[a * 3 + k] + m.positions[b * 3 + k] + m.positions[c * 3 + k]) / 3);
+      for (const h of cs) if (Math.hypot(g[0] - h.c[0], g[1] - h.c[1], g[2] - h.c[2]) < h.r) { cut = true; break; }
+    }
+    if (!cut) keep.push(a, b, c);
+  }
+  const map = new Int32Array(m.vertexCount).fill(-1); let n = 0;
+  for (const v of keep) if (map[v] < 0) map[v] = n++;
+  const P = new Float32Array(n * 3), N = new Float32Array(n * 3);
+  for (let v = 0; v < m.vertexCount; v++) if (map[v] >= 0) for (let k = 0; k < 3; k++) { P[map[v] * 3 + k] = m.positions[v * 3 + k]; N[map[v] * 3 + k] = m.normals[v * 3 + k]; }
+  const I = new Uint32Array(keep.map(v => map[v]));
+  return { positions: P, normals: N, indices: I, vertexCount: n, faceCount: I.length / 3 };
+}

@@ -46,6 +46,8 @@ export interface ControlCallbacks {
   onExportExcel: () => void;
   onSaveSettings: () => void;
   onLoadSettings: () => void;
+  onExportWearMap: () => void;
+  onRunBatch: () => void;
   onShowResults: () => void;
   onParamsChange: (params: AnalysisParams) => void;
   // Exclusion zone
@@ -174,8 +176,12 @@ export class ControlPanel {
     const folder = this.gui.addFolder('📂 Import');
     folder.domElement.classList.add('section-import');
 
-    const importBtn = { 'Load STL File': () => this.callbacks.onLoadSTL() };
+    const importBtn = {
+      'Load STL File': () => this.callbacks.onLoadSTL(),
+      '📚 Batch Analysis (STL + settings)': () => this.callbacks.onRunBatch(),
+    };
     folder.add(importBtn, 'Load STL File');
+    folder.add(importBtn, '📚 Batch Analysis (STL + settings)');
 
     folder.open();
   }
@@ -846,6 +852,7 @@ export class ControlPanel {
       'Colored Mesh (STL)': () => this.callbacks.onExportSTL(),
       'Report (PDF)': () => this.callbacks.onExportPDF(),
       'Wear Data (Excel)': () => this.callbacks.onExportExcel(),
+      '🗺 Wear Map (PNG)': () => this.callbacks.onExportWearMap(),
       '💾 Save Measurement Settings': () => this.callbacks.onSaveSettings(),
       '📂 Load Measurement Settings': () => this.callbacks.onLoadSettings(),
     };
@@ -855,6 +862,7 @@ export class ControlPanel {
     folder.add(exports, 'Colored Mesh (STL)');
     folder.add(exports, 'Report (PDF)');
     folder.add(exports, 'Wear Data (Excel)');
+    folder.add(exports, '🗺 Wear Map (PNG)');
     folder.add(exports, '💾 Save Measurement Settings');
     folder.add(exports, '📂 Load Measurement Settings');
 

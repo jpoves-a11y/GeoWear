@@ -218,6 +218,8 @@ export interface MeasuredRadiusVolume {
   supportVertexCount: number;
   /** Reference large enough and radius within ±0.5 mm of the nominal one */
   reliable: boolean;
+  /** Standard uncertainty of this volume (mm³): two-sphere volume SD + radius uncertainty × cap area */
+  wearVolumeSdMm3?: number | null;
 }
 
 /** Wear volume result */
@@ -227,6 +229,9 @@ export interface WearVolumeResult {
   wearVolume: number;           // mm³ — difference = wear
   /** Same volume with the measured radius of the unworn cavity (Manual Geodesic / Two-Sphere Auto) */
   measuredRadius?: MeasuredRadiusVolume;
+  /** Holes still open in the inner surface used for the volume, and the volume they leave out
+   *  (estimated by closing every hole with a fan on the reference sphere). */
+  unfilledHoles?: { count: number; missingVolumeMm3: number } | null;
 }
 
 /** Wear plane through pole and max-wear point, perpendicular to rim plane */
@@ -276,8 +281,18 @@ export interface TwoSphereResult {
   volumeSdAcquisitionMm3?: number | null;
   /** Standard uncertainty of the local surface position used for that component (μm) */
   surfaceUncertaintyUm?: number | null;
-  /** Area of the worn (displaced-sphere) surface inside the cup, mm² */
+  /** Area of the worn (displaced-sphere) surface inside the cup, mm², and as % of the analysed surface */
   wornAreaMm2?: number | null;
+  wornAreaPct?: number | null;
+  /** Smooth form error about the free-radius sphere (RMS of block means), μm — always computed */
+  formRmsUm?: number | null;
+  /** Detection limit of the linear wear for this surface (μm), set only when no wear is detected:
+   *  the result is then reported as "< detectionLimitUm" (for penetration ≥ 30° from the cup axis). */
+  detectionLimitUm?: number | null;
+  /** Linear wear corrected for the cavity-radius excess: linear − (measured radius − commercial radius),
+   *  only when the measured radius is reliable (mm), and its standard uncertainty (mm) */
+  linearCorrectedMm?: number | null;
+  linearCorrectedSdMm?: number | null;
   /** Volume that the OTHER direction choice would give (spheres swapped), mm³; null if not detected */
   alternativeVolumeMm3?: number | null;
   /** Concentricity of the liner's outer (back) surface with each sphere — a hint for the direction

@@ -13,7 +13,7 @@
 import { WearAnalysisPipeline } from '../src/analysis/WearAnalysis';
 import { separateFaces } from '../src/analysis/MeshProcessor';
 import { DEFAULT_PARAMS, type AnalysisParams, type AnalysisResults } from '../src/types';
-import { makeLiner, trueWearVolumeAbovePlane } from './phantom';
+import { makeLiner, trueWearVolumeAbovePlane, punchHoles } from './phantom';
 
 const print = (s: string) => process.stdout.write(s + '\n');
 // The pipeline logs every step; keep the test output readable.
@@ -22,7 +22,7 @@ console.warn = () => {};
 
 interface Case {
   name: string;
-  liner: { delta: number; alphaDeg: number; R: number; noiseUm: number; lfUm?: number; dR?: number; seed?: number };
+  liner: { delta: number; alphaDeg: number; R: number; noiseUm: number; lfUm?: number; dR?: number; seed?: number; holes?: { th: number; ph: number; r: number }[] };
   mode?: 'two-sphere-auto' | 'manual-geodesic';
   params?: Partial<AnalysisParams>;
   check: (m: Measured, t: Truth) => string[]; // returns failure messages
@@ -36,10 +36,12 @@ const within = (label: string, m: number, t: number, tol: number) =>
 
 async function measure(c: Case): Promise<{ m: Measured; t: Truth }> {
   const L = c.liner;
-  const { mesh, d, c0, nInner } = makeLiner({
+  const lin = makeLiner({
     delta: L.delta, alphaDeg: L.alphaDeg, R: L.R, noiseUm: L.noiseUm, lfUm: L.lfUm ?? 0, dR: L.dR ?? 0,
     seed: L.seed ?? 1, nTheta: 150, offset: [0.7, -0.4, 0.3],
   });
+  const { d, c0, nInner } = lin;
+  const mesh = L.holes ? punchHoles(lin.mesh, nInner, L.R + (L.dR ?? 0), [0.7, -0.4, 0.3], L.holes) : lin.mesh;
   const mode = c.mode ?? 'two-sphere-auto';
   const params: AnalysisParams = { ...DEFAULT_PARAMS, analysisMode: mode, commercialRadius: L.R, ...c.params };
   const p = new WearAnalysisPipeline();
@@ -194,6 +196,52 @@ const cases: Case[] = [
       if (!s) return ['sphericity missing'];
       // same surface measured in Two-Sphere Auto, Sphere BestFit and DSM: 411.5 µm
       return s.sphericityUm > 380 && s.sphericityUm < 520 ? [] : [`sphericity ${s.sphericityUm.toFixed(1)} µm outside 380–520 µm`];
+    },
+  },
+  {
+    name: 'Holes · 4 mm hole at the pole left open: volume deficit reported as "missing"',
+    liner: { delta: 1.0, alphaDeg: 45, R: 14, noiseUm: 15, holes: [{ th: 0, ph: 0, r: 2 }] },
+    check: (m, t) => {
+      const h = m.raw.wearVolumeResult?.unfilledHoles;
+      if (!h || h.count < 1) return ['open hole not reported'];
+      const deficit = t.volumeMm3 - m.volumeMm3;
+      // the rest of the deficit (≈ 13 mm³) is the normal bias of the cut plane / noise
+      return Math.abs(h.missingVolumeMm3 - deficit) < 0.25 * deficit ? [] : [`missing ${h.missingVolumeMm3.toFixed(1)} mm³ vs deficit ${deficit.toFixed(1)} mm³`];
+    },
+  },
+  {
+    name: 'Holes · same hole with Repair Inner Face: filled, volume restored, noise not smoothed away',
+    liner: { delta: 1.0, alphaDeg: 45, R: 14, noiseUm: 15, holes: [{ th: 0, ph: 0, r: 2 }] },
+    params: { repairInnerFace: true },
+    check: (m, t) => {
+      const errs = [...within('volume (mm³)', m.volumeMm3, t.volumeMm3, 0.05)];
+      const h = m.raw.wearVolumeResult?.unfilledHoles;
+      if (h && h.count > 0) errs.push(`${h.count} hole(s) still open`);
+      const sig = m.raw.twoSphere?.noiseSigmaUm ?? 0;
+      if (Math.abs(sig - 15) > 3) errs.push(`noise σ ${sig.toFixed(1)} µm (expected ≈ 15: the fit must see the unsmoothed surface)`);
+      return errs;
+    },
+  },
+  {
+    name: 'Radius excess · 1 mm at 45° with cavity +0.1 mm: radius-corrected linear wear ≈ true penetration',
+    liner: { delta: 1.0, alphaDeg: 45, R: 14, noiseUm: 20, dR: 0.1 },
+    check: (m, t) => {
+      const ts = m.raw.twoSphere!;
+      const corr = (ts.linearCorrectedMm ?? NaN) * 1000;
+      const errs = [...within('corrected linear (µm)', corr, t.linearUm, 0.05)];
+      if (!(m.raw.wearVolumeResult?.measuredRadius?.wearVolumeSdMm3! > 0)) errs.push('measured-radius volume SD missing');
+      if (!(ts.wornAreaMm2! > 0 && ts.wornAreaPct! > 0 && ts.wornAreaPct! < 100)) errs.push('worn area missing');
+      return errs;
+    },
+  },
+  {
+    name: 'Detection limit · unworn cup reports "not detected" with a finite limit',
+    liner: { delta: 0, alphaDeg: 45, R: 14, noiseUm: 15, lfUm: 10 },
+    check: (m) => {
+      const ts = m.raw.twoSphere!;
+      if (ts.detected) return ['false detection'];
+      const lod = ts.detectionLimitUm ?? NaN;
+      return lod > 40 && lod < 300 ? [] : [`detection limit ${lod} µm outside 40–300 µm`];
     },
   },
   {

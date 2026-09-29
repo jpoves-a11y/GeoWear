@@ -414,13 +414,14 @@ export class ResultsPanel {
       if (results.zoneSpheres) {
         const lw = results.zoneSpheres.wornSphere.center.distanceTo(results.zoneSpheres.unwornSphere.center) * 1000;
         const unreliable = results.zoneSpheres.linearWearUnreliable;
+        const lod = results.twoSphere && !results.twoSphere.detected ? results.twoSphere.detectionLimitUm : null;
         cards.push({
           label: 'Linear Wear',
-          value: lw.toFixed(1),
+          value: lod != null ? `< ${lod.toFixed(0)}` : lw.toFixed(1),
           unit: results.twoSphere?.linearWearSdMm != null ? `μm ± ${(results.twoSphere.linearWearSdMm * 1000).toFixed(1)}` : 'μm',
           cls: unreliable ? 'warning' : (lw > 50 ? 'danger' : lw > 20 ? 'warning' : 'success'),
           warn: unreliable
-            ? (results.twoSphere && !results.twoSphere.detected ? 'not detectable'
+            ? (results.twoSphere && !results.twoSphere.detected ? 'below detection limit'
               : results.twoSphere?.nearPole ? '⚠ near pole' : '⚠ reliability issue')
             : undefined,
         });
@@ -750,7 +751,24 @@ export class ResultsPanel {
     this.addMetric(section, 'Status',
       ts.detected ? 'Directional wear detected' : 'No directional wear detected',
       undefined, ts.detected ? 'success' : 'warning');
-    this.addMetric(section, 'Linear Wear', (ts.linearWearMm * 1000).toFixed(1), 'μm', 'danger', true);
+    if (ts.detected) {
+      this.addMetric(section, 'Linear Wear', (ts.linearWearMm * 1000).toFixed(1), 'μm', 'danger', true);
+    } else if (ts.detectionLimitUm != null) {
+      this.addMetric(section, 'Linear Wear', `< ${ts.detectionLimitUm.toFixed(0)} (below the detection limit)`, 'μm', 'warning', true);
+    } else {
+      this.addMetric(section, 'Linear Wear', '0.0', 'μm', 'warning', true);
+    }
+    if (ts.detectionLimitUm != null) {
+      this.addMetric(section, 'Detection limit for this surface (penetration ≥ 30° from the axis; wear near the pole may stay undetected)', ts.detectionLimitUm.toFixed(0), 'μm');
+    }
+    if (ts.linearCorrectedMm != null) {
+      this.addMetric(section, 'Linear Wear corrected for cavity-radius excess',
+        `${(ts.linearCorrectedMm * 1000).toFixed(1)}${ts.linearCorrectedSdMm != null ? ` ± ${(ts.linearCorrectedSdMm * 1000).toFixed(1)}` : ''}`, 'μm');
+    }
+    if (ts.wornAreaMm2 != null) {
+      this.addMetric(section, 'Worn area (displaced-sphere surface)',
+        `${ts.wornAreaMm2.toFixed(0)}${ts.wornAreaPct != null ? ` (${ts.wornAreaPct.toFixed(1)} % of the analysed surface)` : ''}`, 'mm²');
+    }
     if (ts.linearWearSdMm != null) {
       this.addMetric(section, 'Linear Wear uncertainty (SD)', (ts.linearWearSdMm * 1000).toFixed(1), 'μm');
     }
@@ -859,11 +877,21 @@ export class ResultsPanel {
 
     if (wv.measuredRadius) {
       const m = wv.measuredRadius;
-      this.addMetric(section, 'Wear Volume · measured radius', m.wearVolume.toFixed(4), 'mm³', m.reliable ? undefined : 'warning');
+      this.addMetric(section, 'Wear Volume · measured radius',
+        `${m.wearVolume.toFixed(2)}${m.wearVolumeSdMm3 != null ? ` ± ${m.wearVolumeSdMm3.toFixed(1)}` : ''}`, 'mm³', m.reliable ? undefined : 'warning');
       this.addMetric(section, 'Measured cavity radius', `${m.radius.toFixed(3)} (nominal ${(results.commercialSphere?.commercialRadius ?? 0).toFixed(1)})`, 'mm');
       this.addMetric(section, 'Note', m.reliable
         ? 'Measured-radius volume excludes uniform enlargement (design clearance, machining, creep) and any uniformly distributed wear'
         : 'Measured radius unreliable (small non-worn reference or radius > 0.5 mm from nominal)', undefined, m.reliable ? undefined : 'warning');
+    }
+
+    if (wv.unfilledHoles && wv.unfilledHoles.count > 0) {
+      const h = wv.unfilledHoles;
+      const serious = h.missingVolumeMm3 > 2;
+      this.addMetric(section, 'Open holes in the inner surface',
+        `${h.count} hole(s) · ≈ ${h.missingVolumeMm3.toFixed(1)} mm³ missing from the volume` +
+        (serious ? ' — enable "Repair Inner Face" or mark the large holes with a seed and re-run' : ' (negligible)'),
+        undefined, serious ? 'danger' : undefined);
     }
 
     if (this.yearsInVivo > 0) {

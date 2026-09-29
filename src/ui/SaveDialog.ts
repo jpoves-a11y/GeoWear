@@ -38,6 +38,9 @@ const DIALOG_CSS = `
   margin: 0 0 20px;
   line-height: 1.55;
   color: #b0b0b0;
+  white-space: pre-line;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 .gw-dialog input[type="text"] {
   display: block;
@@ -223,6 +226,39 @@ export class SaveDialog {
   }
 
   /**
+   * Writing into the chosen local file failed (usually because it is open in Excel).
+   * The button click also gives the page a fresh user activation, needed to ask
+   * the browser for write permission again.
+   */
+  async askWriteFailed(fileName: string, reason: string): Promise<'retry' | 'download' | 'cancel'> {
+    const { choice } = await showModal(
+      'No se pudo guardar en el archivo',
+      `No se ha podido escribir en "${fileName}". Si está abierto en Excel, ciérrelo y pulse "Reintentar". ` +
+      `El archivo no se ha modificado. (${reason})`,
+      [
+        { label: 'Reintentar', value: 'retry', style: 'primary' },
+        { label: 'Descargar copia', value: 'download', style: 'secondary' },
+        { label: 'Cancelar', value: 'cancel', style: 'danger' },
+      ],
+    );
+    return choice as 'retry' | 'download' | 'cancel';
+  }
+
+  /** Browser without File System Access API: the existing file cannot be modified in place. */
+  async askDownloadInstead(fileName: string): Promise<boolean> {
+    const { choice } = await showModal(
+      'Este navegador no puede modificar archivos locales',
+      `Firefox y Safari no permiten que una página web modifique "${fileName}" directamente, así que solo se puede ` +
+      `descargar una copia actualizada. Para guardar sobre el mismo archivo use Chrome o Edge.`,
+      [
+        { label: 'Descargar copia', value: 'download', style: 'primary' },
+        { label: 'Cancelar', value: 'cancel', style: 'secondary' },
+      ],
+    );
+    return choice === 'download';
+  }
+
+  /**
    * Ask the user for the name of the new file.
    * Returns null if the user cancels.
    */
@@ -332,6 +368,22 @@ export class SaveDialog {
    * Inform the user that the prosthesis name already exists and ask whether
    * to overwrite its data or skip saving.
    */
+  /** Plain information dialog (OK only). */
+  async showInfo(title: string, message: string): Promise<void> {
+    await showModal(title, message, [{ label: 'OK', value: 'ok', style: 'primary' }]);
+  }
+
+  /** Batch analysis: confirm the list of pairs found and whether to save a wear map per piece. */
+  async askBatchStart(summary: string, canSaveMaps: boolean): Promise<'run' | 'run-maps' | 'cancel'> {
+    const buttons: { label: string; value: string; style: 'primary' | 'secondary' | 'danger' }[] = [
+      { label: 'Analizar', value: 'run', style: 'primary' },
+    ];
+    if (canSaveMaps) buttons.push({ label: 'Analizar y guardar mapas PNG', value: 'run-maps', style: 'secondary' });
+    buttons.push({ label: 'Cancelar', value: 'cancel', style: 'danger' });
+    const { choice } = await showModal('Análisis por lotes', summary, buttons);
+    return choice as 'run' | 'run-maps' | 'cancel';
+  }
+
   async askOverwriteOrSkip(prosthesisName: string): Promise<'overwrite' | 'skip'> {
     const { choice } = await showModal(
       'Prótesis ya existe',

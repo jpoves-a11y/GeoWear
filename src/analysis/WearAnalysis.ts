@@ -169,6 +169,22 @@ export interface PipelineState {
   manualHoleSeeds: [number, number, number][];
 }
 
+/**
+ * Detection limit of the linear wear (μm): the penetration from which Two-Sphere Auto detects wear in
+ * every phantom whose penetration direction is ≥ 30° from the cup axis. Calibrated on 560 known-wear
+ * phantoms (penetration 0.03–0.5 mm, direction 10–75°, point noise σ 10–25 μm, smooth form error
+ * 0–20 μm, cavity radius 0–0.3 mm larger than the head):
+ *   LoD = max(50 + 6·σ + 16·f,  50 + 1.3·e)   rounded up to 10 μm
+ * σ = point noise, f = smooth form error about the free-radius sphere, e = |free radius − commercial
+ * radius| (all μm). Penetration closer than ~30° to the pole may stay undetected at any magnitude
+ * (the displaced sphere is then almost indistinguishable from a larger sphere).
+ */
+export function detectionLimitUm(sigmaUm: number, formUm: number | null | undefined, radiusExcessUm = 0): number {
+  const base = 50 + 6 * Math.max(0, sigmaUm) + 16 * Math.max(0, formUm ?? 0);
+  const excess = 50 + 1.3 * Math.abs(radiusExcessUm);
+  return Math.ceil(Math.max(base, excess) / 10) * 10;
+}
+
 export class WearAnalysisPipeline {
   /** Records the mode currently being executed so shared step methods (e.g.
    *  stepComputeWearVolumeBestFit) can embed the correct analysisMode in results. */
@@ -413,11 +429,13 @@ export class WearAnalysisPipeline {
       this.stepSeparateFaces(meshData);
     }
 
-    // Optional: repair inner face scan defects before trimming/analysis
+    // Optional: repair inner face scan defects before trimming/analysis.
+    // Holes are only FILLED (0 smoothing iterations): the two-sphere fit, its noise estimate and the
+    // sphericity must see the measured surface; geodesic modes smooth their own copy in stepSmooth.
     if (params.repairInnerFace) {
       this.progress('repair-inner', 0.06, 'Repairing inner face holes...');
       await this.yieldToUI();
-      this.stepRepairInnerFace(2, params.holeRepairMaxLoopSize);
+      this.stepRepairInnerFace(0, params.holeRepairMaxLoopSize);
     }
 
     // Step 2: Trim rim
@@ -434,7 +452,7 @@ export class WearAnalysisPipeline {
     if (params.repairInnerFace) {
       this.progress('repair-working', 0.13, 'Repairing trimmed mesh holes...');
       await this.yieldToUI();
-      this.stepRepairWorkingMesh(2, params.holeRepairMaxLoopSize);
+      this.stepRepairWorkingMesh(0, params.holeRepairMaxLoopSize);
     }
 
     // Step 2c: Smooth mesh for geodesic/sphere analysis
@@ -1565,8 +1583,12 @@ export class WearAnalysisPipeline {
       plane.point, plane.normal,
       { init: [cs.center.x, cs.center.y, cs.center.z], invert, uncertainty: { bootstrap: 12, planeShiftMm, seed: 1 } },
     );
-    const { referencePositions, replicates, lowFreqRmsMm, originalSupport, ...result } = fit;
+    const { referencePositions, replicates, lowFreqRmsMm, formRmsFreeMm, originalSupport, ...result } = fit;
     result.lowFreqRmsUm = lowFreqRmsMm != null ? lowFreqRmsMm * 1000 : null;
+    result.formRmsUm = formRmsFreeMm * 1000;
+    // Only meaningful when nothing was detected (on a worn surface the form error is the wear itself)
+    result.detectionLimitUm = result.detected ? null
+      : detectionLimitUm(result.noiseSigmaUm, result.formRmsUm, (result.freeSphereRadius - cs.commercialRadius) * 1000);
     result.radiusSelection = radiusSelection;
     this.twoSphereSupport = originalSupport;
 
@@ -1636,21 +1658,23 @@ export class WearAnalysisPipeline {
       const us = Math.max(0, surfaceUncertaintyUm) / 1000;
       const cB = result.displacedCenter;
       const W = this.state.workingMesh!;
-      let wornArea = 0;
+      let wornArea = 0, totalArea = 0;
       for (let f = 0; f < W.faceCount; f++) {
         const a = W.indices[f * 3] * 3, b = W.indices[f * 3 + 1] * 3, c = W.indices[f * 3 + 2] * 3;
         const P = W.positions;
         const gx = (P[a] + P[b] + P[c]) / 3, gy = (P[a + 1] + P[b + 1] + P[c + 1]) / 3, gz = (P[a + 2] + P[b + 2] + P[c + 2]) / 3;
         const dA2 = (gx - oc.x) ** 2 + (gy - oc.y) ** 2 + (gz - oc.z) ** 2;
         const dB2 = (gx - cB.x) ** 2 + (gy - cB.y) ** 2 + (gz - cB.z) ** 2;
-        if (dB2 >= dA2) continue;
         const e1x = P[b] - P[a], e1y = P[b + 1] - P[a + 1], e1z = P[b + 2] - P[a + 2];
         const e2x = P[c] - P[a], e2y = P[c + 1] - P[a + 1], e2z = P[c + 2] - P[a + 2];
-        wornArea += 0.5 * Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x);
+        const fa = 0.5 * Math.hypot(e1y * e2z - e1z * e2y, e1z * e2x - e1x * e2z, e1x * e2y - e1y * e2x);
+        totalArea += fa;
+        if (dB2 < dA2) wornArea += fa;
       }
       const linAcq = Math.SQRT2 * us;
       const volAcq = us * Math.hypot(wornArea, capSection);
       result.wornAreaMm2 = wornArea;
+      result.wornAreaPct = totalArea > 0 ? 100 * wornArea / totalArea : null;
       result.surfaceUncertaintyUm = surfaceUncertaintyUm > 0 ? surfaceUncertaintyUm : null;
       result.linearSdAcquisitionMm = surfaceUncertaintyUm > 0 ? linAcq : null;
       result.volumeSdAcquisitionMm3 = surfaceUncertaintyUm > 0 ? volAcq : null;
@@ -2261,6 +2285,19 @@ export class WearAnalysisPipeline {
       wearVolume,
     };
 
+    // Holes left open (repair off, or loops larger than the size limit without a seed): each one
+    // removes a prism of volume, so the wear volume is underestimated. Estimate what is missing by
+    // closing every hole on the reference sphere and comparing the enclosed volumes.
+    try {
+      const closed = repairInnerFaceMesh(innerMesh, 0, Number.MAX_SAFE_INTEGER, undefined,
+        { sphereCenter: [capCenter.x, capCenter.y, capCenter.z], R: capRadius });
+      this.state.wearVolume.unfilledHoles = closed.holeCount > 0
+        ? { count: closed.holeCount, missingVolumeMm3: Math.max(0, computeMeshEnclosedVolume(closed.meshData, planePoint, planeNormal) - meshEnclosedVolume) }
+        : { count: 0, missingVolumeMm3: 0 };
+    } catch {
+      this.state.wearVolume.unfilledHoles = null;
+    }
+
     // Alternative volume with the ACTUAL radius of the unworn cavity (free-radius fit to the
     // non-worn reference): excludes uniform enlargement (clearance, machining, creep).
     const support = this._activeMode === 'two-sphere-auto' ? this.twoSphereSupport
@@ -2277,6 +2314,20 @@ export class WearAnalysisPipeline {
         supportVertexCount: nSup,
         reliable: Math.abs(mf.radius - capRadius) <= 0.5 && nSup >= 500 && nSup / Math.max(1, activeCount) >= 0.1,
       };
+      // Uncertainty: the two-sphere volume SD plus the radius uncertainty (smooth form error of the
+      // reference biases a free-radius fit by about its RMS) times the cap surface 2πR·h.
+      const ts = this.state.twoSphere;
+      const mr = this.state.wearVolume.measuredRadius!;
+      const pnU = planeNormal.clone().normalize();
+      const hCap = mf.radius + ((mf.center.x - planePoint.x) * pnU.x + (mf.center.y - planePoint.y) * pnU.y + (mf.center.z - planePoint.z) * pnU.z);
+      const uR = Math.max((ts?.lowFreqRmsUm ?? ts?.formRmsUm ?? 0) / 1000, mf.rmsError / Math.sqrt(nSup));
+      if (ts?.volumeSdMm3 != null) mr.wearVolumeSdMm3 = Math.hypot(ts.volumeSdMm3, 2 * Math.PI * mf.radius * Math.max(0, hCap) * uR);
+      // Linear wear corrected for the cavity-radius excess (clearance, machining, paint): the centre
+      // distance includes it, the penetration beyond the original cavity does not.
+      if (ts && ts.detected && mr.reliable) {
+        ts.linearCorrectedMm = Math.max(0, ts.linearWearMm - (mf.radius - capRadius));
+        ts.linearCorrectedSdMm = ts.linearWearSdMm != null ? Math.hypot(ts.linearWearSdMm, uR) : null;
+      }
       console.log(`[Wear Volume] measured radius R=${mf.radius.toFixed(4)}mm (nominal ${capRadius}), volume=${this.state.wearVolume.measuredRadius.wearVolume.toFixed(2)}mm³`);
     }
 
