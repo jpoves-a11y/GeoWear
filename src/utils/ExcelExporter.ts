@@ -324,64 +324,38 @@ export function downloadWorkbook(wb: any, fileName: string): void {
 }
 
 /**
- * Write a workbook to disk.
- *
- * Priority order:
- * 1. In-place write via an existing FileSystemFileHandle (from showOpenFilePicker).
- * 2. showSaveFilePicker — lets the user choose / overwrite the exact file,
- *    avoiding the browser's automatic "(1)" renaming.
- * 3. Blob download fallback for browsers without the File System Access API.
+ * Write a workbook IN PLACE into the local file behind `handle` (File System Access API).
+ * Asks for write permission when the handle was obtained read-only (showOpenFilePicker).
+ * Never falls back to a download: it throws, so the caller can tell the user what happened
+ * (typically the file is open in Excel, which locks it on Windows) and offer to retry.
  */
-export async function writeWorkbook(
-  wb: any,
-  fileName: string,
-  fileHandle?: FileSystemFileHandle,
-): Promise<void> {
-  const name = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;
-
-  // --- 1. In-place write via provided handle (e.g. from showOpenFilePicker) ---
-  if (fileHandle) {
-    try {
-      const wbout: ArrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-      const writable = await fileHandle.createWritable();
-      await writable.write(
-        new Blob([wbout], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
-      );
-      await writable.close();
-      return;
-    } catch {
-      // createWritable() not supported in this browser (e.g. Firefox) — fall through.
+export async function writeWorkbookToHandle(wb: any, handle: FileSystemFileHandle): Promise<void> {
+  const h: any = handle;
+  if (typeof h.queryPermission === 'function') {
+    let perm = await h.queryPermission({ mode: 'readwrite' });
+    if (perm !== 'granted' && typeof h.requestPermission === 'function') {
+      perm = await h.requestPermission({ mode: 'readwrite' });
     }
+    if (perm !== 'granted') throw new Error('Permiso de escritura denegado');
   }
-
-  // --- 2. showSaveFilePicker: "Save As" dialog keeps the original filename ---
-  if ('showSaveFilePicker' in window) {
-    try {
-      const handle: FileSystemFileHandle = await (window as any).showSaveFilePicker({
-        suggestedName: name,
-        types: [{
-          description: 'Excel',
-          accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
-        }],
-      });
-      const wbout: ArrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-      const writable = await handle.createWritable();
-      await writable.write(
-        new Blob([wbout], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
-      );
-      await writable.close();
-      return;
-    } catch {
-      // User cancelled the picker — fall through to download.
-    }
+  const wbout: ArrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const writable = await handle.createWritable();
+  try {
+    await writable.write(
+      new Blob([wbout], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }),
+    );
+    await writable.close();
+  } catch (e) {
+    try { await writable.abort(); } catch { /* already closed */ }
+    throw e;
   }
+}
 
-  // --- 3. Blob download fallback ---
-  downloadWorkbook(wb, fileName);
+/** True when this browser can modify local files in place (Chrome, Edge, Opera). */
+export function canWriteLocalFiles(): boolean {
+  return typeof window !== 'undefined' && 'showOpenFilePicker' in window && 'showSaveFilePicker' in window;
 }
 
 /**

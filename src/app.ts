@@ -30,7 +30,8 @@ import {
   parseWorkbook,
   prosthesisExistsInWorkbook,
   mergeWorkbook,
-  writeWorkbook,
+  writeWorkbookToHandle,
+  canWriteLocalFiles,
   downloadWorkbook,
   downloadRowsAsCSV,
 } from './utils/ExcelExporter';
@@ -274,106 +275,109 @@ export class App {
   // ---- Excel export ----
 
   /**
-   * Entry point — must NOT be async so that showSaveFilePicker (File System
-   * Access API) is called synchronously within the user-gesture context before
-   * any awaits expire the transient activation.
+   * Excel export. Always asks first whether to create a new file or add the row to an existing one.
+   * With the File System Access API (Chrome, Edge) the chosen file is modified IN PLACE — nothing
+   * is downloaded. The modal button click provides the user activation the native pickers need.
+   * Browsers without that API (Firefox, Safari) can only download a copy.
    */
   private exportExcel(): void {
     if (!this.currentResults) {
       this.status.setStatus('Run analysis first before exporting to Excel.');
       return;
     }
-
-    const xlsxAvailable = !!(window as any).XLSX;
-
-    if ('showSaveFilePicker' in window && xlsxAvailable) {
-      // ---- FSA path: save picker opened immediately (gesture still valid) ----
-      (window as any)
-        .showSaveFilePicker({
-          suggestedName: `${this.fileName}.xlsx`,
-          types: [{
-            description: 'Excel',
-            accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
-          }],
-        })
-        .then((handle: FileSystemFileHandle) => this.runExcelExportFSA(handle))
-        .catch(() => { /* user cancelled the picker */ });
-    } else {
-      // ---- Fallback path: modal dialogs + download ----
-      (async () => this.runExcelExportDownload(xlsxAvailable))();
-    }
+    void this.runExcelExport(!!(window as any).XLSX);
   }
 
-  /** FSA path — write in-place, no Downloads renaming. */
-  private async runExcelExportFSA(handle: FileSystemFileHandle): Promise<void> {
-    const prosthesisName = this.fileName;
-    const rows = extractRows(prosthesisName, this.currentResults!, this.params);
-
-    // Try to read existing content (file may already exist if user picked it)
-    let existingWb: any = null;
-    try {
-      const existingFile = await handle.getFile();
-      if (existingFile.size > 0) {
-        const buffer = await existingFile.arrayBuffer();
-        existingWb = parseWorkbook(buffer);
-      }
-    } catch { /* new file — no existing content */ }
-
-    if (existingWb) {
-      // Existing file: merge new data into it
-      if (prosthesisExistsInWorkbook(existingWb, prosthesisName)) {
-        const decision = await this.saveDialog.askOverwriteOrSkip(prosthesisName);
-        if (decision === 'skip') return;
-      }
-      mergeWorkbook(existingWb, prosthesisName, rows);
-      await writeWorkbook(existingWb, prosthesisName, handle);
-      this.status.setStatus(`Excel actualizado: ${prosthesisName}.xlsx`);
-    } else {
-      // New file: create fresh workbook
-      const wb = createWorkbook(rows);
-      await writeWorkbook(wb, prosthesisName, handle);
-      this.status.setStatus(`Excel guardado: ${prosthesisName}.xlsx`);
-    }
-  }
-
-  /** Fallback path for browsers without FSA — uses modal dialogs and downloads. */
-  private async runExcelExportDownload(xlsxAvailable: boolean): Promise<void> {
+  private async runExcelExport(xlsxAvailable: boolean): Promise<void> {
     const prosthesisName = this.fileName;
     const rows = extractRows(prosthesisName, this.currentResults!, this.params);
 
     const action = await this.saveDialog.askCreateOrAppend();
     if (action === 'cancel') return;
 
-    if (action === 'create') {
-      const fileName = await this.saveDialog.askFileName(prosthesisName);
-      if (!fileName) return;
-
-      if (xlsxAvailable) {
-        const wb = createWorkbook(rows);
-        downloadWorkbook(wb, fileName);
-        this.status.setStatus(`Excel descargado: ${fileName}.xlsx`);
-      } else {
-        downloadRowsAsCSV(rows, fileName);
-        this.status.setStatus(`CSV descargado: ${fileName}.csv`);
-      }
-    } else {
-      if (!xlsxAvailable) {
+    if (!xlsxAvailable) {
+      if (action === 'append') {
         this.status.setStatus('SheetJS CDN no disponible — usa "Crear nuevo" para exportar CSV.');
         return;
       }
-      const picked = await this.saveDialog.askPickExistingFile();
-      if (!picked) return;
+      const fileName = await this.saveDialog.askFileName(prosthesisName);
+      if (!fileName) return;
+      downloadRowsAsCSV(rows, fileName);
+      this.status.setStatus(`CSV descargado: ${fileName}.csv`);
+      return;
+    }
 
-      const buffer = await picked.file.arrayBuffer();
-      const wb = parseWorkbook(buffer);
+    if (action === 'create') {
+      if (canWriteLocalFiles()) {
+        const handle = await this.saveDialog.askSaveFilePicker(prosthesisName);
+        if (!handle) return;
+        // The user may have picked an existing workbook in the save dialog: merge instead of wiping it.
+        await this.mergeIntoHandle(handle, prosthesisName, rows);
+        return;
+      }
+      const fileName = await this.saveDialog.askFileName(prosthesisName);
+      if (!fileName) return;
+      downloadWorkbook(createWorkbook(rows), fileName);
+      this.status.setStatus(`Excel descargado: ${fileName}.xlsx`);
+      return;
+    }
 
+    // ---- Añadir a existente ----
+    const picked = await this.saveDialog.askPickExistingFile();
+    if (!picked) return;
+    if (picked.handle) {
+      await this.mergeIntoHandle(picked.handle, prosthesisName, rows);
+      return;
+    }
+    // No File System Access API: the file can only be read, not written back.
+    const wb = parseWorkbook(await picked.file.arrayBuffer());
+    if (prosthesisExistsInWorkbook(wb, prosthesisName)) {
+      const decision = await this.saveDialog.askOverwriteOrSkip(prosthesisName);
+      if (decision === 'skip') return;
+    }
+    mergeWorkbook(wb, prosthesisName, rows);
+    if (!(await this.saveDialog.askDownloadInstead(picked.file.name))) return;
+    downloadWorkbook(wb, picked.file.name);
+    this.status.setStatus(`Copia descargada (el navegador no permite modificar ${picked.file.name})`);
+  }
+
+  /** Merge the rows into the workbook behind `handle` (or create it if empty) and write it in place. */
+  private async mergeIntoHandle(handle: FileSystemFileHandle, prosthesisName: string, rows: ReturnType<typeof extractRows>): Promise<void> {
+    let wb: any = null;
+    try {
+      const existing = await handle.getFile();
+      if (existing.size > 0) wb = parseWorkbook(await existing.arrayBuffer());
+    } catch { /* new, empty file */ }
+
+    if (wb) {
       if (prosthesisExistsInWorkbook(wb, prosthesisName)) {
         const decision = await this.saveDialog.askOverwriteOrSkip(prosthesisName);
         if (decision === 'skip') return;
       }
       mergeWorkbook(wb, prosthesisName, rows);
-      downloadWorkbook(wb, picked.file.name);
-      this.status.setStatus(`Excel descargado: ${picked.file.name}`);
+    } else {
+      wb = createWorkbook(rows);
+    }
+
+    for (;;) {
+      try {
+        await writeWorkbookToHandle(wb, handle);
+        this.status.setStatus(`Excel actualizado: ${handle.name} (${prosthesisName})`);
+        return;
+      } catch (e: any) {
+        const reason = e?.name === 'NoModificationAllowedError' || e?.name === 'InvalidStateError'
+          ? 'archivo bloqueado por otro programa'
+          : e?.name === 'NotAllowedError' || e?.name === 'SecurityError'
+            ? 'permiso de escritura no concedido'
+            : String(e?.message ?? e);
+        const choice = await this.saveDialog.askWriteFailed(handle.name, reason);
+        if (choice === 'retry') continue;
+        if (choice === 'download') {
+          downloadWorkbook(wb, handle.name);
+          this.status.setStatus(`Copia descargada: ${handle.name}`);
+        }
+        return;
+      }
     }
   }
 

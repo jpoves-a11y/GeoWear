@@ -223,6 +223,39 @@ export class SaveDialog {
   }
 
   /**
+   * Writing into the chosen local file failed (usually because it is open in Excel).
+   * The button click also gives the page a fresh user activation, needed to ask
+   * the browser for write permission again.
+   */
+  async askWriteFailed(fileName: string, reason: string): Promise<'retry' | 'download' | 'cancel'> {
+    const { choice } = await showModal(
+      'No se pudo guardar en el archivo',
+      `No se ha podido escribir en "${fileName}". Si está abierto en Excel, ciérrelo y pulse "Reintentar". ` +
+      `El archivo no se ha modificado. (${reason})`,
+      [
+        { label: 'Reintentar', value: 'retry', style: 'primary' },
+        { label: 'Descargar copia', value: 'download', style: 'secondary' },
+        { label: 'Cancelar', value: 'cancel', style: 'danger' },
+      ],
+    );
+    return choice as 'retry' | 'download' | 'cancel';
+  }
+
+  /** Browser without File System Access API: the existing file cannot be modified in place. */
+  async askDownloadInstead(fileName: string): Promise<boolean> {
+    const { choice } = await showModal(
+      'Este navegador no puede modificar archivos locales',
+      `Firefox y Safari no permiten que una página web modifique "${fileName}" directamente, así que solo se puede ` +
+      `descargar una copia actualizada. Para guardar sobre el mismo archivo use Chrome o Edge.`,
+      [
+        { label: 'Descargar copia', value: 'download', style: 'primary' },
+        { label: 'Cancelar', value: 'cancel', style: 'secondary' },
+      ],
+    );
+    return choice === 'download';
+  }
+
+  /**
    * Ask the user for the name of the new file.
    * Returns null if the user cancels.
    */
