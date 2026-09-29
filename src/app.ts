@@ -24,6 +24,7 @@ import { HoleSeedPickManager } from './viewer/HoleSeedPickManager';
 import { trimRim, computeRimAnchor, rimAnchorToPlanePoint, type RimAnchor } from './analysis/MeshProcessor';
 import { computeTiltedRimNormal, fitPlaneFromPoints, decomposeNormalToInclination } from './utils/geometry';
 import { SaveDialog } from './ui/SaveDialog';
+import { renderWearMap } from './utils/WearMap';
 import {
   extractRows,
   createWorkbook,
@@ -68,6 +69,8 @@ export class App {
 
   // State
   private pipeline: WearAnalysisPipeline | null = null;
+  private lastAnalysisError = '';
+  private batchRunning = false;
   private currentMeshData: MeshData | null = null;
   private currentResults: AnalysisRunResult | null = null;
   /** Which sub-mode is currently rendered when analysisMode === 'compare-all-modes'. */
@@ -147,8 +150,8 @@ export class App {
     this.setupSidebarResize();
 
     const callbacks: ControlCallbacks = {
-      onLoadSTL: () => this.openFileDialog(),
-      onRunAnalysis: () => this.runAnalysis(),
+      onLoadSTL: () => { if (!this.batchGuard()) this.openFileDialog(); },
+      onRunAnalysis: () => { if (!this.batchGuard()) void this.runAnalysis(); },
       onStepSeparate: () => this.stepSeparate(),
       onStepTrim: () => this.stepTrim(),
       onStepFitSphere: () => this.stepFitSphere(),
@@ -187,7 +190,9 @@ export class App {
       onExportPDF: () => this.exportPDF(),
       onExportExcel: () => this.exportExcel(),
       onSaveSettings: () => this.saveSettings(),
-      onLoadSettings: () => this.loadSettings(),
+      onLoadSettings: () => { if (!this.batchGuard()) this.loadSettings(); },
+      onExportWearMap: () => { void this.exportWearMap(); },
+      onRunBatch: () => { void this.runBatch(); },
       onShowResults: () => {
         if (this.currentResults) {
           this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
@@ -264,6 +269,7 @@ export class App {
       e.stopPropagation();
       element.classList.remove('drag-over');
       const file = e.dataTransfer?.files[0];
+      if (this.batchGuard()) return;
       if (file && file.name.toLowerCase().endsWith('.stl')) {
         this.loadFile(file);
       } else {
@@ -520,12 +526,14 @@ export class App {
 
   // ---- Full Analysis ----
 
-  private async runAnalysis(): Promise<void> {
-    if (this.isRunning) return;
+  /** Run the full analysis; resolves true when it finished and produced results. */
+  private async runAnalysis(): Promise<boolean> {
+    if (this.isRunning) return false;
     if (!this.currentMeshData) {
       this.status.setStatus('No mesh loaded. Please load an STL file first.');
-      return;
+      return false;
     }
+    let ok = false;
 
     // Always sync params from the GUI panel so nothing is stale (e.g. mode dropdown)
     this.params = { ...this.controls.params };
@@ -612,13 +620,16 @@ export class App {
       this.resultsPanel.setYearsInVivo(this.params.yearsInVivo);
       this.resultsPanel.show(results);
       this.status.setStatus(`Analysis complete in ${(results.processingTimeMs / 1000).toFixed(1)}s`);
+      ok = true;
     } catch (err) {
       console.error('Analysis error:', err);
+      this.lastAnalysisError = (err as Error).message;
       this.status.setStatus(`Analysis error: ${(err as Error).message}`);
     } finally {
       this.isRunning = false;
       this.hideLoading();
     }
+    return ok;
   }
 
   // ---- Step-by-step execution ----
@@ -642,7 +653,7 @@ export class App {
       // Clear any overlay from a previous repair before displaying the new mesh
       this.meshViewer.removeRepairedHolesOverlay();
       if (this.params.repairInnerFace) {
-        p.stepRepairInnerFace(2, this.params.holeRepairMaxLoopSize);
+        p.stepRepairInnerFace(0, this.params.holeRepairMaxLoopSize);
       }
       const sep = p.state.separation!;
       this.meshViewer.displayInnerMesh(sep.inner);
@@ -688,7 +699,7 @@ export class App {
       // largest boundary loop = artificial trim boundary, not the real rim)
       this.meshViewer.removeRepairedHolesOverlay();
       if (this.params.repairInnerFace) {
-        p.stepRepairWorkingMesh(2, this.params.holeRepairMaxLoopSize);
+        p.stepRepairWorkingMesh(0, this.params.holeRepairMaxLoopSize);
       }
       const displayMesh = p.state.workingMesh ?? trim.mesh;
       this.meshViewer.displayInnerMesh(displayMesh);
@@ -1013,7 +1024,7 @@ export class App {
       }
       p.stepTrimRim(currentParams.rimTrimPercent);
       if (currentParams.repairInnerFace) {
-        p.stepRepairWorkingMesh(2, currentParams.holeRepairMaxLoopSize);
+        p.stepRepairWorkingMesh(0, currentParams.holeRepairMaxLoopSize);
       }
     } catch (e) {
       this.status.setStatus(`Could not compute trimmed mesh: ${(e as Error).message}`);
@@ -1901,56 +1912,7 @@ export class App {
       const file = input.files?.[0];
       if (!file) return;
       try {
-        const s = JSON.parse(await file.text());
-        if (s?.format !== 'geowear-settings') throw new Error('Not a GeoWear settings file');
-        const warnings: string[] = [];
-        if (s.fileName && this.fileName && s.fileName !== this.fileName) warnings.push(`saved for "${s.fileName}"`);
-        if (s.vertexCount && this.currentMeshData && s.vertexCount !== this.currentMeshData.vertexCount) warnings.push('different vertex count');
-
-        // Parameters (unknown keys are ignored; missing keys keep their current value)
-        const p: Partial<AnalysisParams> = {};
-        for (const k of Object.keys(DEFAULT_PARAMS) as (keyof AnalysisParams)[]) {
-          if (s.params && k in s.params) (p as any)[k] = s.params[k];
-        }
-        this.controls.applyParamsUI(p);
-        this.params = { ...this.controls.params };
-
-        // Manual rim plane
-        const vec = (a: number[] | null | undefined) => (Array.isArray(a) && a.length === 3 ? new THREE.Vector3(a[0], a[1], a[2]) : null);
-        const mp = s.manualPlane ?? {};
-        this._confirmedManualNormal = vec(mp.confirmedNormal);
-        this._manualRimCenter = vec(mp.center);
-        this._polePoint = vec(mp.polePoint);
-        this._manualRimNormal = vec(mp.rawNormal);
-        this._normalFlipped = !!mp.normalFlipped;
-        this.controls.refreshRimSliders();
-
-        // Hole seeds
-        this.manualHoleSeeds = (s.holeSeeds ?? []).map((a: number[]) => new THREE.Vector3(a[0], a[1], a[2]));
-        this.controls.updateHoleSeedUI(false, this.manualHoleSeeds.length);
-
-        // Exclusion zone
-        this.excludedInnerMeshVertices = new Set<number>(s.excludedInnerVertices ?? []);
-        const sep = this.pipeline?.state.separation;
-        if (sep && this.excludedInnerMeshVertices.size > 0) this.meshViewer.setExcludedVerticesHighlight(this.excludedInnerMeshVertices, sep.inner);
-        else this.meshViewer.setExcludedVerticesHighlight(null, null);
-        this.controls.updateExclusionCount(this.excludedInnerMeshVertices.size);
-
-        // Manual non-worn selection
-        if (Array.isArray(s.manualNonWornPositions) && s.manualNonWornPositions.length >= 3) {
-          this.manualNonWornPositions = new Float32Array(s.manualNonWornPositions);
-          this.manualNonWornCount = this.manualNonWornPositions.length / 3;
-          this.meshViewer.setManualNonWornHighlight(this.manualNonWornPositions);
-        } else {
-          this.manualNonWornPositions = null;
-          this.manualNonWornCount = 0;
-        }
-        this.controls.updateManualSelectionCount(this.manualNonWornCount);
-
-        // Refresh the rim-plane preview with the restored plane
-        this._rimAnchorCache = null;
-        this.updateRimPreview();
-        this.scene.requestRender();
+        const warnings = this.applySettings(JSON.parse(await file.text()));
         this.status.setStatus(
           `Settings loaded from ${file.name}` + (warnings.length ? ` — WARNING: ${warnings.join(', ')}` : '') +
           '. Press Run Full Analysis to measure.');
@@ -1960,6 +1922,340 @@ export class App {
     };
     input.click();
   }
+
+  /** Apply a parsed settings object to the loaded STL; returns warnings (empty when all matches). */
+  private applySettings(s: any): string[] {
+    if (s?.format !== 'geowear-settings') throw new Error('Not a GeoWear settings file');
+    const warnings: string[] = [];
+    if (s.fileName && this.fileName && s.fileName !== this.fileName) warnings.push(`saved for "${s.fileName}"`);
+    if (s.vertexCount && this.currentMeshData && s.vertexCount !== this.currentMeshData.vertexCount) warnings.push('different vertex count');
+
+    // Parameters (unknown keys are ignored; missing keys keep their current value)
+    const p: Partial<AnalysisParams> = {};
+    for (const k of Object.keys(DEFAULT_PARAMS) as (keyof AnalysisParams)[]) {
+      if (s.params && k in s.params) (p as any)[k] = s.params[k];
+    }
+    this.controls.applyParamsUI(p);
+    this.params = { ...this.controls.params };
+
+    // Manual rim plane
+    const vec = (a: number[] | null | undefined) => (Array.isArray(a) && a.length === 3 ? new THREE.Vector3(a[0], a[1], a[2]) : null);
+    const mp = s.manualPlane ?? {};
+    this._confirmedManualNormal = vec(mp.confirmedNormal);
+    this._manualRimCenter = vec(mp.center);
+    this._polePoint = vec(mp.polePoint);
+    this._manualRimNormal = vec(mp.rawNormal);
+    this._normalFlipped = !!mp.normalFlipped;
+    this.controls.refreshRimSliders();
+
+    // Hole seeds
+    this.manualHoleSeeds = (s.holeSeeds ?? []).map((a: number[]) => new THREE.Vector3(a[0], a[1], a[2]));
+    this.controls.updateHoleSeedUI(false, this.manualHoleSeeds.length);
+
+    // Exclusion zone
+    this.excludedInnerMeshVertices = new Set<number>(s.excludedInnerVertices ?? []);
+    const sep = this.pipeline?.state.separation;
+    if (sep && this.excludedInnerMeshVertices.size > 0) this.meshViewer.setExcludedVerticesHighlight(this.excludedInnerMeshVertices, sep.inner);
+    else this.meshViewer.setExcludedVerticesHighlight(null, null);
+    this.controls.updateExclusionCount(this.excludedInnerMeshVertices.size);
+
+    // Manual non-worn selection
+    if (Array.isArray(s.manualNonWornPositions) && s.manualNonWornPositions.length >= 3) {
+      this.manualNonWornPositions = new Float32Array(s.manualNonWornPositions);
+      this.manualNonWornCount = this.manualNonWornPositions.length / 3;
+      this.meshViewer.setManualNonWornHighlight(this.manualNonWornPositions);
+    } else {
+      this.manualNonWornPositions = null;
+      this.manualNonWornCount = 0;
+    }
+    this.controls.updateManualSelectionCount(this.manualNonWornCount);
+
+    // Refresh the rim-plane preview with the restored plane
+    this._rimAnchorCache = null;
+    this.updateRimPreview();
+    this.scene.requestRender();
+    return warnings;
+  }
+
+  // ---- Wear map figure ----
+
+  /** Build the wear-map canvas for the current results (compare mode: the Two-Sphere Auto run). */
+  private buildWearMapCanvas(label: string): HTMLCanvasElement | null {
+    const run = this.currentResults;
+    if (!run || !this.pipeline) return null;
+    let res: AnalysisResults;
+    let state = this.pipeline.state;
+    if (run.analysisMode === 'compare-all-modes') {
+      const tsState = this.pipeline.compareModePipelineStates?.twoSphereAuto;
+      if (run.twoSphereAuto && tsState) { res = run.twoSphereAuto; state = tsState; }
+      else { res = run.sphereBestfit; state = this.pipeline.compareModePipelineStates?.sphereBestfit ?? state; }
+    } else res = run;
+    const mesh = state.workingMesh;
+    const plane = res.rimPlane;
+    if (!mesh || !plane) return null;
+    const ts = res.twoSphere;
+    const ref = ts ? { c: ts.originalCenter, R: ts.radius }
+      : res.zoneSpheres ? { c: res.zoneSpheres.unwornSphere.center, R: res.zoneSpheres.unwornSphere.radius }
+      : res.commercialSphere ? { c: res.commercialSphere.center, R: res.commercialSphere.commercialRadius } : null;
+    if (!ref) return null;
+    const dir = ts?.detected ? ts.displacedCenter.clone().sub(ts.originalCenter)
+      : res.zoneSpheres ? res.zoneSpheres.wornSphere.center.clone().sub(res.zoneSpheres.unwornSphere.center) : null;
+    const lines: string[] = [];
+    const modeLabel: Record<string, string> = { 'two-sphere-auto': 'Two-Sphere Auto', 'manual-geodesic': 'Manual Geodesic', 'sphere-bestfit': 'Sphere BestFit (legacy)', 'double-sphere-metrics': 'Double Sphere Metrics (legacy)' };
+    lines.push(`Mode: ${modeLabel[res.analysisMode] ?? res.analysisMode}`);
+    if (ts) {
+      if (ts.detected) {
+        lines.push(`Linear: ${(ts.linearWearMm * 1000).toFixed(0)}${ts.linearWearSdMm != null ? ` ± ${(ts.linearWearSdMm * 1000).toFixed(0)}` : ''} μm`);
+        if (ts.linearCorrectedMm != null) lines.push(`Linear (radius-corrected): ${(ts.linearCorrectedMm * 1000).toFixed(0)} μm`);
+        if (ts.directionAngleDeg != null) lines.push(`Direction: ${ts.directionAngleDeg.toFixed(0)}° from the cup axis`);
+      } else {
+        lines.push(`Linear: not detected (< ${ts.detectionLimitUm != null ? ts.detectionLimitUm.toFixed(0) : '—'} μm)`);
+      }
+    } else if (dir) {
+      lines.push(`Linear: ${(dir.length() * 1000).toFixed(0)} μm`);
+    }
+    const wv = res.wearVolumeResult;
+    if (wv) {
+      lines.push(`Volume: ${wv.wearVolume.toFixed(0)}${ts?.volumeSdMm3 != null ? ` ± ${ts.volumeSdMm3.toFixed(0)}` : ''} mm³`);
+      if (wv.measuredRadius) lines.push(`Volume (measured R): ${wv.measuredRadius.wearVolume.toFixed(0)}${wv.measuredRadius.wearVolumeSdMm3 != null ? ` ± ${wv.measuredRadius.wearVolumeSdMm3.toFixed(0)}` : ''} mm³`);
+    }
+    lines.push(`Sphere R: ${ref.R.toFixed(1)} mm${wv?.measuredRadius ? ` (measured ${wv.measuredRadius.radius.toFixed(3)})` : ''}`);
+    if (res.sphericity) lines.push(`Sphericity: ${res.sphericity.sphericityUm.toFixed(0)} μm`);
+    if (this.params.yearsInVivo > 0) lines.push(`Time in vivo: ${this.params.yearsInVivo} years`);
+    return renderWearMap({
+      mesh,
+      center: [ref.c.x, ref.c.y, ref.c.z],
+      radius: ref.R,
+      poleAxis: [plane.normal.x, plane.normal.y, plane.normal.z],
+      penetrationDir: dir && dir.length() > 1e-9 ? [dir.x, dir.y, dir.z] : null,
+      title: label,
+      lines,
+      noiseUm: ts?.noiseSigmaUm,
+    });
+  }
+
+  private async exportWearMap(): Promise<void> {
+    const cv = this.buildWearMapCanvas(this.fileName);
+    if (!cv) { this.status.setStatus('Run an analysis first (Two-Sphere Auto, Manual Geodesic or Sphere BestFit)'); return; }
+    const blob: Blob | null = await new Promise(res => cv.toBlob(b => res(b), 'image/png'));
+    if (!blob) { this.status.setStatus('Could not create the image'); return; }
+    const name = `${this.fileName}_wear-map.png`;
+    if ('showSaveFilePicker' in window) {
+      try {
+        const h: FileSystemFileHandle = await (window as any).showSaveFilePicker({ suggestedName: name, types: [{ description: 'PNG image', accept: { 'image/png': ['.png'] } }] });
+        const w = await h.createWritable(); await w.write(blob); await w.close();
+        this.status.setStatus(`Wear map saved: ${h.name}`);
+        return;
+      } catch (e) {
+        if ((e as Error)?.name === 'AbortError') return;
+      }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    this.status.setStatus(`Wear map downloaded: ${name}`);
+  }
+
+  // ---- Batch analysis ----
+
+  /** True (and a status message) while a batch is running: manual actions would change its state. */
+  private batchGuard(): boolean {
+    if (this.batchRunning) this.status.setStatus('A batch analysis is running — wait until it finishes');
+    return this.batchRunning;
+  }
+
+  /**
+   * Analyse many liners in one go. Each STL is paired with the settings file(s) saved for it with
+   * "Save Measurement Settings" (matched by the STL name stored inside the file). Several settings
+   * files for one STL (e.g. RV-H027_rep1 / _rep2 / _rep3) give one row each, named after the
+   * settings file, so repetitions do not overwrite each other. With the File System Access API
+   * (Chrome / Edge) the Excel file is rewritten after every piece, so an interruption loses nothing;
+   * other browsers download the workbook once at the end.
+   */
+  private async runBatch(): Promise<void> {
+    if (this.isRunning || this.batchRunning) return;
+    if (!(window as any).XLSX) { this.status.setStatus('SheetJS (Excel library) not available — cannot run a batch'); return; }
+
+    // 1) Collect the files: a folder (Chrome / Edge) or a multi-file selection
+    let files: File[] = [];
+    let dirHandle: any = null;
+    if ('showDirectoryPicker' in window) {
+      try {
+        dirHandle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+      } catch (e) {
+        if ((e as Error)?.name === 'AbortError') return;
+        dirHandle = null;   // API present but refused: fall back to a file selection below
+      }
+      if (dirHandle) {
+        try {
+          for await (const [name, h] of dirHandle.entries()) {
+            if (h.kind === 'file' && /\.(stl|json)$/i.test(name)) files.push(await h.getFile());
+          }
+        } catch (e) {
+          files = [];
+          await this.saveDialog.showInfo('Análisis por lotes', `No se pudo leer la carpeta: ${(e as Error).message}`);
+          return;
+        }
+      }
+    }
+    if (!dirHandle) {
+      files = await new Promise<File[]>(resolve => {
+        const input = document.createElement('input');
+        input.type = 'file'; input.multiple = true; input.accept = '.stl,.json';
+        input.onchange = () => resolve(Array.from(input.files ?? []));
+        (input as any).oncancel = () => resolve([]);
+        input.click();
+      });
+    }
+    if (files.length === 0) return;
+
+    // 2) Pair settings files with STLs
+    const base = (n: string) => n.replace(/\.stl$/i, '');
+    const stls = new Map<string, File>();
+    for (const f of files) if (/\.stl$/i.test(f.name)) stls.set(base(f.name).toLowerCase(), f);
+    const jobs: { stl: File; settings: any; label: string; source: string }[] = [];
+    const problems: string[] = [];
+    const used = new Set<string>();
+    for (const f of files.filter(x => /\.json$/i.test(x.name)).sort((a, b) => a.name.localeCompare(b.name))) {
+      let s: any;
+      try { s = JSON.parse(await f.text()); } catch { problems.push(`${f.name}: no es un JSON válido`); continue; }
+      if (s?.format !== 'geowear-settings') { problems.push(`${f.name}: no es un archivo de ajustes de GeoWear`); continue; }
+      const label = f.name.replace(/\.json$/i, '').replace(/_geowear-settings/i, '').trim();
+      let stl: File | undefined;
+      if (s.fileName) {
+        stl = stls.get(String(s.fileName).toLowerCase());
+        if (!stl) { problems.push(`${f.name}: no está el STL «${s.fileName}» guardado en el archivo`); continue; }
+      } else {   // old files without the STL name: longest STL name that the settings file name starts with
+        let bestLen = 0;
+        for (const [k, v] of stls) if (label.toLowerCase().startsWith(k) && k.length > bestLen) { stl = v; bestLen = k.length; }
+        if (!stl) { problems.push(`${f.name}: no se encuentra su STL`); continue; }
+      }
+      used.add(base(stl.name).toLowerCase());
+      jobs.push({ stl, settings: s, label, source: f.name });
+    }
+    for (const [k, f] of stls) if (!used.has(k)) problems.push(`${f.name}: sin archivo de ajustes — se omite`);
+    if (jobs.length === 0) {
+      await this.saveDialog.showInfo('Análisis por lotes', `No hay parejas STL + ajustes.\n\n${problems.join('\n')}`);
+      return;
+    }
+
+    // 3) Destination workbook (the modal click gives the pickers their user activation)
+    let handle: FileSystemFileHandle | null = null;
+    let wb: any = null;
+    const where = await this.saveDialog.askCreateOrAppend();
+    if (where === 'cancel') return;
+    try {
+      if (canWriteLocalFiles()) {
+        if (where === 'create') handle = await this.saveDialog.askSaveFilePicker('GeoWear_lote');
+        else handle = (await this.saveDialog.askPickExistingFile())?.handle ?? null;
+        if (!handle) return;
+        const f = await handle.getFile();
+        if (f.size > 0) wb = parseWorkbook(await f.arrayBuffer());   // a parse error aborts: never overwrite an unreadable file
+      } else if (where === 'append') {
+        const picked = await this.saveDialog.askPickExistingFile();
+        if (!picked) return;
+        wb = parseWorkbook(await picked.file.arrayBuffer());
+      }
+    } catch (e) {
+      await this.saveDialog.showInfo('Análisis por lotes', `No se pudo leer el Excel elegido (${(e as Error).message}). No se ha modificado nada.`);
+      return;
+    }
+    const outName = handle?.name ?? 'GeoWear_lote.xlsx';
+
+    // 4) Confirm (lists the pairs, warnings and rows that will be replaced)
+    const replaced = wb ? jobs.filter(j => prosthesisExistsInWorkbook(wb, j.label)).map(j => j.label) : [];
+    const summary = `${jobs.length} medición(es) → ${outName}\n` + jobs.map(j => `• ${j.label}  ←  ${j.stl.name}`).join('\n') +
+      (replaced.length ? `\n\nYa existen en el Excel y se sustituirán (las columnas añadidas a mano se conservan):\n${replaced.map(r => `• ${r}`).join('\n')}` : '') +
+      (problems.length ? `\n\nAvisos:\n${problems.map(p => `• ${p}`).join('\n')}` : '') +
+      (canWriteLocalFiles() ? '' : '\n\nEste navegador no puede modificar archivos: el Excel se descargará al terminar.');
+    const start = await this.saveDialog.askBatchStart(summary, !!dirHandle);
+    if (start === 'cancel') return;
+    const saveMaps = start === 'run-maps' && !!dirHandle;
+    // Ask for write permission now, while the click still counts as a user gesture (an append handle
+    // from showOpenFilePicker is read-only), so the unattended batch never stops on a prompt.
+    if (handle && typeof (handle as any).requestPermission === 'function') {
+      try {
+        if ((await (handle as any).requestPermission({ mode: 'readwrite' })) !== 'granted') {
+          await this.saveDialog.showInfo('Análisis por lotes', 'Sin permiso para escribir en el Excel. No se ha analizado nada.');
+          return;
+        }
+      } catch { /* the write itself will ask again */ }
+    }
+
+    // 5) Run
+    this.batchRunning = true;
+    const done: string[] = [], failed: string[] = [];
+    let stopped = '';
+    const t0 = performance.now();
+    try {
+      for (let i = 0; i < jobs.length; i++) {
+        const j = jobs[i];
+        const tag = `Lote ${i + 1}/${jobs.length} · ${j.label}`;
+        try {
+          this.status.setStatus(`${tag}: cargando ${j.stl.name}...`);
+          this.currentMeshData = null;          // so a failed load cannot fall back to the previous mesh
+          await this.loadFile(j.stl);
+          if (!this.currentMeshData) throw new Error('no se pudo cargar el STL');
+          const warns = this.applySettings(j.settings);
+          const bad = warns.filter(w => w.includes('vertex count'));
+          if (bad.length) throw new Error('los ajustes no corresponden a este STL (distinto número de vértices)');
+          this.status.setStatus(`${tag}: analizando...`);
+          this.lastAnalysisError = '';
+          const ok = await this.runAnalysis();
+          if (!ok || !this.currentResults) throw new Error(this.lastAnalysisError || 'el análisis falló');
+          const rows = extractRows(j.label, this.currentResults, this.params);
+          const next = wb ?? createWorkbook([]);
+          mergeWorkbook(next, j.label, rows);
+          if (handle) {
+            const written = await this.writeBatchWorkbook(next, handle);
+            if (!written) { stopped = 'cancelado al no poder escribir el Excel'; wb = next; break; }
+          }
+          wb = next;
+          if (saveMaps && dirHandle) {
+            try {
+              const cv = this.buildWearMapCanvas(j.label);
+              const blob: Blob | null = cv ? await new Promise(res => cv.toBlob(b => res(b), 'image/png')) : null;
+              if (blob) {
+                const fh = await dirHandle.getFileHandle(`${j.label}_wear-map.png`, { create: true });
+                const w = await fh.createWritable(); await w.write(blob); await w.close();
+              }
+            } catch (e) {
+              problems.push(`${j.label}: mapa no guardado (${(e as Error).message})`);
+            }
+          }
+          done.push(j.label);
+        } catch (e) {
+          failed.push(`${j.label}: ${(e as Error).message}`);
+        }
+      }
+    } finally {
+      this.batchRunning = false;
+    }
+    if (!handle && wb) downloadWorkbook(wb, outName);
+    const mins = ((performance.now() - t0) / 60000).toFixed(1);
+    this.status.setStatus(`Batch finished: ${done.length} ok, ${failed.length} failed (${mins} min)`);
+    await this.saveDialog.showInfo('Análisis por lotes terminado',
+      `${done.length} de ${jobs.length} mediciones analizadas en ${mins} min.\nResultados en: ${outName}` +
+      (stopped ? `\n\nLote detenido: ${stopped}.` : '') +
+      (saveMaps ? '\nMapas de desgaste guardados en la carpeta seleccionada.' : '') +
+      (failed.length ? `\n\nCon error (sin fila en el Excel):\n${failed.map(f => `• ${f}`).join('\n')}` : ''));
+  }
+
+  /** Write the batch workbook in place; on failure (file open in Excel…) ask to retry.
+   *  Returns false when the user cancels (the batch then stops). */
+  private async writeBatchWorkbook(wb: any, handle: FileSystemFileHandle): Promise<boolean> {
+    for (;;) {
+      try { await writeWorkbookToHandle(wb, handle); return true; }
+      catch (e: any) {
+        const choice = await this.saveDialog.askWriteFailed(handle.name, String(e?.message ?? e));
+        if (choice === 'retry') continue;
+        if (choice === 'download') { downloadWorkbook(wb, handle.name); return true; }
+        return false;
+      }
+    }
+  }
+
 
   private exportCSV(): void {
     const exportable = this.getExportableResults();

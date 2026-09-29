@@ -81,6 +81,8 @@ export interface TwoSphereFitOutput extends TwoSphereResult {
   replicates: TwoSphereReplicate[];
   /** RMS of the block-mean residuals (low-frequency non-sphericity), mm; null when not computed */
   lowFreqRmsMm: number | null;
+  /** RMS of block means about the free-radius sphere (mm), always computed */
+  formRmsFreeMm: number;
   /** Vertices supporting the ORIGINAL sphere (flat xyz): clearly outside the displaced sphere when
    *  wear was detected, all analysed vertices otherwise. Used for the measured-radius volume. */
   originalSupport: Float32Array;
@@ -207,6 +209,36 @@ export function fitTwoSphereUnion(
   }
   costFree /= n;
 
+  // Smooth form error of the surface about the free-radius sphere (RMS of 12 azimuth × 3 depth block
+  // means): uneven paint / machining form error. Computed whether or not wear is detected; it sets the
+  // detection limit together with the noise σ (see detectionLimitUm in WearAnalysis).
+  let formRmsFreeMm = 0;
+  {
+    const ref0 = Math.abs(nrm[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const d0 = ref0[0] * nrm[0] + ref0[1] * nrm[1] + ref0[2] * nrm[2];
+    let f1 = [ref0[0] - d0 * nrm[0], ref0[1] - d0 * nrm[1], ref0[2] - d0 * nrm[2]];
+    const lf1 = Math.hypot(f1[0], f1[1], f1[2]); f1 = f1.map(v => v / lf1);
+    const f2 = [nrm[1] * f1[2] - nrm[2] * f1[1], nrm[2] * f1[0] - nrm[0] * f1[2], nrm[0] * f1[1] - nrm[1] * f1[0]];
+    let hTop = 0;
+    const hs = new Float64Array(n);
+    for (let j = 0; j < n; j++) {
+      hs[j] = (A[j * 3] - planePoint.x) * nrm[0] + (A[j * 3 + 1] - planePoint.y) * nrm[1] + (A[j * 3 + 2] - planePoint.z) * nrm[2];
+      if (hs[j] > hTop) hTop = hs[j];
+    }
+    const sum = new Float64Array(36), cnt = new Float64Array(36);
+    const fc = [free.center.x, free.center.y, free.center.z];
+    for (let j = 0; j < n; j++) {
+      const x = A[j * 3] - fc[0], y = A[j * 3 + 1] - fc[1], z = A[j * 3 + 2] - fc[2];
+      let az = Math.atan2(x * f2[0] + y * f2[1] + z * f2[2], x * f1[0] + y * f1[1] + z * f1[2]);
+      if (az < 0) az += 2 * Math.PI;
+      const b = Math.min(11, Math.floor(az / (2 * Math.PI) * 12)) * 3 + Math.min(2, Math.max(0, Math.floor(hs[j] / Math.max(hTop, 1e-9) * 3)));
+      sum[b] += Math.hypot(x, y, z) - free.radius; cnt[b]++;
+    }
+    let num = 0, den = 0;
+    for (let b = 0; b < 36; b++) if (cnt[b] >= 20) { const m = sum[b] / cnt[b]; num += cnt[b] * m * m; den += cnt[b]; }
+    formRmsFreeMm = den > 0 ? Math.sqrt(num / den) : 0;
+  }
+
   // --- 4. identify the original sphere (closer to the opening)
   const proj = (c: number[]) => c[0] * nrm[0] + c[1] * nrm[1] + c[2] * nrm[2];
   let cA = cP, cB = cQ;
@@ -331,6 +363,7 @@ export function fitTwoSphereUnion(
     referencePositions: ref,
     replicates,
     lowFreqRmsMm,
+    formRmsFreeMm,
     originalSupport: new Float32Array(sup),
   };
 }

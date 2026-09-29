@@ -38,6 +38,9 @@ const DIALOG_CSS = `
   margin: 0 0 20px;
   line-height: 1.55;
   color: #b0b0b0;
+  white-space: pre-line;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 .gw-dialog input[type="text"] {
   display: block;
@@ -365,6 +368,22 @@ export class SaveDialog {
    * Inform the user that the prosthesis name already exists and ask whether
    * to overwrite its data or skip saving.
    */
+  /** Plain information dialog (OK only). */
+  async showInfo(title: string, message: string): Promise<void> {
+    await showModal(title, message, [{ label: 'OK', value: 'ok', style: 'primary' }]);
+  }
+
+  /** Batch analysis: confirm the list of pairs found and whether to save a wear map per piece. */
+  async askBatchStart(summary: string, canSaveMaps: boolean): Promise<'run' | 'run-maps' | 'cancel'> {
+    const buttons: { label: string; value: string; style: 'primary' | 'secondary' | 'danger' }[] = [
+      { label: 'Analizar', value: 'run', style: 'primary' },
+    ];
+    if (canSaveMaps) buttons.push({ label: 'Analizar y guardar mapas PNG', value: 'run-maps', style: 'secondary' });
+    buttons.push({ label: 'Cancelar', value: 'cancel', style: 'danger' });
+    const { choice } = await showModal('Análisis por lotes', summary, buttons);
+    return choice as 'run' | 'run-maps' | 'cancel';
+  }
+
   async askOverwriteOrSkip(prosthesisName: string): Promise<'overwrite' | 'skip'> {
     const { choice } = await showModal(
       'Prótesis ya existe',

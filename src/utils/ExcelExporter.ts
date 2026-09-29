@@ -46,6 +46,13 @@ const HEADERS = [
   'Incertidumbre de adquisición, lineal (μm)',
   'Incertidumbre de adquisición, volumétrica (mm³)',
   'Esfericidad (μm)',
+  'Límite de detección (μm)',
+  'Desgaste lineal corregido por exceso de radio (μm)',
+  'Incertidumbre lineal corregido, DE (μm)',
+  'Incertidumbre volumen con radio medido, DE (mm³)',
+  'Área desgastada (mm²)',
+  'Área desgastada (%)',
+  'Agujeros abiertos: volumen que falta (mm³)',
 ] as const;
 
 const MODE_LABELS: Record<string, string> = {
@@ -92,6 +99,13 @@ interface WearValues {
   linearAcqUm: number | '';
   volumeAcqMm3: number | '';
   sphericityUm: number | '';
+  lodUm: number | '';
+  linCorrUm: number | '';
+  linCorrSdUm: number | '';
+  volMeasSdMm3: number | '';
+  wornAreaMm2: number | '';
+  wornAreaPct: number | '';
+  holesMissingMm3: number | '';
 }
 
 function extractWearValues(result: AnalysisResults): WearValues {
@@ -130,7 +144,9 @@ function extractWearValues(result: AnalysisResults): WearValues {
   const ts = result.twoSphere;
   const directionDeg = ts?.directionAngleDeg != null ? round2(ts.directionAngleDeg) : '';
   const twoSphereStatus = !ts ? ''
-    : !ts.detected ? 'No detectado (bajo el límite de detección o cavidad agrandada uniformemente)'
+    : !ts.detected ? (ts.detectionLimitUm != null
+      ? `No detectado (< ${ts.detectionLimitUm.toFixed(0)} μm, límite de detección)`
+      : 'No detectado (bajo el límite de detección o cavidad agrandada uniformemente)')
     : ts.nearPole ? 'Detectado · penetración < 30º del eje (fiabilidad reducida)'
     : 'Detectado';
   const twoSphereStatusFull = ts?.inverted ? `${twoSphereStatus} · dirección invertida manualmente` : twoSphereStatus;
@@ -149,7 +165,15 @@ function extractWearValues(result: AnalysisResults): WearValues {
   const linearAcqUm = ts?.linearSdAcquisitionMm != null ? round2(ts.linearSdAcquisitionMm * 1000) : '';
   const volumeAcqMm3 = ts?.volumeSdAcquisitionMm3 != null ? round2(ts.volumeSdAcquisitionMm3) : '';
   const sphericityUm = result.sphericity ? round2(result.sphericity.sphericityUm) : '';
-  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull, linearSdUm, volumeSdMm3, volumeMeasuredRadius, measuredRadius, alternativeVolume, outerShell, radiusUsed, linearAcqUm, volumeAcqMm3, sphericityUm };
+  const lodUm: number | '' = ts?.detectionLimitUm != null ? round2(ts.detectionLimitUm) : '';
+  const linCorrUm: number | '' = ts?.linearCorrectedMm != null ? round2(ts.linearCorrectedMm * 1000) : '';
+  const linCorrSdUm: number | '' = ts?.linearCorrectedSdMm != null ? round2(ts.linearCorrectedSdMm * 1000) : '';
+  const volMeasSdMm3: number | '' = mr?.wearVolumeSdMm3 != null ? round2(mr.wearVolumeSdMm3) : '';
+  const wornAreaMm2: number | '' = ts?.wornAreaMm2 != null && ts.detected ? round2(ts.wornAreaMm2) : '';
+  const wornAreaPct: number | '' = ts?.wornAreaPct != null && ts.detected ? round2(ts.wornAreaPct) : '';
+  const holes = result.wearVolumeResult?.unfilledHoles;
+  const holesMissingMm3: number | '' = holes ? round2(holes.missingVolumeMm3) : '';
+  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull, linearSdUm, volumeSdMm3, volumeMeasuredRadius, measuredRadius, alternativeVolume, outerShell, radiusUsed, linearAcqUm, volumeAcqMm3, sphericityUm, lodUm, linCorrUm, linCorrSdUm, volMeasSdMm3, wornAreaMm2, wornAreaPct, holesMissingMm3 };
 }
 
 type RowArray = (string | number)[];
@@ -192,6 +216,13 @@ function buildRowArray(
     wear.linearAcqUm,
     wear.volumeAcqMm3,
     wear.sphericityUm,
+    wear.lodUm,
+    wear.linCorrUm,
+    wear.linCorrSdUm,
+    wear.volMeasSdMm3,
+    wear.wornAreaMm2,
+    wear.wornAreaPct,
+    wear.holesMissingMm3,
   ];
 }
 
@@ -292,9 +323,24 @@ export function mergeWorkbook(
     }
   }
 
-  // Workbooks created by older versions have fewer columns: extend the header row.
-  const header = (aoa[0] ?? []) as (string | number | undefined)[];
-  for (let c = header.length; c < HEADERS.length; c++) header[c] = HEADERS[c];
+  // Workbooks created by older versions have fewer exported columns. If the header starts with the
+  // exported columns of an older version (k of them) and the user added columns after them, insert the
+  // new exported columns at position k in every row so the user's columns shift right instead of being
+  // overwritten; then complete the header.
+  const header = ((aoa[0] ?? []) as (string | number | undefined)[]);
+  let k = 0;
+  while (k < HEADERS.length && k < header.length && header[k] === HEADERS[k]) k++;
+  if (k >= 20 && k < HEADERS.length && header.length > k) {
+    const add = HEADERS.length - k;
+    for (let i = 0; i < aoa.length; i++) {
+      const row = (aoa[i] ?? []) as (string | number | undefined)[];
+      if (row.length > k) row.splice(k, 0, ...new Array(add).fill(''));
+      aoa[i] = row;
+    }
+    for (let c = k; c < HEADERS.length; c++) header[c] = HEADERS[c];
+  } else {
+    for (let c = header.length; c < HEADERS.length; c++) header[c] = HEADERS[c];
+  }
   aoa[0] = header;
 
   if (blockStart !== -1) {
