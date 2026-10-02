@@ -13,6 +13,9 @@
 // `edgeBandMm` along every mesh border (the trim cut near the rim entrance/chamfer and the
 // edges of scan holes) is left out, as in bearing metrology where the edges are excluded from
 // the evaluated surface. The raw point-wise figures are reported alongside for transparency.
+//
+// The same quantity is also given as a percentage, 100·(1 − P–V / R), where R is the
+// least-squares radius: 100 % is a perfect sphere and every 0.1 % of a 14 mm radius is 14 µm.
 // ============================================================
 
 import type { MeshData, SphericityResult } from '../types';
@@ -167,8 +170,10 @@ export function computeSphericity(mesh: MeshData, vertexLimit?: number, cellSize
   means.sort((a, b) => a - b);
   const cellRms = Math.sqrt(means.reduce((a, v) => a + v * v, 0) / means.length);
 
+  const pvMm = percentile(means, 0.995) - percentile(means, 0.005);
   return {
-    sphericityUm: (percentile(means, 0.995) - percentile(means, 0.005)) * 1000,
+    sphericityUm: pvMm * 1000,
+    sphericityPercent: 100 * (1 - pvMm / R),
     formRmsUm: cellRms * 1000,
     rawPeakToValleyUm: (dMax - dMin) * 1000,
     pointRmsUm: Math.sqrt(sumSq / n) * 1000,

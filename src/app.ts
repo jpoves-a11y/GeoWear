@@ -2020,7 +2020,7 @@ export class App {
       if (wv.measuredRadius) lines.push(`Volume (measured R): ${wv.measuredRadius.wearVolume.toFixed(0)}${wv.measuredRadius.wearVolumeSdMm3 != null ? ` ± ${wv.measuredRadius.wearVolumeSdMm3.toFixed(0)}` : ''} mm³`);
     }
     lines.push(`Sphere R: ${ref.R.toFixed(1)} mm${wv?.measuredRadius ? ` (measured ${wv.measuredRadius.radius.toFixed(3)})` : ''}`);
-    if (res.sphericity) lines.push(`Sphericity: ${res.sphericity.sphericityUm.toFixed(0)} μm`);
+    if (res.sphericity) lines.push(`Sphericity: ${res.sphericity.sphericityPercent.toFixed(2)} % (P–V ${res.sphericity.sphericityUm.toFixed(0)} μm)`);
     if (this.params.yearsInVivo > 0) lines.push(`Time in vivo: ${this.params.yearsInVivo} years`);
     return renderWearMap({
       mesh,

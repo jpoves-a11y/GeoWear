@@ -43,7 +43,7 @@ function niceMax(v: number): number {
 
 /** Draw the wear map on a new canvas (1500 × 1000 px) and return it. */
 export function renderWearMap(inp: WearMapInput): HTMLCanvasElement {
-  const W = 1500, H = 1000, cx = 500, cy = 520, RM = 420;
+  const W = 1500, H = 1000, cx = 500, cy = 545, RM = 410;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const g = cv.getContext('2d')!;
@@ -94,12 +94,25 @@ export function renderWearMap(inp: WearMapInput): HTMLCanvasElement {
     maxUm = niceMax(Math.max(50, p995));
   }
 
-  // Faces (small negative deviations are scanner noise on the unworn surface: drawn as 0)
+  // Faces (small negative deviations are scanner noise on the unworn surface: drawn as 0).
+  // Triangles added when scan holes were closed are long and thin (fans to the hole centre or across
+  // the hole): they carry no measured data, so faces with an edge much longer than the typical mesh
+  // edge are left blank instead of being painted as if they were surface.
   const negBand = 3 * Math.max(0, inp.noiseUm ?? 0);
+  const edge = (u: number, v: number) => Math.hypot(P[u * 3] - P[v * 3], P[u * 3 + 1] - P[v * 3 + 1], P[u * 3 + 2] - P[v * 3 + 2]);
+  const sample: number[] = [];
+  const fStep = Math.max(1, Math.floor(faceCount / 20000));
+  for (let f = 0; f < faceCount; f += fStep) {
+    const a = I[f * 3], b = I[f * 3 + 1], c = I[f * 3 + 2];
+    if (a < n && b < n && c < n) sample.push(Math.max(edge(a, b), edge(b, c), edge(c, a)));
+  }
+  sample.sort((x, y) => x - y);
+  const maxEdge = sample.length ? 5 * sample[Math.floor(sample.length / 2)] : Infinity;
   g.lineWidth = 0.6;
   for (let f = 0; f < faceCount; f++) {
     const a = I[f * 3], b = I[f * 3 + 1], c = I[f * 3 + 2];
     if (a >= n || b >= n || c >= n) continue;
+    if (Math.max(edge(a, b), edge(b, c), edge(c, a)) > maxEdge) continue;
     const v = (D[a] + D[b] + D[c]) / 3;
     let col: string;
     if (v < -negBand) col = 'rgb(214,214,214)';
@@ -130,7 +143,7 @@ export function renderWearMap(inp: WearMapInput): HTMLCanvasElement {
     g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx, cy - r); g.stroke();
     g.beginPath(); g.moveTo(cx, cy - r - 16); g.lineTo(cx - 10, cy - r + 4); g.lineTo(cx + 10, cy - r + 4); g.closePath(); g.fill();
     g.font = 'bold 18px sans-serif';
-    g.fillText(`penetration ${(ang * 180 / Math.PI).toFixed(0)}° from the axis`, cx + 14, cy - r + 2);
+    g.fillText(`penetration ${(ang * 180 / Math.PI).toFixed(0)}° from the axis`, cx + 14, Math.max(cy - r + 2, 128));
   }
 
   // Colour bar
@@ -151,6 +164,8 @@ export function renderWearMap(inp: WearMapInput): HTMLCanvasElement {
   g.fillStyle = 'rgb(214,214,214)'; g.fillRect(bx, by + bh + 20, bw, 20);
   g.strokeRect(bx, by + bh + 20, bw, 20);
   g.fillStyle = '#000'; g.fillText(negBand > 0 ? `< −${negBand.toFixed(0)} (inside the original sphere)` : '< 0 (inside the original sphere)', bx + bw + 10, by + bh + 36);
+  g.strokeRect(bx, by + bh + 48, bw, 20);
+  g.fillText('no data (scan holes)', bx + bw + 10, by + bh + 64);
 
   // Title and results
   g.fillStyle = '#000'; g.font = 'bold 30px sans-serif';
@@ -158,7 +173,7 @@ export function renderWearMap(inp: WearMapInput): HTMLCanvasElement {
   g.font = '17px sans-serif'; g.fillStyle = '#555';
   g.fillText('View from the cup opening · polar angle from the pole as radius · penetration direction up · depth relative to the original sphere', 40, 88);
   g.fillStyle = '#000'; g.font = '19px sans-serif';
-  let ty = 790;
+  let ty = 800;
   for (const line of inp.lines) { g.fillText(line, 1010, ty); ty += 28; if (ty > H - 20) break; }
   g.font = '15px sans-serif'; g.fillStyle = '#777';
   g.fillText(`GeoWear · ${new Date().toISOString().slice(0, 10)}`, 40, H - 20);

@@ -195,7 +195,10 @@ const cases: Case[] = [
       const s = m.raw.sphericity;
       if (!s) return ['sphericity missing'];
       // same surface measured in Two-Sphere Auto, Sphere BestFit and DSM: 411.5 µm
-      return s.sphericityUm > 380 && s.sphericityUm < 520 ? [] : [`sphericity ${s.sphericityUm.toFixed(1)} µm outside 380–520 µm`];
+      const errs = s.sphericityUm > 380 && s.sphericityUm < 520 ? [] : [`sphericity ${s.sphericityUm.toFixed(1)} µm outside 380–520 µm`];
+      const pct = 100 * (1 - s.sphericityUm / 1000 / s.radiusMm);
+      if (!(Math.abs(s.sphericityPercent - pct) < 1e-9 && s.sphericityPercent > 96 && s.sphericityPercent < 98)) errs.push(`sphericity ${s.sphericityPercent.toFixed(3)} % inconsistent with P–V / R`);
+      return errs;
     },
   },
   {
