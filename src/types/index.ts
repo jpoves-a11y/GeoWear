@@ -367,6 +367,8 @@ export interface DoubleSphereMetricsResult {
 export interface SphericityResult {
   /** Radial peak-to-valley from the least-squares sphere, on ≈1 mm cell means (P0.5–P99.5), μm */
   sphericityUm: number;
+  /** Sphericity as a percentage: 100·(1 − P–V / R) with the least-squares radius R (100 % = perfect sphere) */
+  sphericityPercent: number;
   /** RMS of the cell-mean deviations (noise-filtered form error), μm */
   formRmsUm: number;
   /** Raw point-wise max − min and RMS (include scanner noise), μm */

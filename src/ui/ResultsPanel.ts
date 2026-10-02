@@ -134,14 +134,15 @@ export class ResultsPanel {
 
   private addSphericitySection(s: SphericityResult): void {
     const section = this.createSection('Sphericity');
-    this.addMetric(section, 'Sphericity (form deviation, peak-to-valley)', s.sphericityUm.toFixed(1), 'μm', undefined, true);
+    this.addMetric(section, 'Sphericity', s.sphericityPercent.toFixed(2), '%', undefined, true);
+    this.addMetric(section, 'Form deviation (peak-to-valley)', s.sphericityUm.toFixed(1), 'μm');
     this.addMetric(section, 'Form error RMS', s.formRmsUm.toFixed(1), 'μm');
     this.addMetric(section, 'Least-squares sphere radius', s.radiusMm.toFixed(3), 'mm');
     this.addMetric(section, 'Raw point-wise P–V / RMS (incl. scanner noise)',
       `${s.rawPeakToValleyUm.toFixed(0)} / ${s.pointRmsUm.toFixed(1)}`, 'μm');
     this.addMetric(section, 'Method',
       `radial deviation from the least-squares sphere of the trimmed bearing surface (excluding ${s.edgeBandMm} mm along its borders), averaged over ${s.cellSizeMm} mm cells ` +
-      `(${s.cellCount} cells, ${s.pointCount} points), P0.5–P99.5 — same value for every analysis mode`);
+      `(${s.cellCount} cells, ${s.pointCount} points), P0.5–P99.5; sphericity % = 100·(1 − P–V / R) — same value for every analysis mode`);
     this.container.appendChild(section);
   }
 
@@ -322,7 +323,7 @@ export class ResultsPanel {
     const volumetricWear = results.wearVolumeResult?.wearVolume ?? null;
     const maxWearDepth = results.wearPlane?.maxWearDepth ?? null;
     const wornPct = results.wearClassification?.wornPercent ?? null;
-    const sphericity = results.ellipsoidFit?.sphericityPercent ?? null;
+    const sphericity = results.sphericity?.sphericityPercent ?? results.ellipsoidFit?.sphericityPercent ?? null;
 
     const cell = (val: number | null, dec: number, unit: string): string => {
       if (val === null) return '<td class="col-val"><span class="cmp-na">—</span></td>';
@@ -460,6 +461,16 @@ export class ResultsPanel {
           value: wp.toFixed(1),
           unit: '%',
           cls: wp > 10 ? 'danger' : wp > 2 ? 'warning' : 'success',
+        });
+      }
+      // Sphericity (one value per sample, shown next to the wear figures)
+      if (results.sphericity) {
+        const sp = results.sphericity.sphericityPercent;
+        cards.push({
+          label: 'Sphericity',
+          value: sp.toFixed(2),
+          unit: `% · P–V ${results.sphericity.sphericityUm.toFixed(0)} μm`,
+          cls: sp >= 99.5 ? 'success' : sp >= 98 ? 'warning' : 'danger',
         });
       }
 

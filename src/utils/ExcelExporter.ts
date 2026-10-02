@@ -53,6 +53,7 @@ const HEADERS = [
   'Área desgastada (mm²)',
   'Área desgastada (%)',
   'Agujeros abiertos: volumen que falta (mm³)',
+  'Esfericidad (%)',
 ] as const;
 
 const MODE_LABELS: Record<string, string> = {
@@ -99,6 +100,7 @@ interface WearValues {
   linearAcqUm: number | '';
   volumeAcqMm3: number | '';
   sphericityUm: number | '';
+  sphericityPct: number | '';
   lodUm: number | '';
   linCorrUm: number | '';
   linCorrSdUm: number | '';
@@ -165,6 +167,7 @@ function extractWearValues(result: AnalysisResults): WearValues {
   const linearAcqUm = ts?.linearSdAcquisitionMm != null ? round2(ts.linearSdAcquisitionMm * 1000) : '';
   const volumeAcqMm3 = ts?.volumeSdAcquisitionMm3 != null ? round2(ts.volumeSdAcquisitionMm3) : '';
   const sphericityUm = result.sphericity ? round2(result.sphericity.sphericityUm) : '';
+  const sphericityPct = result.sphericity ? round4(result.sphericity.sphericityPercent) : '';
   const lodUm: number | '' = ts?.detectionLimitUm != null ? round2(ts.detectionLimitUm) : '';
   const linCorrUm: number | '' = ts?.linearCorrectedMm != null ? round2(ts.linearCorrectedMm * 1000) : '';
   const linCorrSdUm: number | '' = ts?.linearCorrectedSdMm != null ? round2(ts.linearCorrectedSdMm * 1000) : '';
@@ -173,7 +176,7 @@ function extractWearValues(result: AnalysisResults): WearValues {
   const wornAreaPct: number | '' = ts?.wornAreaPct != null && ts.detected ? round2(ts.wornAreaPct) : '';
   const holes = result.wearVolumeResult?.unfilledHoles;
   const holesMissingMm3: number | '' = holes ? round2(holes.missingVolumeMm3) : '';
-  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull, linearSdUm, volumeSdMm3, volumeMeasuredRadius, measuredRadius, alternativeVolume, outerShell, radiusUsed, linearAcqUm, volumeAcqMm3, sphericityUm, lodUm, linCorrUm, linCorrSdUm, volMeasSdMm3, wornAreaMm2, wornAreaPct, holesMissingMm3 };
+  return { linearWearUm, volumetricWearMm3, thresholdMode, noiseSigmaUm, thresholdOverRUm, seed, directionDeg, twoSphereStatus: twoSphereStatusFull, linearSdUm, volumeSdMm3, volumeMeasuredRadius, measuredRadius, alternativeVolume, outerShell, radiusUsed, linearAcqUm, volumeAcqMm3, sphericityUm, sphericityPct, lodUm, linCorrUm, linCorrSdUm, volMeasSdMm3, wornAreaMm2, wornAreaPct, holesMissingMm3 };
 }
 
 type RowArray = (string | number)[];
@@ -223,6 +226,7 @@ function buildRowArray(
     wear.wornAreaMm2,
     wear.wornAreaPct,
     wear.holesMissingMm3,
+    wear.sphericityPct,
   ];
 }
 
@@ -243,14 +247,15 @@ export function extractRows(
   if (result.analysisMode === 'compare-all-modes') {
     // One sphericity per sample: first row only
     const sph: number | '' = result.sphericity ? round2(result.sphericity.sphericityUm) : '';
-    const sbfWear = { ...extractWearValues(result.sphereBestfit), sphericityUm: sph };
-    const dsmWear = { ...extractWearValues(result.doubleSphereMetrics), sphericityUm: '' as const };
+    const sphPct: number | '' = result.sphericity ? round4(result.sphericity.sphericityPercent) : '';
+    const sbfWear = { ...extractWearValues(result.sphereBestfit), sphericityUm: sph, sphericityPct: sphPct };
+    const dsmWear = { ...extractWearValues(result.doubleSphereMetrics), sphericityUm: '' as const, sphericityPct: '' as const };
     const rows = [
       buildRowArray(prosthesisName, MODE_LABELS['sphere-bestfit'], sbfWear, params),
       buildRowArray('', MODE_LABELS['double-sphere-metrics'], dsmWear, params),
     ];
     if (result.twoSphereAuto) {
-      rows.push(buildRowArray('', MODE_LABELS['two-sphere-auto'], { ...extractWearValues(result.twoSphereAuto), sphericityUm: '' }, params));
+      rows.push(buildRowArray('', MODE_LABELS['two-sphere-auto'], { ...extractWearValues(result.twoSphereAuto), sphericityUm: '', sphericityPct: '' }, params));
     }
     return rows;
   }
