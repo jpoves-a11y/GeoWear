@@ -1,7 +1,11 @@
 // ============================================================
 // GeoWear — STL Parser Web Worker
-// Offloads STL parsing + vertex welding from the main thread
+// Reads the STL in chunks, welds vertices on the fly (typed-array hash, no string keys, no
+// triangle-soup copies) and, for very large scans, reduces the mesh WITHOUT smoothing so that
+// full-resolution files (hundreds of MB – > 1 GB) can be analysed in the browser.
 // ============================================================
+
+import { StlWelder, reduceMeshNoSmoothing, type WeldedMesh } from '../utils/MeshReduce';
 
 interface ParseResult {
   positions: Float32Array;
@@ -10,309 +14,129 @@ interface ParseResult {
   vertexCount: number;
   faceCount: number;
   scaleFactor: number;
-  displayPositions: Float32Array;
-  displayNormals: Float32Array;
+  /** Set when the mesh was reduced at load */
+  reduction: { originalFaces: number; originalVertices: number; cellMm: number } | null;
 }
 
-// ---------- Binary STL Parser ----------
+const CHUNK_TRIANGLES = 1_000_000; // 50 MB per read
 
-function parseBinarySTL(buffer: ArrayBuffer): {
-  positions: Float32Array;
-  normals: Float32Array;
-  faceCount: number;
-} {
-  const view = new DataView(buffer);
-  const triangleCount = view.getUint32(80, true);
+const progress = (message: string, p: number) => self.postMessage({ type: 'progress', message, progress: p });
 
-  const expectedSize = 84 + triangleCount * 50;
-  if (buffer.byteLength < expectedSize) {
-    throw new Error(
-      `Invalid binary STL: expected ${expectedSize} bytes, got ${buffer.byteLength}`
-    );
+async function readBytes(src: File | Blob | ArrayBuffer, start: number, end: number): Promise<ArrayBuffer> {
+  if (src instanceof ArrayBuffer) return src.slice(start, end);
+  return await src.slice(start, end).arrayBuffer();
+}
+
+function sizeOf(src: File | Blob | ArrayBuffer): number {
+  return src instanceof ArrayBuffer ? src.byteLength : src.size;
+}
+
+/** Binary unless the header starts with "solid" AND the size does not match the binary layout. */
+async function detectBinary(src: File | Blob | ArrayBuffer): Promise<{ binary: boolean; triangles: number }> {
+  const size = sizeOf(src);
+  if (size < 84) return { binary: false, triangles: 0 };
+  const head = await readBytes(src, 0, 84);
+  const dv = new DataView(head);
+  const count = dv.getUint32(80, true);
+  let text = '';
+  const u8 = new Uint8Array(head, 0, 80);
+  for (let i = 0; i < u8.length; i++) text += String.fromCharCode(u8[i]);
+  const looksAscii = text.trim().startsWith('solid');
+  const sizeMatches = Math.abs(size - (84 + count * 50)) < 10;
+  if (sizeMatches) return { binary: true, triangles: count };
+  if (looksAscii) return { binary: false, triangles: 0 };
+  // binary file with a wrong triangle count in the header: trust the file size
+  return { binary: true, triangles: Math.floor((size - 84) / 50) };
+}
+
+async function weldBinary(src: File | Blob | ArrayBuffer, triangles: number): Promise<WeldedMesh> {
+  const w = new StlWelder(triangles);
+  for (let done = 0; done < triangles; done += CHUNK_TRIANGLES) {
+    const k = Math.min(CHUNK_TRIANGLES, triangles - done);
+    const buf = await readBytes(src, 84 + done * 50, 84 + (done + k) * 50);
+    w.addBinaryChunk(buf, 0, k);
+    progress(`Reading STL… ${Math.round(((done + k) / triangles) * 100)} % (${((done + k) / 1e6).toFixed(1)} M triangles)`, 0.6 * (done + k) / triangles);
   }
+  return w.finish();
+}
 
-  const vertexCount = triangleCount * 3;
-  const positions = new Float32Array(vertexCount * 3);
-  const normals = new Float32Array(vertexCount * 3);
-
-  let offset = 84;
-  for (let t = 0; t < triangleCount; t++) {
-    const nx = view.getFloat32(offset, true);
-    offset += 4;
-    const ny = view.getFloat32(offset, true);
-    offset += 4;
-    const nz = view.getFloat32(offset, true);
-    offset += 4;
-
-    for (let v = 0; v < 3; v++) {
-      const vi = t * 3 + v;
-      positions[vi * 3] = view.getFloat32(offset, true);
-      offset += 4;
-      positions[vi * 3 + 1] = view.getFloat32(offset, true);
-      offset += 4;
-      positions[vi * 3 + 2] = view.getFloat32(offset, true);
-      offset += 4;
-      normals[vi * 3] = nx;
-      normals[vi * 3 + 1] = ny;
-      normals[vi * 3 + 2] = nz;
+async function weldAscii(src: File | Blob | ArrayBuffer): Promise<WeldedMesh> {
+  const size = sizeOf(src);
+  const w = new StlWelder(Math.max(1000, Math.round(size / 250)));
+  const dec = new TextDecoder();
+  const num = '([-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?)';
+  const facetRe = new RegExp(`facet\\s+normal\\s+${num}\\s+${num}\\s+${num}[\\s\\S]*?vertex\\s+${num}\\s+${num}\\s+${num}[\\s\\S]*?vertex\\s+${num}\\s+${num}\\s+${num}[\\s\\S]*?vertex\\s+${num}\\s+${num}\\s+${num}[\\s\\S]*?endfacet`, 'g');
+  const CH = 32 * 1024 * 1024;
+  let carry = '';
+  const c = new Float64Array(9);
+  for (let start = 0; start < size; start += CH) {
+    const end = Math.min(size, start + CH);
+    const text = carry + dec.decode(await readBytes(src, start, end), { stream: end < size });
+    let last = 0; let m: RegExpExecArray | null;
+    facetRe.lastIndex = 0;
+    while ((m = facetRe.exec(text)) !== null) {
+      for (let i = 0; i < 9; i++) c[i] = parseFloat(m[4 + i]);
+      w.addTriangle(c, parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]));
+      last = facetRe.lastIndex;
     }
-
-    offset += 2; // attribute byte count
+    carry = text.slice(last);
+    progress(`Reading STL (ASCII)… ${Math.round((end / size) * 100)} %`, 0.6 * end / size);
   }
-
-  return { positions, normals, faceCount: triangleCount };
+  return w.finish();
 }
 
-// ---------- ASCII STL detection ----------
-
-function isASCII(buffer: ArrayBuffer): boolean {
-  const view = new Uint8Array(buffer, 0, Math.min(80, buffer.byteLength));
-  let header = '';
-  for (let i = 0; i < view.length; i++) header += String.fromCharCode(view[i]);
-  header = header.trim();
-  if (!header.startsWith('solid')) return false;
-
-  // Binary STL can also start with "solid" in the header.
-  // Verify by checking expected binary size.
-  if (buffer.byteLength > 84) {
-    const dv = new DataView(buffer);
-    const triCount = dv.getUint32(80, true);
-    const expectedBinarySize = 84 + triCount * 50;
-    if (Math.abs(buffer.byteLength - expectedBinarySize) < 10) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-// ---------- ASCII STL Parser ----------
-
-function parseASCIISTL(buffer: ArrayBuffer): {
-  positions: Float32Array;
-  normals: Float32Array;
-  faceCount: number;
-} {
-  const text = new TextDecoder().decode(buffer);
-  const posArr: number[] = [];
-  const normArr: number[] = [];
-
-  const vertexRe = /vertex\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)/g;
-  const normalRe = /facet\s+normal\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)/g;
-
-  const normalMatches: Array<{ nx: number; ny: number; nz: number }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = normalRe.exec(text)) !== null) {
-    normalMatches.push({
-      nx: parseFloat(m[1]),
-      ny: parseFloat(m[2]),
-      nz: parseFloat(m[3]),
-    });
-  }
-
-  let vertIdx = 0;
-  let faceIdx = 0;
-  while ((m = vertexRe.exec(text)) !== null) {
-    posArr.push(parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]));
-    const norm = normalMatches[faceIdx] || { nx: 0, ny: 0, nz: 0 };
-    normArr.push(norm.nx, norm.ny, norm.nz);
-    vertIdx++;
-    if (vertIdx % 3 === 0) faceIdx++;
-  }
-
-  return {
-    positions: new Float32Array(posArr),
-    normals: new Float32Array(normArr),
-    faceCount: posArr.length / 9,
-  };
-}
-
-// ---------- Vertex welding (spatial hashing) ----------
-
-function weldVertices(
-  positions: Float32Array,
-  normals: Float32Array,
-  tolerance: number = 1e-6
-): { positions: Float32Array; normals: Float32Array; indices: Uint32Array } {
-  const vertexCount = positions.length / 3;
-  const hashMap = new Map<string, number>();
-  const newPositions: number[] = [];
-  const newNormals: number[] = [];
-  const indices = new Uint32Array(vertexCount);
-  let uniqueCount = 0;
-  const factor = 1 / tolerance;
-
-  for (let i = 0; i < vertexCount; i++) {
-    const x = positions[i * 3];
-    const y = positions[i * 3 + 1];
-    const z = positions[i * 3 + 2];
-    const key = `${Math.round(x * factor)},${Math.round(y * factor)},${Math.round(z * factor)}`;
-    const existing = hashMap.get(key);
-    if (existing !== undefined) {
-      indices[i] = existing;
-      newNormals[existing * 3] += normals[i * 3];
-      newNormals[existing * 3 + 1] += normals[i * 3 + 1];
-      newNormals[existing * 3 + 2] += normals[i * 3 + 2];
-    } else {
-      hashMap.set(key, uniqueCount);
-      indices[i] = uniqueCount;
-      newPositions.push(x, y, z);
-      newNormals.push(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
-      uniqueCount++;
-    }
-  }
-
-  for (let i = 0; i < uniqueCount; i++) {
-    const nx = newNormals[i * 3];
-    const ny = newNormals[i * 3 + 1];
-    const nz = newNormals[i * 3 + 2];
-    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-    if (len > 1e-12) {
-      newNormals[i * 3] /= len;
-      newNormals[i * 3 + 1] /= len;
-      newNormals[i * 3 + 2] /= len;
-    }
-  }
-
-  return {
-    positions: new Float32Array(newPositions),
-    normals: new Float32Array(newNormals),
-    indices,
-  };
-}
-
-function buildTriangleIndices(weldedIndices: Uint32Array): Uint32Array {
-  const triCount = weldedIndices.length / 3;
-  const result = new Uint32Array(triCount * 3);
-  for (let i = 0; i < triCount; i++) {
-    result[i * 3] = weldedIndices[i * 3];
-    result[i * 3 + 1] = weldedIndices[i * 3 + 1];
-    result[i * 3 + 2] = weldedIndices[i * 3 + 2];
-  }
-  return result;
-}
-
-// ---------- Auto-detect unit scale ----------
-
-function detectScale(positions: Float32Array): number {
-  const n = positions.length / 3;
-  let minX = Infinity,
-    minY = Infinity,
-    minZ = Infinity;
-  let maxX = -Infinity,
-    maxY = -Infinity,
-    maxZ = -Infinity;
+function detectScale(P: Float32Array, n: number): number {
+  let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
   for (let i = 0; i < n; i++) {
-    const x = positions[i * 3],
-      y = positions[i * 3 + 1],
-      z = positions[i * 3 + 2];
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-    if (z < minZ) minZ = z;
-    if (z > maxZ) maxZ = z;
+    const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
+    if (x < mnx) mnx = x; if (x > mxx) mxx = x;
+    if (y < mny) mny = y; if (y > mxy) mxy = y;
+    if (z < mnz) mnz = z; if (z > mxz) mxz = z;
   }
-  const diag = Math.sqrt(
-    (maxX - minX) ** 2 + (maxY - minY) ** 2 + (maxZ - minZ) ** 2
-  );
-  if (diag > 5000) return 0.001;
-  if (diag < 0.1) return 1000;
+  const diag = Math.hypot(mxx - mnx, mxy - mny, mxz - mnz);
+  if (diag > 5000) return 0.001;   // μm → mm
+  if (diag < 0.1) return 1000;     // m → mm
   return 1;
 }
 
-// ---------- Worker message handler ----------
-
-self.onmessage = function (e: MessageEvent) {
-  const { type, buffer } = e.data;
-
-  if (type === 'parse') {
-    try {
-      self.postMessage({
-        type: 'progress',
-        message: 'Parsing STL...',
-        progress: 0,
-      });
-
-      let parsed;
-      if (isASCII(buffer)) {
-        parsed = parseASCIISTL(buffer);
-      } else {
-        parsed = parseBinarySTL(buffer);
-      }
-
-      if (parsed.positions.length === 0) {
-        throw new Error('STL file contains no vertices');
-      }
-      if (parsed.faceCount === 0) {
-        throw new Error('STL file contains no faces');
-      }
-
-      self.postMessage({
-        type: 'progress',
-        message: 'Detecting units...',
-        progress: 0.2,
-      });
-
-      const scaleFactor = detectScale(parsed.positions);
-      if (scaleFactor !== 1) {
-        for (let i = 0; i < parsed.positions.length; i++) {
-          parsed.positions[i] *= scaleFactor;
-        }
-      }
-
-      // Validate
-      for (let i = 0; i < Math.min(parsed.positions.length, 300); i++) {
-        if (!isFinite(parsed.positions[i])) {
-          throw new Error('STL contains invalid coordinate values');
-        }
-      }
-
-      // Keep a copy of the display-ready data (non-indexed, per-face normals)
-      const displayPositions = new Float32Array(parsed.positions);
-      const displayNormals = new Float32Array(parsed.normals);
-
-      self.postMessage({
-        type: 'progress',
-        message: 'Welding vertices...',
-        progress: 0.5,
-      });
-
-      const welded = weldVertices(parsed.positions, parsed.normals, 1e-6);
-      const indices = buildTriangleIndices(welded.indices);
-
-      self.postMessage({
-        type: 'progress',
-        message: 'Transfer to main thread...',
-        progress: 0.9,
-      });
-
-      const result: ParseResult = {
-        positions: welded.positions,
-        normals: welded.normals,
-        indices,
-        vertexCount: welded.positions.length / 3,
-        faceCount: indices.length / 3,
-        scaleFactor,
-        displayPositions,
-        displayNormals,
-      };
-
-      // Transfer ownership (zero-copy) of all typed arrays
-      self.postMessage(
-        { type: 'result', result },
-        {
-          transfer: [
-            result.positions.buffer,
-            result.normals.buffer,
-            result.indices.buffer,
-            displayPositions.buffer,
-            displayNormals.buffer,
-          ],
-        }
-      );
-    } catch (err) {
-      self.postMessage({ type: 'error', error: (err as Error).message });
+self.onmessage = async function (e: MessageEvent) {
+  const { type } = e.data;
+  if (type !== 'parse') return;
+  try {
+    const src: File | Blob | ArrayBuffer = e.data.file ?? e.data.buffer;
+    const maxFaces: number = Number(e.data.maxFaces) || 0;
+    progress('Parsing STL...', 0);
+    const kind = await detectBinary(src);
+    let mesh = kind.binary ? await weldBinary(src, kind.triangles) : await weldAscii(src);
+    if (mesh.faceCount === 0 || mesh.vertexCount === 0) throw new Error('STL file contains no faces');
+    for (let i = 0; i < Math.min(mesh.positions.length, 300); i++) {
+      if (!isFinite(mesh.positions[i])) throw new Error('STL contains invalid coordinate values');
     }
+
+    progress('Detecting units...', 0.65);
+    const scaleFactor = detectScale(mesh.positions, mesh.vertexCount);
+    if (scaleFactor !== 1) for (let i = 0; i < mesh.positions.length; i++) mesh.positions[i] *= scaleFactor;
+
+    let reduction: ParseResult['reduction'] = null;
+    if (maxFaces > 0 && mesh.faceCount > maxFaces) {
+      progress(`Reducing ${(mesh.faceCount / 1e6).toFixed(1)} M triangles without smoothing...`, 0.75);
+      const r = reduceMeshNoSmoothing(mesh, Math.round(0.8 * maxFaces));
+      reduction = { originalFaces: r.originalFaces, originalVertices: r.originalVertices, cellMm: r.cellMm };
+      mesh = r.mesh;
+    }
+
+    progress('Transfer to main thread...', 0.95);
+    const result: ParseResult = {
+      positions: mesh.positions,
+      normals: mesh.normals,
+      indices: mesh.indices,
+      vertexCount: mesh.vertexCount,
+      faceCount: mesh.faceCount,
+      scaleFactor,
+      reduction,
+    };
+    self.postMessage({ type: 'result', result }, { transfer: [result.positions.buffer, result.normals.buffer, result.indices.buffer] });
+  } catch (err) {
+    self.postMessage({ type: 'error', error: (err as Error).message });
   }
 };

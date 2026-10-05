@@ -78,6 +78,8 @@ export class App {
   private fileName: string = '';
   private isRunning = false;
   private stlWorker: Worker | null = null;
+  /** Set when the loaded STL was reduced at load (full-resolution scans) */
+  private meshReduction: { originalFaces: number; originalVertices: number; cellMm: number } | null = null;
 
   // Parameters (copy from defaults)
   private params: AnalysisParams = { ...DEFAULT_PARAMS };
@@ -296,7 +298,7 @@ export class App {
 
   private async runExcelExport(xlsxAvailable: boolean): Promise<void> {
     const prosthesisName = this.fileName;
-    const rows = extractRows(prosthesisName, this.currentResults!, this.params);
+    const rows = extractRows(prosthesisName, this.currentResults!, this.params, this.meshReductionNote());
 
     const action = await this.saveDialog.askCreateOrAppend();
     if (action === 'cancel') return;
@@ -387,20 +389,24 @@ export class App {
     }
   }
 
+  /** Text for the Excel row when the mesh was reduced at load ('' otherwise). */
+  private meshReductionNote(): string {
+    const r = this.meshReduction, m = this.currentMeshData;
+    if (!r || !m) return '';
+    return `${r.originalFaces} → ${m.faceCount} triángulos (celda ${r.cellMm.toFixed(3)} mm)`;
+  }
+
   private async loadFile(file: File): Promise<void> {
     this.showLoading('Loading STL...');
     this.status.setStatus(`Loading ${file.name}...`);
     this.fileName = file.name.replace(/\.stl$/i, '');
 
     try {
-      const buffer = await file.arrayBuffer();
-
-      // Yield to allow the UI to update
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-      // Parse and weld in a Web Worker to keep the UI responsive
+      // Parse and weld in a Web Worker (the file is read in chunks there, so very large
+      // scans never need to fit in memory as a whole); big meshes are reduced without smoothing.
       this.status.setStatus('Parsing STL geometry...');
-      const workerResult = await this.parseSTLInWorker(buffer);
+      const maxFaces = Math.max(0, Number(this.controls?.params?.maxLoadFaces ?? this.params.maxLoadFaces ?? 0) || 0);
+      const workerResult = await this.parseSTLInWorker(file, maxFaces);
 
       const meshData: MeshData = {
         positions: workerResult.positions,
@@ -414,7 +420,10 @@ export class App {
         throw new Error('STL file contains no vertices after welding');
       }
 
-      console.log(`Welded: ${workerResult.displayPositions.length / 3} → ${meshData.vertexCount} vertices, ${meshData.faceCount} faces`);
+      const red = workerResult.reduction;
+      console.log(red
+        ? `Reduced without smoothing: ${red.originalFaces} → ${meshData.faceCount} faces (cell ${red.cellMm.toFixed(3)} mm)`
+        : `Welded: ${meshData.vertexCount} vertices, ${meshData.faceCount} faces`);
 
       if (workerResult.scaleFactor !== 1) {
         this.status.setStatus(`Auto-scaled from ${workerResult.scaleFactor === 0.001 ? 'μm' : 'm'} to mm`);
@@ -423,6 +432,7 @@ export class App {
       // Clear all per-sample state before loading the new mesh
       this.clearSampleState();
       this.currentMeshData = meshData;
+      this.meshReduction = red;
 
       // Clear previous visualization
       this.clearVisualization();
@@ -430,10 +440,11 @@ export class App {
       // Yield before display
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      // Create display geometry from raw (non-welded) data
+      // Display geometry: indexed copy of the welded mesh (no triangle-soup duplicate)
       const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(workerResult.displayPositions, 3));
-      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(workerResult.displayNormals, 3));
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(meshData.positions), 3));
+      geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(meshData.normals), 3));
+      geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(meshData.indices), 1));
       geometry.computeBoundingBox();
       geometry.computeBoundingSphere();
 
@@ -460,8 +471,10 @@ export class App {
       // Update status
       const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
       this.status.setFileInfo(`${file.name} (${sizeMB} MB)`);
-      this.status.setMeshInfo(`${meshData.vertexCount.toLocaleString()} verts, ${meshData.faceCount.toLocaleString()} faces`);
-      this.status.setStatus(`Loaded ${file.name} — ${meshData.vertexCount.toLocaleString()} vertices, ${meshData.faceCount.toLocaleString()} faces`);
+      this.status.setMeshInfo(`${meshData.vertexCount.toLocaleString()} verts, ${meshData.faceCount.toLocaleString()} faces${red ? ` (reduced from ${red.originalFaces.toLocaleString()})` : ''}`);
+      this.status.setStatus(red
+        ? `Loaded ${file.name} — ${red.originalFaces.toLocaleString()} triangles reduced without smoothing to ${meshData.faceCount.toLocaleString()} (cell ${red.cellMm.toFixed(3)} mm)`
+        : `Loaded ${file.name} — ${meshData.vertexCount.toLocaleString()} vertices, ${meshData.faceCount.toLocaleString()} faces`);
 
       this.hideLoading();
     } catch (err) {
@@ -475,15 +488,14 @@ export class App {
    * Parse an STL ArrayBuffer in a Web Worker.
    * Returns welded mesh data + raw display geometry arrays.
    */
-  private parseSTLInWorker(buffer: ArrayBuffer): Promise<{
+  private parseSTLInWorker(file: File, maxFaces: number): Promise<{
     positions: Float32Array;
     normals: Float32Array;
     indices: Uint32Array;
     vertexCount: number;
     faceCount: number;
     scaleFactor: number;
-    displayPositions: Float32Array;
-    displayNormals: Float32Array;
+    reduction: { originalFaces: number; originalVertices: number; cellMm: number } | null;
   }> {
     return new Promise((resolve, reject) => {
       // Terminate previous worker if any
@@ -519,8 +531,8 @@ export class App {
         reject(new Error(err.message || 'Worker error'));
       };
 
-      // Transfer the buffer to the worker (zero-copy)
-      worker.postMessage({ type: 'parse', buffer }, [buffer]);
+      // The File itself is sent (structured clone of a handle, not of its bytes): the worker reads it in chunks
+      worker.postMessage({ type: 'parse', file, maxFaces });
     });
   }
 
@@ -2204,7 +2216,7 @@ export class App {
           this.lastAnalysisError = '';
           const ok = await this.runAnalysis();
           if (!ok || !this.currentResults) throw new Error(this.lastAnalysisError || 'el análisis falló');
-          const rows = extractRows(j.label, this.currentResults, this.params);
+          const rows = extractRows(j.label, this.currentResults, this.params, this.meshReductionNote());
           const next = wb ?? createWorkbook([]);
           mergeWorkbook(next, j.label, rows);
           if (handle) {
