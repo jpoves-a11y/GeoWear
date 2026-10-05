@@ -453,6 +453,12 @@ export class ControlPanel {
     yivCtrl.domElement.parentElement!.style.cssText +=
       'background: rgba(56,154,237,0.12); border-left: 3px solid #389aed; border-radius: 3px; padding-left: 4px;';
 
+    // Very large scans (full-resolution exports, > 2 M triangles) are reduced at load without
+    // smoothing: the reduced mesh keeps original measured points only (see utils/MeshReduce.ts).
+    folder.add(this.params, 'maxLoadFaces', 0, 20_000_000, 100_000)
+      .name('Max triangles at load (0 = keep all)')
+      .onChange(() => this.callbacks.onParamsChange(this.params));
+
     // --- Geometry sub-section ---
     const geoFolder = folder.addFolder('Geometry');
     geoFolder.add(this.params, 'geodesicCount', 36, 720, 1)

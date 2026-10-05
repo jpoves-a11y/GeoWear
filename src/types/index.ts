@@ -555,6 +555,7 @@ export interface AnalysisParams {
   showLinearWearVector: boolean;
   showOriginalMesh: boolean;
   yearsInVivo: number;         // 0 = unknown; if >0, wear rates (mm/year, mm³/year) are shown
+  maxLoadFaces: number;        // meshes with more triangles are reduced at load WITHOUT smoothing (0 = never)
   showExcludedVertices: boolean; // highlight excluded vertices in the viewer
   rimInclinationAngle: number;  // degrees: tilt the rim cut-plane away from the cup axis (0 = auto)
   rimInclinationAzimuth: number; // degrees: direction of tilt in the plane perpendicular to cup axis
@@ -609,6 +610,7 @@ export const DEFAULT_PARAMS: AnalysisParams = {
   showLinearWearVector: false,
   showOriginalMesh: true,
   yearsInVivo: 0,
+  maxLoadFaces: 2_000_000,
   showExcludedVertices: true,
   rimInclinationAngle: 0,
   rimInclinationAzimuth: 0,

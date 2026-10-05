@@ -54,6 +54,7 @@ const HEADERS = [
   'Área desgastada (%)',
   'Agujeros abiertos: volumen que falta (mm³)',
   'Esfericidad (%)',
+  'Malla reducida al cargar (sin suavizar)',
 ] as const;
 
 const MODE_LABELS: Record<string, string> = {
@@ -186,6 +187,7 @@ function buildRowArray(
   modeLabel: string,
   wear: WearValues,
   params: AnalysisParams,
+  meshNote: string = '',
 ): RowArray {
   const years = params.yearsInVivo ?? 0;
   const { linearWearUm, volumetricWearMm3 } = wear;
@@ -227,6 +229,7 @@ function buildRowArray(
     wear.wornAreaPct,
     wear.holesMissingMm3,
     wear.sphericityPct,
+    meshNote,
   ];
 }
 
@@ -243,6 +246,7 @@ export function extractRows(
   prosthesisName: string,
   result: AnalysisRunResult,
   params: AnalysisParams,
+  meshNote: string = '',
 ): RowArray[] {
   if (result.analysisMode === 'compare-all-modes') {
     // One sphericity per sample: first row only
@@ -251,18 +255,18 @@ export function extractRows(
     const sbfWear = { ...extractWearValues(result.sphereBestfit), sphericityUm: sph, sphericityPct: sphPct };
     const dsmWear = { ...extractWearValues(result.doubleSphereMetrics), sphericityUm: '' as const, sphericityPct: '' as const };
     const rows = [
-      buildRowArray(prosthesisName, MODE_LABELS['sphere-bestfit'], sbfWear, params),
-      buildRowArray('', MODE_LABELS['double-sphere-metrics'], dsmWear, params),
+      buildRowArray(prosthesisName, MODE_LABELS['sphere-bestfit'], sbfWear, params, meshNote),
+      buildRowArray('', MODE_LABELS['double-sphere-metrics'], dsmWear, params, meshNote),
     ];
     if (result.twoSphereAuto) {
-      rows.push(buildRowArray('', MODE_LABELS['two-sphere-auto'], { ...extractWearValues(result.twoSphereAuto), sphericityUm: '', sphericityPct: '' }, params));
+      rows.push(buildRowArray('', MODE_LABELS['two-sphere-auto'], { ...extractWearValues(result.twoSphereAuto), sphericityUm: '', sphericityPct: '' }, params, meshNote));
     }
     return rows;
   }
 
   const wear = extractWearValues(result as AnalysisResults);
   const label = MODE_LABELS[result.analysisMode] ?? result.analysisMode;
-  return [buildRowArray(prosthesisName, label, wear, params)];
+  return [buildRowArray(prosthesisName, label, wear, params, meshNote)];
 }
 
 /** Create a brand-new workbook with header row + the supplied data rows. */
