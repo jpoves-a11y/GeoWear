@@ -435,8 +435,15 @@ export class ResultsPanel {
           });
         }
       }
+      // Two-Sphere Auto without detected wear: the nominal-radius "volume" and the share of points
+      // outside the nominal sphere only reflect the cavity being larger than the head (machining
+      // clearance, paint), not wear — show them as not detected instead of as numbers.
+      const tsNotDetected = results.analysisMode === 'two-sphere-auto' && !!results.twoSphere && !results.twoSphere.detected;
+      if (tsNotDetected && results.wearVolumeResult) {
+        cards.push({ label: 'Volumetric Wear', value: '—', unit: 'mm³', cls: 'success', warn: 'no wear detected' });
+      }
       // Volumetric wear
-      if (results.wearVolumeResult) {
+      if (results.wearVolumeResult && !tsNotDetected) {
         const vw = results.wearVolumeResult.wearVolume;
         cards.push({
           label: 'Volumetric Wear',
@@ -453,8 +460,18 @@ export class ResultsPanel {
           });
         }
       }
-      // Worn %
-      if (results.wearClassification) {
+      // Worn %: in Two-Sphere Auto the worn area is the part of the surface on the displaced sphere
+      if (results.analysisMode === 'two-sphere-auto' && results.twoSphere) {
+        const ts = results.twoSphere;
+        const wp = ts.detected ? ts.wornAreaPct ?? null : null;
+        cards.push({
+          label: 'Worn Surface',
+          value: wp != null ? wp.toFixed(1) : '—',
+          unit: '%',
+          cls: wp == null ? 'success' : wp > 10 ? 'danger' : wp > 2 ? 'warning' : 'success',
+          warn: ts.detected ? undefined : 'no wear detected',
+        });
+      } else if (results.wearClassification) {
         const wp = results.wearClassification.wornPercent;
         cards.push({
           label: 'Worn Surface',

@@ -55,11 +55,36 @@ function interiorPositions(mesh: MeshData, nAll: number, band: number): Float32A
       edgeCount.set(k, (edgeCount.get(k) ?? 0) + 1);
     }
   }
-  const border = new Set<number>();
+  // Border edges, grouped into connected chains. Only real borders are kept (the trim cut and scan
+  // holes): chains shorter than MIN_BORDER_MM are tiny gaps left by mesh reduction or by isolated
+  // bad triangles, and treating them as borders would exclude most of the surface.
+  const MIN_BORDER_MM = 3;
+  const parent = new Map<number, number>();
+  const find = (x: number): number => {
+    let r = x;
+    while (parent.get(r)! !== r) r = parent.get(r)!;
+    while (parent.get(x)! !== r) { const n = parent.get(x)!; parent.set(x, r); x = n; }
+    return r;
+  };
+  const bEdges: number[] = [];
   for (const [k, c] of edgeCount) {
     if (c !== 1) continue;
-    border.add(Math.floor(k / V)); border.add(k % V);
+    const a = Math.floor(k / V), b = k % V;
+    if (!parent.has(a)) parent.set(a, a);
+    if (!parent.has(b)) parent.set(b, b);
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+    bEdges.push(a, b);
   }
+  const chainLen = new Map<number, number>();
+  for (let e = 0; e < bEdges.length; e += 2) {
+    const a = bEdges[e], b = bEdges[e + 1];
+    const L = Math.hypot(P[a * 3] - P[b * 3], P[a * 3 + 1] - P[b * 3 + 1], P[a * 3 + 2] - P[b * 3 + 2]);
+    const r = find(a);
+    chainLen.set(r, (chainLen.get(r) ?? 0) + L);
+  }
+  const border = new Set<number>();
+  for (const v of parent.keys()) if ((chainLen.get(find(v)) ?? 0) >= MIN_BORDER_MM) border.add(v);
   if (border.size === 0 || band <= 0) return P.slice(0, nAll * 3);
   // uniform grid hash of the border vertices (cell = band)
   const grid = new Map<string, number[]>();
