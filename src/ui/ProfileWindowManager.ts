@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — ProfileWindowManager
+// HipWear — ProfileWindowManager
 // Manages floating, minimizable profile windows
 // ============================================================
 

@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — HeatMapRenderer
+// HipWear — HeatMapRenderer
 // Vertex coloring for deviation heat map visualization
 // ============================================================
 

@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — GeodesicInteractionManager
+// HipWear — GeodesicInteractionManager
 // Mouse interaction for selecting geodesic sections
 // ============================================================
 

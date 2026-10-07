@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — MeshSmoother
+// HipWear — MeshSmoother
 // Laplacian smoothing for mesh data to reduce tessellation noise
 // while preserving the overall geometric shape.
 // ============================================================

@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — DeviationAnalyzer
+// HipWear — DeviationAnalyzer
 // Sphericity deviation analysis along geodesics
 // ============================================================
 

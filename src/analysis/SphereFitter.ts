@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — SphereFitter
+// HipWear — SphereFitter
 // Least-squares sphere fitting using algebraic method
 // ============================================================
 

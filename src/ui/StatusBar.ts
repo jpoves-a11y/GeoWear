@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — StatusBar
+// HipWear — StatusBar
 // Progress and status display management
 // ============================================================
 

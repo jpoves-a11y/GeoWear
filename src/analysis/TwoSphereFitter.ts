@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — Two-sphere union fit (automatic reference detection)
+// HipWear — Two-sphere union fit (automatic reference detection)
 // ============================================================
 //
 // Wear model: a rigid femoral head of radius R (the commercial radius) penetrates the

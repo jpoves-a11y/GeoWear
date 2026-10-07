@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — Sphericity (form deviation) of the articulating surface
+// HipWear — Sphericity (form deviation) of the articulating surface
 // ------------------------------------------------------------
 // Sphericity is reported as the radial peak-to-valley deviation from the least-squares
 // sphere (free radius, ISO "LS" reference) of the trimmed inner surface — i.e. how far the

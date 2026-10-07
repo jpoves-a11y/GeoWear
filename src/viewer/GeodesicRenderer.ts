@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — GeodesicRenderer
+// HipWear — GeodesicRenderer
 // 3D visualization of geodesic meridians on the mesh
 // Per-point irregularity coloring + markers at irregular peaks
 // ============================================================

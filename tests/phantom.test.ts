@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — phantom regression tests
+// HipWear — phantom regression tests
 // ------------------------------------------------------------
 // Synthetic liners with KNOWN femoral-head penetration are measured with the same
 // pipeline as the web app. Each case checks the measured linear / volumetric wear

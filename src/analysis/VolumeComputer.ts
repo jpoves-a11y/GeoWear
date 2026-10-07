@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — VolumeComputer
+// HipWear — VolumeComputer
 // Volumetric computation of defect regions (bumps and dips)
 // Computes volume between actual mesh surface and reference sphere
 // High-performance: all math is inline, no heap allocations in hot loop

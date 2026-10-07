@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — ProfileChart
+// HipWear — ProfileChart
 // 2D profile visualization of geodesic sections
 // Shows the actual geometric cross-section profile
 // ============================================================

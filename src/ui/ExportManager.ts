@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — ExportManager
+// HipWear — ExportManager
 // Export to PNG, CSV, colored STL, and PDF report
 // ============================================================
 
@@ -17,18 +17,18 @@ export class ExportManager {
 
   // ---- PNG Screenshot ----
 
-  exportPNG(fileName: string = 'geowear-screenshot'): void {
+  exportPNG(fileName: string = 'hipwear-screenshot'): void {
     const dataUrl = this.sceneManager.screenshot();
     this.downloadDataUrl(dataUrl, `${fileName}.png`);
   }
 
   // ---- CSV Export ----
 
-  exportCSV(results: AnalysisResults, fileName: string = 'geowear-data', yearsInVivo: number = 0): void {
+  exportCSV(results: AnalysisResults, fileName: string = 'hipwear-data', yearsInVivo: number = 0): void {
     const lines: string[] = [];
 
     // Summary header
-    lines.push('# GeoWear Analysis Results');
+    lines.push('# HipWear Analysis Results');
     lines.push(`# Date: ${new Date().toISOString()}`);
     lines.push('');
 
@@ -120,7 +120,7 @@ export class ExportManager {
   exportColoredSTL(
     meshData: MeshData,
     vertexDeviations: Float32Array,
-    fileName: string = 'geowear-colored'
+    fileName: string = 'hipwear-colored'
   ): void {
     // Write binary STL with Magics color extension
     const faceCount = meshData.faceCount;
@@ -131,7 +131,7 @@ export class ExportManager {
     const view = new DataView(buffer);
 
     // Header (80 bytes)
-    const header = 'GeoWear Colored STL Export - UHMWPE Wear Analysis';
+    const header = 'HipWear Colored STL Export - UHMWPE Wear Analysis';
     for (let i = 0; i < Math.min(header.length, 80); i++) {
       view.setUint8(i, header.charCodeAt(i));
     }
@@ -193,7 +193,7 @@ export class ExportManager {
 
   async exportPDF(
     results: AnalysisResults,
-    fileName: string = 'geowear-report',
+    fileName: string = 'hipwear-report',
     yearsInVivo: number = 0
   ): Promise<void> {
     const pdf = new jsPDF('p', 'mm', 'a4');
@@ -204,7 +204,7 @@ export class ExportManager {
     // Title
     pdf.setFontSize(20);
     pdf.setTextColor(0, 100, 180);
-    pdf.text('GeoWear Analysis Report', margin, y);
+    pdf.text('HipWear Analysis Report', margin, y);
     y += 10;
 
     pdf.setFontSize(10);
@@ -323,7 +323,7 @@ export class ExportManager {
     // Footer
     pdf.setFontSize(8);
     pdf.setTextColor(150, 150, 150);
-    pdf.text('GeoWear v1.0 — UHMWPE Acetabular Cup Wear Analyzer', margin, 290);
+    pdf.text('HipWear v1.0 — UHMWPE Acetabular Cup Wear Analyzer', margin, 290);
 
     pdf.save(`${fileName}.pdf`);
   }

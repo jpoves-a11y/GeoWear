@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — Wear map figure (PNG)
+// HipWear — Wear map figure (PNG)
 // ------------------------------------------------------------
 // Polar (azimuthal-equidistant) projection of the analysed inner surface seen from the
 // cup opening: the pole is the centre of the map and the polar angle from the pole is the
@@ -176,6 +176,6 @@ export function renderWearMap(inp: WearMapInput): HTMLCanvasElement {
   let ty = 800;
   for (const line of inp.lines) { g.fillText(line, 1010, ty); ty += 28; if (ty > H - 20) break; }
   g.font = '15px sans-serif'; g.fillStyle = '#777';
-  g.fillText(`GeoWear · ${new Date().toISOString().slice(0, 10)}`, 40, H - 20);
+  g.fillText(`HipWear · ${new Date().toISOString().slice(0, 10)}`, 40, H - 20);
   return cv;
 }

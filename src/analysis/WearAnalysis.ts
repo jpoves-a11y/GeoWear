@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — WearAnalysis Pipeline
+// HipWear — WearAnalysis Pipeline
 // Orchestrates the full analysis pipeline
 // ============================================================
 

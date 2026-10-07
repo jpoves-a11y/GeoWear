@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — Fast STL welding and reduction WITHOUT smoothing
+// HipWear — Fast STL welding and reduction WITHOUT smoothing
 // ------------------------------------------------------------
 // Full-resolution scans (hundreds of MB to > 1 GB, 10–20 million triangles) do not fit the
 // analysis in a browser tab. Two tools, both used by the STL worker:

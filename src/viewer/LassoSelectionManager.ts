@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — LassoSelectionManager
+// HipWear — LassoSelectionManager
 // Canvas-overlay polygon lasso for excluding anomalous vertices
 // from all analysis algorithms.
 //

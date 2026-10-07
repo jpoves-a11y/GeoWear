@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — Main Entry Point
+// HipWear — Main Entry Point
 // ============================================================
 
 import { App } from './app';
@@ -10,5 +10,6 @@ document.addEventListener('DOMContentLoaded', () => {
   app.init();
 
   // Expose for debugging
-  (window as any).__geowear = app;
+  (window as any).__hipwear = app;
+  (window as any).__geowear = app;   // old name, kept for existing scripts
 });

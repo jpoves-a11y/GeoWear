@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — AnomalyRegistry
+// HipWear — AnomalyRegistry
 // Clustering and classification of anomaly regions
 // ============================================================
 
