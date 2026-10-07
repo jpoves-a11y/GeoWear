@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — ExcelExporter
+// HipWear — ExcelExporter
 // Builds and mutates Excel (.xlsx) workbooks from analysis results.
 // Uses SheetJS loaded from CDN (window.XLSX) — no npm install required.
 // ============================================================
@@ -17,6 +17,49 @@ declare const XLSX: any;
 // ---------------------------------------------------------------------------
 
 const HEADERS = [
+  'Prosthesis name',
+  'Analysis mode',
+  'Linear wear (μm)',
+  'Volumetric wear (mm³)',
+  'Implantation time (years)',
+  'Linear wear rate (mm/y)',
+  'Volumetric wear rate (mm³/y)',
+  'Rim trim (%)',
+  'Rim inclination (º)',
+  'Rim azimuth (º)',
+  'Threshold rule',
+  'Noise σ (μm)',
+  'Threshold over R (μm)',
+  'DSM seed',
+  'Wear direction to the cup axis (º)',
+  'Two-sphere model',
+  'Linear uncertainty, SD (μm)',
+  'Volumetric uncertainty, SD (mm³)',
+  'Volumetric wear, measured radius (mm³)',
+  'Measured cavity radius (mm)',
+  'Volume with the opposite direction (mm³)',
+  'Outer-shell concentricity',
+  'Commercial radius used (mm)',
+  'Scan type',
+  'Paint thickness (μm)',
+  'Other uncertainties (± μm)',
+  'Acquisition uncertainty, linear (μm)',
+  'Acquisition uncertainty, volumetric (mm³)',
+  'Sphericity, P–V (μm)',
+  'Detection limit (μm)',
+  'Linear wear corrected for radius excess (μm)',
+  'Corrected linear uncertainty, SD (μm)',
+  'Measured-radius volume uncertainty, SD (mm³)',
+  'Worn area (mm²)',
+  'Worn area (%)',
+  'Open holes: missing volume (mm³)',
+  'Sphericity (%)',
+  'Mesh reduced at load (no smoothing)',
+] as const;
+
+/** Spanish headers written by earlier versions (same columns, same order). Workbooks that still have
+ *  them are recognised when appending, and their exported-column headers are switched to English. */
+const HEADERS_ES = [
   'Nombre de prótesis',
   'Analysis mode',
   'Desgaste lineal (μm)',
@@ -148,11 +191,11 @@ function extractWearValues(result: AnalysisResults): WearValues {
   const directionDeg = ts?.directionAngleDeg != null ? round2(ts.directionAngleDeg) : '';
   const twoSphereStatus = !ts ? ''
     : !ts.detected ? (ts.detectionLimitUm != null
-      ? `No detectado (< ${ts.detectionLimitUm.toFixed(0)} μm, límite de detección)`
-      : 'No detectado (bajo el límite de detección o cavidad agrandada uniformemente)')
-    : ts.nearPole ? 'Detectado · penetración < 30º del eje (fiabilidad reducida)'
-    : 'Detectado';
-  const twoSphereStatusFull = ts?.inverted ? `${twoSphereStatus} · dirección invertida manualmente` : twoSphereStatus;
+      ? `Not detected (< ${ts.detectionLimitUm.toFixed(0)} μm, detection limit)`
+      : 'Not detected (below the detection limit or uniformly enlarged cavity)')
+    : ts.nearPole ? 'Detected · penetration < 30º from the axis (reduced reliability)'
+    : 'Detected';
+  const twoSphereStatusFull = ts?.inverted ? `${twoSphereStatus} · direction inverted manually` : twoSphereStatus;
 
   const linearSdUm = ts?.linearWearSdMm != null ? round2(ts.linearWearSdMm * 1000) : '';
   const volumeSdMm3 = ts?.volumeSdMm3 != null ? round2(ts.volumeSdMm3) : '';
@@ -161,9 +204,9 @@ function extractWearValues(result: AnalysisResults): WearValues {
   const measuredRadius = mr ? round4(mr.radius) : '';
   const alternativeVolume = ts?.alternativeVolumeMm3 != null ? round2(ts.alternativeVolumeMm3) : '';
   const outerShell = !ts?.outerShell ? ''
-    : ts.outerShell.favours === 'current' ? 'Apoya la dirección elegida'
-    : ts.outerShell.favours === 'alternative' ? 'Apoya la dirección contraria'
-    : 'Indeterminada';
+    : ts.outerShell.favours === 'current' ? 'Supports the chosen direction'
+    : ts.outerShell.favours === 'alternative' ? 'Supports the opposite direction'
+    : 'Undetermined';
   const radiusUsed = result.commercialSphere?.commercialRadius ?? '';
   const linearAcqUm = ts?.linearSdAcquisitionMm != null ? round2(ts.linearSdAcquisitionMm * 1000) : '';
   const volumeAcqMm3 = ts?.volumeSdAcquisitionMm3 != null ? round2(ts.volumeSdAcquisitionMm3) : '';
@@ -216,7 +259,7 @@ function buildRowArray(
     wear.outerShell,
     wear.radiusUsed,
     SCAN_TYPE_LABELS[params.scanType ?? 'unspecified'],
-    params.scanType !== 'unspecified' ? (params.scanPainted ? params.paintThicknessUm : 'Sin pintura') : '',
+    params.scanType !== 'unspecified' ? (params.scanPainted ? params.paintThicknessUm : 'Not painted') : '',
     params.scanType !== 'unspecified' ? params.otherUncertaintyUm : '',
     wear.linearAcqUm,
     wear.volumeAcqMm3,
@@ -274,7 +317,7 @@ export function createWorkbook(rows: RowArray[]): any {
   const aoa: RowArray[] = [HEADERS as unknown as RowArray, ...rows];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'GeoWear');
+  XLSX.utils.book_append_sheet(wb, ws, 'HipWear');
   return wb;
 }
 
@@ -338,7 +381,9 @@ export function mergeWorkbook(
   // overwritten; then complete the header.
   const header = ((aoa[0] ?? []) as (string | number | undefined)[]);
   let k = 0;
-  while (k < HEADERS.length && k < header.length && header[k] === HEADERS[k]) k++;
+  const isExported = (c: number) => header[c] === HEADERS[c] || header[c] === HEADERS_ES[c];
+  while (k < HEADERS.length && k < header.length && isExported(k)) k++;
+  for (let c = 0; c < k; c++) header[c] = HEADERS[c];   // older Spanish headers → English
   if (k >= 20 && k < HEADERS.length && header.length > k) {
     const add = HEADERS.length - k;
     for (let i = 0; i < aoa.length; i++) {
@@ -391,7 +436,7 @@ export async function writeWorkbookToHandle(wb: any, handle: FileSystemFileHandl
     if (perm !== 'granted' && typeof h.requestPermission === 'function') {
       perm = await h.requestPermission({ mode: 'readwrite' });
     }
-    if (perm !== 'granted') throw new Error('Permiso de escritura denegado');
+    if (perm !== 'granted') throw new Error('Write permission denied');
   }
   const wbout: ArrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const writable = await handle.createWritable();

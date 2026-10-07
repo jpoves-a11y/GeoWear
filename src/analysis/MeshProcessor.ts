@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — MeshProcessor
+// HipWear — MeshProcessor
 // Inner/outer face detection, rim trimming, vertex welding
 // ============================================================
 

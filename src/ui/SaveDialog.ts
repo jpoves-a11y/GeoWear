@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — SaveDialog
+// HipWear — SaveDialog
 // Custom HTML/CSS modal dialogs for the Excel save flow.
 // All methods return Promises so callers can await them cleanly.
 // ============================================================
@@ -199,11 +199,11 @@ export class SaveDialog {
    */
   async askWantToSave(prosthesisName: string): Promise<boolean> {
     const { choice } = await showModal(
-      'Cambio de prótesis',
-      `Hay resultados de análisis para "${prosthesisName}". ¿Desea guardar los datos antes de cargar una nueva prótesis?`,
+      'Change of prosthesis',
+      `There are analysis results for "${prosthesisName}". Save them before loading a new prosthesis?`,
       [
-        { label: 'Guardar', value: 'yes', style: 'primary' },
-        { label: 'No guardar', value: 'no', style: 'secondary' },
+        { label: 'Save', value: 'yes', style: 'primary' },
+        { label: "Don't save", value: 'no', style: 'secondary' },
       ],
     );
     return choice === 'yes';
@@ -214,12 +214,12 @@ export class SaveDialog {
    */
   async askCreateOrAppend(): Promise<'create' | 'append' | 'cancel'> {
     const { choice } = await showModal(
-      'Guardar datos',
-      '¿Desea crear un archivo Excel nuevo o añadir los datos a un archivo existente?',
+      'Save data',
+      'Create a new Excel file or add the data to an existing one?',
       [
-        { label: 'Crear nuevo', value: 'create', style: 'primary' },
-        { label: 'Añadir a existente', value: 'append', style: 'secondary' },
-        { label: 'Cancelar', value: 'cancel', style: 'danger' },
+        { label: 'Create new', value: 'create', style: 'primary' },
+        { label: 'Add to existing', value: 'append', style: 'secondary' },
+        { label: 'Cancel', value: 'cancel', style: 'danger' },
       ],
     );
     return choice as 'create' | 'append' | 'cancel';
@@ -232,13 +232,13 @@ export class SaveDialog {
    */
   async askWriteFailed(fileName: string, reason: string): Promise<'retry' | 'download' | 'cancel'> {
     const { choice } = await showModal(
-      'No se pudo guardar en el archivo',
-      `No se ha podido escribir en "${fileName}". Si está abierto en Excel, ciérrelo y pulse "Reintentar". ` +
-      `El archivo no se ha modificado. (${reason})`,
+      'Could not save to the file',
+      `Could not write to "${fileName}". If it is open in Excel, close it and press "Retry". ` +
+      `The file has not been changed. (${reason})`,
       [
-        { label: 'Reintentar', value: 'retry', style: 'primary' },
-        { label: 'Descargar copia', value: 'download', style: 'secondary' },
-        { label: 'Cancelar', value: 'cancel', style: 'danger' },
+        { label: 'Retry', value: 'retry', style: 'primary' },
+        { label: 'Download a copy', value: 'download', style: 'secondary' },
+        { label: 'Cancel', value: 'cancel', style: 'danger' },
       ],
     );
     return choice as 'retry' | 'download' | 'cancel';
@@ -247,12 +247,12 @@ export class SaveDialog {
   /** Browser without File System Access API: the existing file cannot be modified in place. */
   async askDownloadInstead(fileName: string): Promise<boolean> {
     const { choice } = await showModal(
-      'Este navegador no puede modificar archivos locales',
-      `Firefox y Safari no permiten que una página web modifique "${fileName}" directamente, así que solo se puede ` +
-      `descargar una copia actualizada. Para guardar sobre el mismo archivo use Chrome o Edge.`,
+      'This browser cannot modify local files',
+      `Firefox and Safari do not let a web page modify "${fileName}" directly, so only an updated copy ` +
+      `can be downloaded. To save into the same file use Chrome or Edge.`,
       [
-        { label: 'Descargar copia', value: 'download', style: 'primary' },
-        { label: 'Cancelar', value: 'cancel', style: 'secondary' },
+        { label: 'Download a copy', value: 'download', style: 'primary' },
+        { label: 'Cancel', value: 'cancel', style: 'secondary' },
       ],
     );
     return choice === 'download';
@@ -264,13 +264,13 @@ export class SaveDialog {
    */
   async askFileName(defaultName: string): Promise<string | null> {
     const { choice, inputValue } = await showModal(
-      'Nombre del archivo',
-      'Introduzca el nombre del archivo Excel (sin extensión):',
+      'File name',
+      'Enter the name of the Excel file (without extension):',
       [
-        { label: 'Guardar', value: 'ok', style: 'primary' },
-        { label: 'Cancelar', value: 'cancel', style: 'secondary' },
+        { label: 'Save', value: 'ok', style: 'primary' },
+        { label: 'Cancel', value: 'cancel', style: 'secondary' },
       ],
-      { placeholder: 'nombre_archivo', defaultValue: defaultName },
+      { placeholder: 'file_name', defaultValue: defaultName },
     );
     if (choice === 'cancel' || !inputValue?.trim()) return null;
     return inputValue.trim();
@@ -376,21 +376,21 @@ export class SaveDialog {
   /** Batch analysis: confirm the list of pairs found and whether to save a wear map per piece. */
   async askBatchStart(summary: string, canSaveMaps: boolean): Promise<'run' | 'run-maps' | 'cancel'> {
     const buttons: { label: string; value: string; style: 'primary' | 'secondary' | 'danger' }[] = [
-      { label: 'Analizar', value: 'run', style: 'primary' },
+      { label: 'Analyse', value: 'run', style: 'primary' },
     ];
-    if (canSaveMaps) buttons.push({ label: 'Analizar y guardar mapas PNG', value: 'run-maps', style: 'secondary' });
-    buttons.push({ label: 'Cancelar', value: 'cancel', style: 'danger' });
-    const { choice } = await showModal('Análisis por lotes', summary, buttons);
+    if (canSaveMaps) buttons.push({ label: 'Analyse and save PNG wear maps', value: 'run-maps', style: 'secondary' });
+    buttons.push({ label: 'Cancel', value: 'cancel', style: 'danger' });
+    const { choice } = await showModal('Batch analysis', summary, buttons);
     return choice as 'run' | 'run-maps' | 'cancel';
   }
 
   async askOverwriteOrSkip(prosthesisName: string): Promise<'overwrite' | 'skip'> {
     const { choice } = await showModal(
-      'Prótesis ya existe',
-      `Ya existe una entrada para "${prosthesisName}" en el archivo. ¿Desea reemplazar sus datos?`,
+      'Prosthesis already exists',
+      `There is already an entry for "${prosthesisName}" in the file. Replace its data?`,
       [
-        { label: 'Reemplazar', value: 'overwrite', style: 'primary' },
-        { label: 'Cancelar', value: 'skip', style: 'secondary' },
+        { label: 'Replace', value: 'overwrite', style: 'primary' },
+        { label: 'Cancel', value: 'skip', style: 'secondary' },
       ],
     );
     return choice as 'overwrite' | 'skip';

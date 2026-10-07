@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — RimPlanePickManager
+// HipWear — RimPlanePickManager
 // Click-to-pick 3-D points on the inner mesh to manually define
 // the rim cut-plane. Computes a best-fit plane via Newell's method.
 //

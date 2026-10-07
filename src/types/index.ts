@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — Shared Type Definitions
+// HipWear — Shared Type Definitions
 // ============================================================
 
 import * as THREE from 'three';
@@ -157,10 +157,10 @@ export type DoubleSphereEstimator = 'min-std-cell' | 'stable-quartile';
 export type ScanType = 'unspecified' | 'structured-light' | 'ct' | 'other';
 
 export const SCAN_TYPE_LABELS: Record<ScanType, string> = {
-  'unspecified': 'Sin especificar',
-  'structured-light': 'Escáner de luz azul estructurada',
-  'ct': 'Tomografía computarizada (CT / micro-CT)',
-  'other': 'Otro',
+  'unspecified': 'Not specified',
+  'structured-light': 'Structured blue-light scanner',
+  'ct': 'Computed tomography (CT / micro-CT)',
+  'other': 'Other',
 };
 
 /**

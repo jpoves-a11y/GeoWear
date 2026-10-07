@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — STL Parser Web Worker
+// HipWear — STL Parser Web Worker
 // Reads the STL in chunks, welds vertices on the fly (typed-array hash, no string keys, no
 // triangle-soup copies) and, for very large scans, reduces the mesh WITHOUT smoothing so that
 // full-resolution files (hundreds of MB – > 1 GB) can be analysed in the browser.

@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — MeshGraph
+// HipWear — MeshGraph
 // Adjacency graph construction from indexed mesh
 // Optimized for large meshes (>1M triangles)
 // ============================================================

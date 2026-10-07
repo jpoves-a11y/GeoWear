@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — Reproducible randomness and robust statistics
+// HipWear — Reproducible randomness and robust statistics
 // ============================================================
 
 /**

@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — ControlPanel
+// HipWear — ControlPanel
 // lil-gui based parameter controls
 // ============================================================
 
@@ -159,7 +159,7 @@ export class ControlPanel {
     this.params = { ...DEFAULT_PARAMS };
 
     const container = document.getElementById('gui-container')!;
-    this.gui = new GUI({ container, autoPlace: false, title: 'GeoWear Controls' });
+    this.gui = new GUI({ container, autoPlace: false, title: 'HipWear Controls' });
     this.gui.domElement.style.width = '100%';
 
     this.buildImportSection();
@@ -372,21 +372,21 @@ export class ControlPanel {
       (Object.keys(SCAN_TYPE_LABELS) as ScanType[]).map(k => [SCAN_TYPE_LABELS[k], k])) as Record<string, ScanType>;
     this.scanTypeProxy.value = SCAN_TYPE_LABELS[this.params.scanType] ?? SCAN_TYPE_LABELS.unspecified;
     wearModel.add(this.scanTypeProxy, 'value', Object.keys(scanLabelToType))
-      .name('Tipo de escaneo')
+      .name('Scan type')
       .onChange((v: string) => {
         this.params.scanType = scanLabelToType[v] ?? 'unspecified';
         this.updateScanDetailsVisibility();
         this.callbacks.onParamsChange(this.params);
       });
-    this.scanDetailsFolder = wearModel.addFolder('Pintura e incertidumbres del escaneo');
+    this.scanDetailsFolder = wearModel.addFolder('Paint and scan uncertainties');
     this.scanDetailsFolder.add(this.params, 'scanPainted')
-      .name('Superficie pintada')
+      .name('Painted surface')
       .onChange(() => { this.updateScanDetailsVisibility(); this.callbacks.onParamsChange(this.params); });
     this.paintThicknessCtrl = this.scanDetailsFolder.add(this.params, 'paintThicknessUm', 0, 500, 1)
-      .name('Espesor de pintura (μm)')
+      .name('Paint thickness (μm)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
     this.scanDetailsFolder.add(this.params, 'otherUncertaintyUm', 0, 1000, 1)
-      .name('Otras incertidumbres (± μm)')
+      .name('Other uncertainties (± μm)')
       .onChange(() => this.callbacks.onParamsChange(this.params));
     this.updateScanDetailsVisibility();
 

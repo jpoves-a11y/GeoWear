@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — MeshViewer
+// HipWear — MeshViewer
 // STL file loading, display, and visual controls
 // ============================================================
 

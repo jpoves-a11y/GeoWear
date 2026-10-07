@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — App Orchestrator
+// HipWear — App Orchestrator
 // Wires together all modules: viewer, analysis, UI
 // ============================================================
 
@@ -36,6 +36,11 @@ import {
   downloadWorkbook,
   downloadRowsAsCSV,
 } from './utils/ExcelExporter';
+
+/** Settings-file format id. The program was called GeoWear, so files keep the original id
+ *  (older versions can still read them); 'hipwear-settings' is accepted as well. */
+const SETTINGS_FORMAT = 'geowear-settings';
+const isSettingsFormat = (f: unknown): boolean => f === SETTINGS_FORMAT || f === 'hipwear-settings';
 
 export class App {
   // Core viewer
@@ -241,7 +246,7 @@ export class App {
     this.hideLoading();
 
     this.status.setStatus('Ready. Load an STL file to begin.');
-    console.log('GeoWear initialized');
+    console.log('HipWear initialized');
   }
 
   // ---- File Loading ----
@@ -305,13 +310,13 @@ export class App {
 
     if (!xlsxAvailable) {
       if (action === 'append') {
-        this.status.setStatus('SheetJS CDN no disponible — usa "Crear nuevo" para exportar CSV.');
+        this.status.setStatus('SheetJS CDN not available — use "Create new" to export a CSV.');
         return;
       }
       const fileName = await this.saveDialog.askFileName(prosthesisName);
       if (!fileName) return;
       downloadRowsAsCSV(rows, fileName);
-      this.status.setStatus(`CSV descargado: ${fileName}.csv`);
+      this.status.setStatus(`CSV downloaded: ${fileName}.csv`);
       return;
     }
 
@@ -326,7 +331,7 @@ export class App {
       const fileName = await this.saveDialog.askFileName(prosthesisName);
       if (!fileName) return;
       downloadWorkbook(createWorkbook(rows), fileName);
-      this.status.setStatus(`Excel descargado: ${fileName}.xlsx`);
+      this.status.setStatus(`Excel downloaded: ${fileName}.xlsx`);
       return;
     }
 
@@ -346,7 +351,7 @@ export class App {
     mergeWorkbook(wb, prosthesisName, rows);
     if (!(await this.saveDialog.askDownloadInstead(picked.file.name))) return;
     downloadWorkbook(wb, picked.file.name);
-    this.status.setStatus(`Copia descargada (el navegador no permite modificar ${picked.file.name})`);
+    this.status.setStatus(`Copy downloaded (this browser cannot modify ${picked.file.name})`);
   }
 
   /** Merge the rows into the workbook behind `handle` (or create it if empty) and write it in place. */
@@ -370,19 +375,19 @@ export class App {
     for (;;) {
       try {
         await writeWorkbookToHandle(wb, handle);
-        this.status.setStatus(`Excel actualizado: ${handle.name} (${prosthesisName})`);
+        this.status.setStatus(`Excel updated: ${handle.name} (${prosthesisName})`);
         return;
       } catch (e: any) {
         const reason = e?.name === 'NoModificationAllowedError' || e?.name === 'InvalidStateError'
-          ? 'archivo bloqueado por otro programa'
+          ? 'file locked by another program'
           : e?.name === 'NotAllowedError' || e?.name === 'SecurityError'
-            ? 'permiso de escritura no concedido'
+            ? 'write permission not granted'
             : String(e?.message ?? e);
         const choice = await this.saveDialog.askWriteFailed(handle.name, reason);
         if (choice === 'retry') continue;
         if (choice === 'download') {
           downloadWorkbook(wb, handle.name);
-          this.status.setStatus(`Copia descargada: ${handle.name}`);
+          this.status.setStatus(`Copy downloaded: ${handle.name}`);
         }
         return;
       }
@@ -393,7 +398,7 @@ export class App {
   private meshReductionNote(): string {
     const r = this.meshReduction, m = this.currentMeshData;
     if (!r || !m) return '';
-    return `${r.originalFaces} → ${m.faceCount} triángulos (celda ${r.cellMm.toFixed(3)} mm)`;
+    return `${r.originalFaces} → ${m.faceCount} triangles (cell ${r.cellMm.toFixed(3)} mm)`;
   }
 
   private async loadFile(file: File): Promise<void> {
@@ -1885,7 +1890,7 @@ export class App {
   private saveSettings(): void {
     const v = (x: THREE.Vector3 | null) => (x ? [x.x, x.y, x.z] : null);
     const settings = {
-      format: 'geowear-settings',
+      format: SETTINGS_FORMAT,
       version: 1,
       fileName: this.fileName,
       vertexCount: this.currentMeshData?.vertexCount ?? null,
@@ -1902,11 +1907,11 @@ export class App {
       excludedInnerVertices: [...this.excludedInnerMeshVertices],
       manualNonWornPositions: this.manualNonWornPositions ? Array.from(this.manualNonWornPositions, x => Math.round(x * 1e5) / 1e5) : null,
     };
-    const base = (this.fileName || 'geowear').replace(/\.stl$/i, '');
+    const base = (this.fileName || 'hipwear').replace(/\.stl$/i, '');
     const blob = new Blob([JSON.stringify(settings)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${base}_geowear-settings.json`;
+    a.download = `${base}_hipwear-settings.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1937,7 +1942,7 @@ export class App {
 
   /** Apply a parsed settings object to the loaded STL; returns warnings (empty when all matches). */
   private applySettings(s: any): string[] {
-    if (s?.format !== 'geowear-settings') throw new Error('Not a GeoWear settings file');
+    if (!isSettingsFormat(s?.format)) throw new Error('Not a HipWear settings file');
     const warnings: string[] = [];
     if (s.fileName && this.fileName && s.fileName !== this.fileName) warnings.push(`saved for "${s.fileName}"`);
     if (s.vertexCount && this.currentMeshData && s.vertexCount !== this.currentMeshData.vertexCount) warnings.push('different vertex count');
@@ -2106,7 +2111,7 @@ export class App {
           }
         } catch (e) {
           files = [];
-          await this.saveDialog.showInfo('Análisis por lotes', `No se pudo leer la carpeta: ${(e as Error).message}`);
+          await this.saveDialog.showInfo('Batch analysis', `Could not read the folder: ${(e as Error).message}`);
           return;
         }
       }
@@ -2131,24 +2136,24 @@ export class App {
     const used = new Set<string>();
     for (const f of files.filter(x => /\.json$/i.test(x.name)).sort((a, b) => a.name.localeCompare(b.name))) {
       let s: any;
-      try { s = JSON.parse(await f.text()); } catch { problems.push(`${f.name}: no es un JSON válido`); continue; }
-      if (s?.format !== 'geowear-settings') { problems.push(`${f.name}: no es un archivo de ajustes de GeoWear`); continue; }
-      const label = f.name.replace(/\.json$/i, '').replace(/_geowear-settings/i, '').trim();
+      try { s = JSON.parse(await f.text()); } catch { problems.push(`${f.name}: not a valid JSON file`); continue; }
+      if (!isSettingsFormat(s?.format)) { problems.push(`${f.name}: not a HipWear settings file`); continue; }
+      const label = f.name.replace(/\.json$/i, '').replace(/_(geo|hip)wear-settings/i, '').trim();
       let stl: File | undefined;
       if (s.fileName) {
         stl = stls.get(String(s.fileName).toLowerCase());
-        if (!stl) { problems.push(`${f.name}: no está el STL «${s.fileName}» guardado en el archivo`); continue; }
+        if (!stl) { problems.push(`${f.name}: the STL «${s.fileName}» named in the file was not selected`); continue; }
       } else {   // old files without the STL name: longest STL name that the settings file name starts with
         let bestLen = 0;
         for (const [k, v] of stls) if (label.toLowerCase().startsWith(k) && k.length > bestLen) { stl = v; bestLen = k.length; }
-        if (!stl) { problems.push(`${f.name}: no se encuentra su STL`); continue; }
+        if (!stl) { problems.push(`${f.name}: its STL was not found`); continue; }
       }
       used.add(base(stl.name).toLowerCase());
       jobs.push({ stl, settings: s, label, source: f.name });
     }
-    for (const [k, f] of stls) if (!used.has(k)) problems.push(`${f.name}: sin archivo de ajustes — se omite`);
+    for (const [k, f] of stls) if (!used.has(k)) problems.push(`${f.name}: no settings file — skipped`);
     if (jobs.length === 0) {
-      await this.saveDialog.showInfo('Análisis por lotes', `No hay parejas STL + ajustes.\n\n${problems.join('\n')}`);
+      await this.saveDialog.showInfo('Batch analysis', `No STL + settings pairs found.\n\n${problems.join('\n')}`);
       return;
     }
 
@@ -2159,7 +2164,7 @@ export class App {
     if (where === 'cancel') return;
     try {
       if (canWriteLocalFiles()) {
-        if (where === 'create') handle = await this.saveDialog.askSaveFilePicker('GeoWear_lote');
+        if (where === 'create') handle = await this.saveDialog.askSaveFilePicker('HipWear_batch');
         else handle = (await this.saveDialog.askPickExistingFile())?.handle ?? null;
         if (!handle) return;
         const f = await handle.getFile();
@@ -2170,17 +2175,17 @@ export class App {
         wb = parseWorkbook(await picked.file.arrayBuffer());
       }
     } catch (e) {
-      await this.saveDialog.showInfo('Análisis por lotes', `No se pudo leer el Excel elegido (${(e as Error).message}). No se ha modificado nada.`);
+      await this.saveDialog.showInfo('Batch analysis', `Could not read the selected Excel file (${(e as Error).message}). Nothing has been changed.`);
       return;
     }
-    const outName = handle?.name ?? 'GeoWear_lote.xlsx';
+    const outName = handle?.name ?? 'HipWear_batch.xlsx';
 
     // 4) Confirm (lists the pairs, warnings and rows that will be replaced)
     const replaced = wb ? jobs.filter(j => prosthesisExistsInWorkbook(wb, j.label)).map(j => j.label) : [];
-    const summary = `${jobs.length} medición(es) → ${outName}\n` + jobs.map(j => `• ${j.label}  ←  ${j.stl.name}`).join('\n') +
-      (replaced.length ? `\n\nYa existen en el Excel y se sustituirán (las columnas añadidas a mano se conservan):\n${replaced.map(r => `• ${r}`).join('\n')}` : '') +
-      (problems.length ? `\n\nAvisos:\n${problems.map(p => `• ${p}`).join('\n')}` : '') +
-      (canWriteLocalFiles() ? '' : '\n\nEste navegador no puede modificar archivos: el Excel se descargará al terminar.');
+    const summary = `${jobs.length} measurement(s) → ${outName}\n` + jobs.map(j => `• ${j.label}  ←  ${j.stl.name}`).join('\n') +
+      (replaced.length ? `\n\nAlready in the Excel file and will be replaced (columns added by hand are kept):\n${replaced.map(r => `• ${r}`).join('\n')}` : '') +
+      (problems.length ? `\n\nWarnings:\n${problems.map(p => `• ${p}`).join('\n')}` : '') +
+      (canWriteLocalFiles() ? '' : '\n\nThis browser cannot modify local files: the Excel file will be downloaded at the end.');
     const start = await this.saveDialog.askBatchStart(summary, !!dirHandle);
     if (start === 'cancel') return;
     const saveMaps = start === 'run-maps' && !!dirHandle;
@@ -2189,7 +2194,7 @@ export class App {
     if (handle && typeof (handle as any).requestPermission === 'function') {
       try {
         if ((await (handle as any).requestPermission({ mode: 'readwrite' })) !== 'granted') {
-          await this.saveDialog.showInfo('Análisis por lotes', 'Sin permiso para escribir en el Excel. No se ha analizado nada.');
+          await this.saveDialog.showInfo('Batch analysis', 'No permission to write to the Excel file. Nothing has been analysed.');
           return;
         }
       } catch { /* the write itself will ask again */ }
@@ -2203,25 +2208,25 @@ export class App {
     try {
       for (let i = 0; i < jobs.length; i++) {
         const j = jobs[i];
-        const tag = `Lote ${i + 1}/${jobs.length} · ${j.label}`;
+        const tag = `Batch ${i + 1}/${jobs.length} · ${j.label}`;
         try {
-          this.status.setStatus(`${tag}: cargando ${j.stl.name}...`);
+          this.status.setStatus(`${tag}: loading ${j.stl.name}...`);
           this.currentMeshData = null;          // so a failed load cannot fall back to the previous mesh
           await this.loadFile(j.stl);
-          if (!this.currentMeshData) throw new Error('no se pudo cargar el STL');
+          if (!this.currentMeshData) throw new Error('the STL could not be loaded');
           const warns = this.applySettings(j.settings);
           const bad = warns.filter(w => w.includes('vertex count'));
-          if (bad.length) throw new Error('los ajustes no corresponden a este STL (distinto número de vértices)');
-          this.status.setStatus(`${tag}: analizando...`);
+          if (bad.length) throw new Error('the settings do not belong to this STL (different vertex count)');
+          this.status.setStatus(`${tag}: analysing...`);
           this.lastAnalysisError = '';
           const ok = await this.runAnalysis();
-          if (!ok || !this.currentResults) throw new Error(this.lastAnalysisError || 'el análisis falló');
+          if (!ok || !this.currentResults) throw new Error(this.lastAnalysisError || 'the analysis failed');
           const rows = extractRows(j.label, this.currentResults, this.params, this.meshReductionNote());
           const next = wb ?? createWorkbook([]);
           mergeWorkbook(next, j.label, rows);
           if (handle) {
             const written = await this.writeBatchWorkbook(next, handle);
-            if (!written) { stopped = 'cancelado al no poder escribir el Excel'; wb = next; break; }
+            if (!written) { stopped = 'cancelled because the Excel file could not be written'; wb = next; break; }
           }
           wb = next;
           if (saveMaps && dirHandle) {
@@ -2233,7 +2238,7 @@ export class App {
                 const w = await fh.createWritable(); await w.write(blob); await w.close();
               }
             } catch (e) {
-              problems.push(`${j.label}: mapa no guardado (${(e as Error).message})`);
+              problems.push(`${j.label}: wear map not saved (${(e as Error).message})`);
             }
           }
           done.push(j.label);
@@ -2247,11 +2252,11 @@ export class App {
     if (!handle && wb) downloadWorkbook(wb, outName);
     const mins = ((performance.now() - t0) / 60000).toFixed(1);
     this.status.setStatus(`Batch finished: ${done.length} ok, ${failed.length} failed (${mins} min)`);
-    await this.saveDialog.showInfo('Análisis por lotes terminado',
-      `${done.length} de ${jobs.length} mediciones analizadas en ${mins} min.\nResultados en: ${outName}` +
-      (stopped ? `\n\nLote detenido: ${stopped}.` : '') +
-      (saveMaps ? '\nMapas de desgaste guardados en la carpeta seleccionada.' : '') +
-      (failed.length ? `\n\nCon error (sin fila en el Excel):\n${failed.map(f => `• ${f}`).join('\n')}` : ''));
+    await this.saveDialog.showInfo('Batch analysis finished',
+      `${done.length} of ${jobs.length} measurements analysed in ${mins} min.\nResults in: ${outName}` +
+      (stopped ? `\n\nBatch stopped: ${stopped}.` : '') +
+      (saveMaps ? '\nWear maps saved in the selected folder.' : '') +
+      (failed.length ? `\n\nFailed (no row in the Excel file):\n${failed.map(f => `• ${f}`).join('\n')}` : ''));
   }
 
   /** Write the batch workbook in place; on failure (file open in Excel…) ask to retry.

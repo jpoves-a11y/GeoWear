@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — Geometry Utility Functions
+// HipWear — Geometry Utility Functions
 // ============================================================
 
 import * as THREE from 'three';

@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — EllipsoidFitter
+// HipWear — EllipsoidFitter
 // General ellipsoid fitting via SVD and eigenvalue decomposition
 // ============================================================
 

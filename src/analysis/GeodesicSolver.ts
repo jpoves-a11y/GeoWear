@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — GeodesicSolver
+// HipWear — GeodesicSolver
 // Geodesic meridians via mesh-plane intersection
 // Produces smooth great-circle-like curves on triangulated meshes
 // ============================================================

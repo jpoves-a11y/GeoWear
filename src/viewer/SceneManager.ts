@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — SceneManager
+// HipWear — SceneManager
 // Three.js scene, camera, renderer, controls, lighting
 // ============================================================
 

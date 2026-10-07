@@ -1,5 +1,5 @@
 // ============================================================
-// GeoWear — Annotations & WearVector Visualization
+// HipWear — Annotations & WearVector Visualization
 // CSS2D annotation labels and wear direction arrow
 // ============================================================
 
