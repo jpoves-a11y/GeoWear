@@ -47,6 +47,7 @@ export interface ControlCallbacks {
   onSaveSettings: () => void;
   onLoadSettings: () => void;
   onExportWearMap: () => void;
+  onExportHipCreep: () => void;
   onRunBatch: () => void;
   onShowResults: () => void;
   onParamsChange: (params: AnalysisParams) => void;
@@ -859,6 +860,7 @@ export class ControlPanel {
       'Report (PDF)': () => this.callbacks.onExportPDF(),
       'Wear Data (Excel)': () => this.callbacks.onExportExcel(),
       '🗺 Wear Map (PNG)': () => this.callbacks.onExportWearMap(),
+      'HipCreep Data (JSON)': () => this.callbacks.onExportHipCreep(),
       '💾 Save Measurement Settings': () => this.callbacks.onSaveSettings(),
       '📂 Load Measurement Settings': () => this.callbacks.onLoadSettings(),
     };
@@ -869,6 +871,7 @@ export class ControlPanel {
     folder.add(exports, 'Report (PDF)');
     folder.add(exports, 'Wear Data (Excel)');
     folder.add(exports, '🗺 Wear Map (PNG)');
+    folder.add(exports, 'HipCreep Data (JSON)');
     folder.add(exports, '💾 Save Measurement Settings');
     folder.add(exports, '📂 Load Measurement Settings');
 

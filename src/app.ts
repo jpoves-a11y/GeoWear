@@ -25,6 +25,7 @@ import { trimRim, computeRimAnchor, rimAnchorToPlanePoint, type RimAnchor } from
 import { computeTiltedRimNormal, fitPlaneFromPoints, decomposeNormalToInclination } from './utils/geometry';
 import { SaveDialog } from './ui/SaveDialog';
 import { renderWearMap } from './utils/WearMap';
+import { buildHipCreepInput, HIPCREEP_MATERIALS, type HipCreepMaterial } from './utils/HipCreepExport';
 import {
   extractRows,
   createWorkbook,
@@ -199,6 +200,7 @@ export class App {
       onSaveSettings: () => this.saveSettings(),
       onLoadSettings: () => { if (!this.batchGuard()) this.loadSettings(); },
       onExportWearMap: () => { void this.exportWearMap(); },
+      onExportHipCreep: () => { void this.exportHipCreep(); },
       onRunBatch: () => { void this.runBatch(); },
       onShowResults: () => {
         if (this.currentResults) {
@@ -2072,6 +2074,73 @@ export class App {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     this.status.setStatus(`Wear map downloaded: ${name}`);
+  }
+
+  // ---- HipCreep export ----
+
+  /**
+   * Export the input file of HipCreep (creep estimation / creep–wear separation): original
+   * sphere, penetration with its uncertainty, cup axis, wall thickness and the trimmed inner
+   * surface of the Two-Sphere Auto run (in compare mode, of its Two-Sphere Auto pass).
+   */
+  private async exportHipCreep(): Promise<void> {
+    const run = this.currentResults;
+    if (!run || !this.pipeline) { this.status.setStatus('Run an analysis first (Two-Sphere Auto)'); return; }
+    let res: AnalysisResults;
+    let state = this.pipeline.state;
+    if (run.analysisMode === 'compare-all-modes') {
+      const tsState = this.pipeline.compareModePipelineStates?.twoSphereAuto;
+      if (run.twoSphereAuto && tsState) { res = run.twoSphereAuto; state = tsState; }
+      else { this.status.setStatus('HipCreep export needs the Two-Sphere Auto results'); return; }
+    } else res = run;
+    const mesh = state.workingMesh;
+    if (!mesh) { this.status.setStatus('No trimmed inner surface available — run the analysis again'); return; }
+
+    const KEY = 'hipwear-hipcreep-export';
+    let saved: { daysExVivo: number | null; material: string } = { daysExVivo: null, material: 'conventional' };
+    try { const t = localStorage.getItem(KEY); if (t) saved = { ...saved, ...JSON.parse(t) }; } catch { /* storage unavailable */ }
+    const info = await this.saveDialog.askHipCreepInfo(saved, HIPCREEP_MATERIALS, this.params.yearsInVivo);
+    if (!info) return;
+    try { localStorage.setItem(KEY, JSON.stringify(info)); } catch { /* ignore */ }
+
+    let out;
+    try {
+      out = buildHipCreepInput({
+        caseId: this.fileName,
+        sourceFile: `${this.fileName}.stl`,
+        programVersion: '1.0',
+        res,
+        workingMesh: mesh,
+        separation: state.separation ?? null,
+        yearsInVivo: this.params.yearsInVivo,
+        daysExVivo: info.daysExVivo,
+        material: info.material as HipCreepMaterial,
+      });
+    } catch (e) {
+      this.status.setStatus(`HipCreep export failed: ${(e as Error).message}`);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(out.data)], { type: 'application/json' });
+    const name = `${this.fileName}_hipcreep.json`;
+    let savedAs = name;
+    let done = false;
+    if ('showSaveFilePicker' in window) {
+      try {
+        const h: FileSystemFileHandle = await (window as any).showSaveFilePicker({ suggestedName: name, types: [{ description: 'HipCreep input (JSON)', accept: { 'application/json': ['.json'] } }] });
+        const w = await h.createWritable(); await w.write(blob); await w.close();
+        savedAs = h.name; done = true;
+      } catch (e) {
+        if ((e as Error)?.name === 'AbortError') return;
+      }
+    }
+    if (!done) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+    this.status.setStatus(`HipCreep data saved: ${savedAs} (${(blob.size / 1e6).toFixed(1)} MB)`);
+    if (out.warnings.length) await this.saveDialog.showInfo('HipCreep export', `${savedAs} saved.\n\n${out.warnings.map(w => `• ${w}`).join('\n')}`);
   }
 
   // ---- Batch analysis ----
