@@ -286,7 +286,8 @@ async function hipCreepExportCheck(): Promise<{ errs: string[]; line: string }> 
   need(Math.abs(w.linearWearUm - delta * 1000) <= 0.02 * delta * 1000, `linear ${w.linearWearUm} µm vs ${delta * 1000}`);
   need(Math.abs(w.directionAngleDeg - alpha) <= 2, `direction ${w.directionAngleDeg}° vs ${alpha}°`);
   need(-g.poleAxis[2] > 0.999, `pole axis ${g.poleAxis}`);
-  need(g.wallThicknessMm && Math.abs(g.wallThicknessMm.atPenetration - (Rout - R)) < 0.1 && Math.abs(g.wallThicknessMm.mean - (Rout - R)) < 0.1,
+  need(g.wallThicknessMm && Math.abs(g.wallThicknessMm.atPenetration - (Rout - R)) < 0.1 && Math.abs(g.wallThicknessMm.mean - (Rout - R)) < 0.1
+    && g.wallThicknessMm.sdAtPenetration >= 0 && g.wallThicknessMm.sdAtPenetration < 0.05,
     `wall thickness ${JSON.stringify(g.wallThicknessMm)} vs ${Rout - R}`);
   need(j.mesh.vertices.length === wm.vertexCount * 3 && j.mesh.faces.length === wm.faceCount * 3, 'mesh size');
   need(j.mesh.faces.every((f: number) => f < wm.vertexCount), 'face index out of range');

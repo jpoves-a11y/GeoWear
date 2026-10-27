@@ -71,12 +71,14 @@ function median(a: number[]): number {
 /**
  * Wall thickness from the outer (back) surface: for every outer vertex in the bearing region
  * (≤ maxPoleDeg from the pole) the distance to the centre of the original cavity minus the
- * cavity radius. "atPenetration" uses the outer vertices within coneDeg of the penetration
- * direction. Rim faces (near the opening) are excluded by the pole-angle limit.
+ * cavity radius. "atPenetration" (median) and "sdAtPenetration" use the outer vertices within
+ * coneDeg of the penetration direction (the pole if none was detected): that local dispersion is
+ * the uncertainty of the wall under the load, whereas "sd" also contains the shape of the back
+ * (flats, steps, non-concentric outer surfaces). Rim faces are excluded by the pole-angle limit.
  */
 export function wallThickness(
   outer: MeshData, center: Arr3, radius: number, pole: Arr3, load: Arr3 | null, maxPoleDeg = 75, coneDeg = 10,
-): { mean: number; sd: number; atPenetration: number; n: number } | null {
+): { mean: number; sd: number; atPenetration: number; sdAtPenetration: number; n: number } | null {
   const P = outer.positions;
   const cosMax = Math.cos(maxPoleDeg * Math.PI / 180);
   const cosCone = Math.cos(coneDeg * Math.PI / 180);
@@ -93,9 +95,10 @@ export function wallThickness(
     if (dot(u, dir) >= cosCone) cone.push(t);
   }
   if (all.length < 20) return null;
-  const mean = all.reduce((s, x) => s + x, 0) / all.length;
-  const sd = Math.sqrt(all.reduce((s, x) => s + (x - mean) ** 2, 0) / Math.max(1, all.length - 1));
-  return { mean, sd, atPenetration: cone.length >= 5 ? median(cone) : median(all), n: all.length };
+  const sdOf = (a: number[]) => { const m = a.reduce((s, x) => s + x, 0) / a.length; return { m, sd: Math.sqrt(a.reduce((s, x) => s + (x - m) ** 2, 0) / Math.max(1, a.length - 1)) }; };
+  const g = sdOf(all);
+  const local = cone.length >= 5 ? cone : all;
+  return { mean: g.m, sd: g.sd, atPenetration: median(local), sdAtPenetration: sdOf(local).sd, n: all.length };
 }
 
 export function buildHipCreepInput(o: HipCreepExportOptions): HipCreepExportResult {
@@ -195,7 +198,7 @@ export function buildHipCreepInput(o: HipCreepExportOptions): HipCreepExportResu
       displacedCenter: displaced,
       poleAxis: pole.map(r6),
       rimPlane: res.rimPlane ? { point: arr(res.rimPlane.point), normal: arr(res.rimPlane.normal) } : null,
-      wallThicknessMm: wall ? { mean: r4(wall.mean), sd: r4(wall.sd), atPenetration: r4(wall.atPenetration) } : null,
+      wallThicknessMm: wall ? { mean: r4(wall.mean), sd: r4(wall.sd), atPenetration: r4(wall.atPenetration), sdAtPenetration: r4(wall.sdAtPenetration) } : null,
       outerShellRadiusMm: ts?.outerShell ? r6(ts.outerShell.radius) : null,
     },
     wear: {
