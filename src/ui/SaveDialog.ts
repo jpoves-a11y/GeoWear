@@ -77,6 +77,14 @@ const DIALOG_CSS = `
 .gw-btn.primary   { background: #0078d4; color: #fff; }
 .gw-btn.secondary { background: #3a3a3a; color: #ccc; border: 1px solid #555; }
 .gw-btn.danger    { background: #c42b1c; color: #fff; }
+.gw-field { display: grid; grid-template-columns: 1fr 190px; align-items: center; gap: 10px; margin-bottom: 12px; }
+.gw-field label { color: #d4d4d4; }
+.gw-field input[type="number"], .gw-field select {
+  width: 100%; box-sizing: border-box; padding: 7px 9px; background: #2a2a2a; border: 1px solid #555;
+  border-radius: 4px; color: #d4d4d4; font-size: 14px; outline: none;
+}
+.gw-field input[type="number"]:focus, .gw-field select:focus { border-color: #0078d4; }
+.gw-note { margin: -4px 0 16px; color: #8a8a8a; font-size: 12px; line-height: 1.45; }
 `;
 
 function injectStyles(): void {
@@ -382,6 +390,84 @@ export class SaveDialog {
     buttons.push({ label: 'Cancel', value: 'cancel', style: 'danger' });
     const { choice } = await showModal('Batch analysis', summary, buttons);
     return choice as 'run' | 'run-maps' | 'cancel';
+  }
+
+  /**
+   * Case data for the HipCreep export that HipWear does not otherwise know: days between
+   * explantation and scanning, and polyethylene grade. Returns null if cancelled.
+   */
+  async askHipCreepInfo(
+    defaults: { daysExVivo: number | null; material: string },
+    materials: { value: string; label: string }[],
+    yearsInVivo: number,
+  ): Promise<{ daysExVivo: number | null; material: string } | null> {
+    injectStyles();
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'gw-overlay';
+      const dialog = document.createElement('div');
+      dialog.className = 'gw-dialog';
+      const h3 = document.createElement('h3');
+      h3.textContent = 'Export HipCreep data';
+      dialog.appendChild(h3);
+      const p = document.createElement('p');
+      p.textContent = 'Creates the input file for HipCreep (creep estimation and creep / wear separation): '
+        + 'original sphere, penetration and its uncertainty, cup axis, wall thickness and the trimmed inner surface.';
+      dialog.appendChild(p);
+
+      const field = (labelText: string, control: HTMLElement) => {
+        const row = document.createElement('div');
+        row.className = 'gw-field';
+        const lab = document.createElement('label');
+        lab.textContent = labelText;
+        row.appendChild(lab);
+        row.appendChild(control);
+        dialog.appendChild(row);
+      };
+      const days = document.createElement('input');
+      days.type = 'number'; days.min = '0'; days.step = '1';
+      days.placeholder = 'unknown';
+      days.value = defaults.daysExVivo != null ? String(defaults.daysExVivo) : '';
+      field('Days from explantation to scan', days);
+      const mat = document.createElement('select');
+      for (const m of materials) {
+        const opt = document.createElement('option');
+        opt.value = m.value; opt.textContent = m.label;
+        mat.appendChild(opt);
+      }
+      mat.value = defaults.material;
+      field('Polyethylene', mat);
+      const note = document.createElement('div');
+      note.className = 'gw-note';
+      note.textContent = yearsInVivo > 0
+        ? `Time in vivo: ${yearsInVivo} years (from "Years in vivo").`
+        : 'Time in vivo is not set ("Years in vivo" = 0): it can be entered later in HipCreep.';
+      dialog.appendChild(note);
+
+      const btnRow = document.createElement('div');
+      btnRow.className = 'gw-btns';
+      const close = (ok: boolean) => {
+        document.body.removeChild(overlay);
+        if (!ok) { resolve(null); return; }
+        const d = parseFloat(days.value);
+        resolve({ daysExVivo: Number.isFinite(d) && d >= 0 ? d : null, material: mat.value });
+      };
+      const bOk = document.createElement('button');
+      bOk.className = 'gw-btn primary'; bOk.textContent = 'Export';
+      bOk.onclick = () => close(true);
+      const bCancel = document.createElement('button');
+      bCancel.className = 'gw-btn secondary'; bCancel.textContent = 'Cancel';
+      bCancel.onclick = () => close(false);
+      btnRow.appendChild(bOk); btnRow.appendChild(bCancel);
+      dialog.appendChild(btnRow);
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+      days.focus();
+      dialog.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); bOk.click(); }
+        else if (e.key === 'Escape') { e.preventDefault(); bCancel.click(); }
+      });
+    });
   }
 
   async askOverwriteOrSkip(prosthesisName: string): Promise<'overwrite' | 'skip'> {

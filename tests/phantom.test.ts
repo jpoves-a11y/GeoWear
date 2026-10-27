@@ -14,6 +14,7 @@ import { WearAnalysisPipeline } from '../src/analysis/WearAnalysis';
 import { separateFaces } from '../src/analysis/MeshProcessor';
 import { DEFAULT_PARAMS, type AnalysisParams, type AnalysisResults } from '../src/types';
 import { makeLiner, trueWearVolumeAbovePlane, punchHoles } from './phantom';
+import { buildHipCreepInput } from '../src/utils/HipCreepExport';
 
 const print = (s: string) => process.stdout.write(s + '\n');
 // The pipeline logs every step; keep the test output readable.
@@ -255,6 +256,52 @@ const cases: Case[] = [
   },
 ];
 
+/**
+ * HipCreep export: the JSON written for HipCreep must carry the original sphere, the penetration,
+ * the cup axis, the wall thickness and the trimmed surface of a liner with known geometry.
+ */
+async function hipCreepExportCheck(): Promise<{ errs: string[]; line: string }> {
+  const R = 14, Rout = 20, delta = 0.3, alpha = 40, off: [number, number, number] = [0.7, -0.4, 0.3];
+  const lin = makeLiner({ delta, alphaDeg: alpha, R, Rout, noiseUm: 2, seed: 3, nTheta: 150, offset: off });
+  const params: AnalysisParams = { ...DEFAULT_PARAMS, analysisMode: 'two-sphere-auto', commercialRadius: R };
+  const p = new WearAnalysisPipeline();
+  const sep = separateFaces(lin.mesh);
+  p.setSeparation(sep);
+  p.setRimInclination(0, 0);
+  p.setRimPlaneNormal([...sep.cupAxis] as [number, number, number]);
+  const r = await p.runFullAnalysis(lin.mesh, params) as AnalysisResults;
+  const wm = p.state.workingMesh!;
+  const out = buildHipCreepInput({
+    caseId: 'PHANTOM', sourceFile: 'phantom.stl', programVersion: 'test', res: r, workingMesh: wm,
+    separation: p.state.separation, yearsInVivo: 0.5, daysExVivo: 30, material: 'conventional',
+  });
+  const j = JSON.parse(JSON.stringify(out.data));
+  const errs: string[] = [];
+  const need = (ok: boolean, msg: string) => { if (!ok) errs.push(msg); };
+  need(j.format === 'hipcreep-input' && j.version === 1, 'format / version');
+  const g = j.geometry, w = j.wear;
+  const cErr = Math.hypot(g.originalCenter[0] - off[0], g.originalCenter[1] - off[1], g.originalCenter[2] - off[2]);
+  need(cErr < 0.02, `original centre off by ${(cErr * 1000).toFixed(1)} µm`);
+  need(Math.abs(g.commercialRadiusMm - R) < 1e-6, `radius ${g.commercialRadiusMm}`);
+  need(Math.abs(w.linearWearUm - delta * 1000) <= 0.02 * delta * 1000, `linear ${w.linearWearUm} µm vs ${delta * 1000}`);
+  need(Math.abs(w.directionAngleDeg - alpha) <= 2, `direction ${w.directionAngleDeg}° vs ${alpha}°`);
+  need(-g.poleAxis[2] > 0.999, `pole axis ${g.poleAxis}`);
+  need(g.wallThicknessMm && Math.abs(g.wallThicknessMm.atPenetration - (Rout - R)) < 0.1 && Math.abs(g.wallThicknessMm.mean - (Rout - R)) < 0.1,
+    `wall thickness ${JSON.stringify(g.wallThicknessMm)} vs ${Rout - R}`);
+  need(j.mesh.vertices.length === wm.vertexCount * 3 && j.mesh.faces.length === wm.faceCount * 3, 'mesh size');
+  need(j.mesh.faces.every((f: number) => f < wm.vertexCount), 'face index out of range');
+  need(j.case.daysExVivo === 30 && j.case.yearsInVivo === 0.5 && j.implant.material === 'conventional', 'case data');
+  // sphere → plane: the deepest point of the exported surface is the penetration
+  let maxDev = -Infinity;
+  for (let i = 0; i < j.mesh.vertices.length; i += 3) {
+    const d = Math.hypot(j.mesh.vertices[i] - g.originalCenter[0], j.mesh.vertices[i + 1] - g.originalCenter[1], j.mesh.vertices[i + 2] - g.originalCenter[2]) - g.commercialRadiusMm;
+    if (d > maxDev) maxDev = d;
+  }
+  need(Math.abs(maxDev * 1000 - delta * 1000) < 15, `max deviation ${(maxDev * 1000).toFixed(1)} µm vs ${delta * 1000}`);
+  const kb = JSON.stringify(out.data).length / 1024;
+  return { errs, line: `lin ${w.linearWearUm.toFixed(1)} µm · ${w.directionAngleDeg.toFixed(1)}° · wall ${g.wallThicknessMm?.atPenetration} mm · ${wm.vertexCount} vertices · ${kb.toFixed(0)} kB` };
+}
+
 async function main() {
   let failed = 0;
   const t0 = Date.now();
@@ -272,7 +319,15 @@ async function main() {
       print(`✗ ${c.name}\n    exception: ${(e as Error).message}`);
     }
   }
-  print(`\n${cases.length - failed}/${cases.length} phantom cases passed in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  try {
+    const hc = await hipCreepExportCheck();
+    if (hc.errs.length) { failed++; print(`✗ HipCreep export\n    ${hc.line}\n    - ${hc.errs.join('\n    - ')}`); }
+    else print(`✓ HipCreep export\n    ${hc.line}`);
+  } catch (e) {
+    failed++;
+    print(`✗ HipCreep export\n    exception: ${(e as Error).message}`);
+  }
+  print(`\n${cases.length + 1 - failed}/${cases.length + 1} phantom cases passed in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   if (failed) process.exitCode = 1;
 }
 
