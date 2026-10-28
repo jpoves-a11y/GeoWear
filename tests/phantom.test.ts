@@ -292,6 +292,13 @@ async function hipCreepExportCheck(): Promise<{ errs: string[]; line: string }> 
   need(j.mesh.vertices.length === wm.vertexCount * 3 && j.mesh.faces.length === wm.faceCount * 3, 'mesh size');
   need(j.mesh.faces.every((f: number) => f < wm.vertexCount), 'face index out of range');
   need(j.case.daysExVivo === 30 && j.case.yearsInVivo === 0.5 && j.implant.material === 'conventional', 'case data');
+  need(j.implant.radiationDoseKGy === null && j.implant.thermalTreatment === null, 'no dose for a fixed grade');
+  const outD = buildHipCreepInput({
+    caseId: 'PHANTOM', sourceFile: 'phantom.stl', programVersion: 'test', res: r, workingMesh: wm,
+    separation: p.state.separation, yearsInVivo: 0.5, daysExVivo: 30, material: 'dose', radiationDoseKGy: 75, thermalTreatment: 'remelted',
+  });
+  const jd = JSON.parse(JSON.stringify(outD.data));
+  need(jd.implant.material === 'dose' && jd.implant.radiationDoseKGy === 75 && jd.implant.thermalTreatment === 'remelted', `dose export ${JSON.stringify(jd.implant)}`);
   // sphere → plane: the deepest point of the exported surface is the penetration
   let maxDev = -Infinity;
   for (let i = 0; i < j.mesh.vertices.length; i += 3) {

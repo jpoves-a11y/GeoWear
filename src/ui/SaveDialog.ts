@@ -397,10 +397,11 @@ export class SaveDialog {
    * explantation and scanning, and polyethylene grade. Returns null if cancelled.
    */
   async askHipCreepInfo(
-    defaults: { daysExVivo: number | null; material: string },
+    defaults: { daysExVivo: number | null; material: string; radiationDoseKGy?: number | null; thermalTreatment?: string | null },
     materials: { value: string; label: string }[],
     yearsInVivo: number,
-  ): Promise<{ daysExVivo: number | null; material: string } | null> {
+    thermals: { value: string; label: string }[] = [],
+  ): Promise<{ daysExVivo: number | null; material: string; radiationDoseKGy: number | null; thermalTreatment: string | null } | null> {
     injectStyles();
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
@@ -435,8 +436,25 @@ export class SaveDialog {
         opt.value = m.value; opt.textContent = m.label;
         mat.appendChild(opt);
       }
-      mat.value = defaults.material;
+      mat.value = materials.some((m) => m.value === defaults.material) ? defaults.material : materials[0].value;
       field('Polyethylene', mat);
+      // radiation dose + thermal treatment (only for the "dose" grade)
+      const dose = document.createElement('input');
+      dose.type = 'number'; dose.min = '0'; dose.step = '1'; dose.placeholder = 'kGy';
+      dose.value = defaults.radiationDoseKGy != null ? String(defaults.radiationDoseKGy) : '';
+      field('Total radiation dose (kGy)', dose);
+      const th = document.createElement('select');
+      for (const t of thermals) {
+        const opt = document.createElement('option');
+        opt.value = t.value; opt.textContent = t.label;
+        th.appendChild(opt);
+      }
+      if (defaults.thermalTreatment) th.value = defaults.thermalTreatment;
+      field('Thermal treatment after irradiation', th);
+      const doseRows = [dose.parentElement!, th.parentElement!];
+      const syncDose = () => { const on = mat.value === 'dose'; doseRows.forEach((r) => { r.style.display = on ? '' : 'none'; }); };
+      mat.addEventListener('change', syncDose);
+      syncDose();
       const note = document.createElement('div');
       note.className = 'gw-note';
       note.textContent = yearsInVivo > 0
@@ -450,7 +468,13 @@ export class SaveDialog {
         document.body.removeChild(overlay);
         if (!ok) { resolve(null); return; }
         const d = parseFloat(days.value);
-        resolve({ daysExVivo: Number.isFinite(d) && d >= 0 ? d : null, material: mat.value });
+        const g = parseFloat(dose.value);
+        const isDose = mat.value === 'dose';
+        resolve({
+          daysExVivo: Number.isFinite(d) && d >= 0 ? d : null, material: mat.value,
+          radiationDoseKGy: isDose && Number.isFinite(g) && g >= 0 ? g : null,
+          thermalTreatment: isDose ? (th.value || 'none') : null,
+        });
       };
       const bOk = document.createElement('button');
       bOk.className = 'gw-btn primary'; bOk.textContent = 'Export';

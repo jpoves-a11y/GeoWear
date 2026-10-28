@@ -8,20 +8,33 @@
 //   • the cup axis, the wall thickness and the trimmed inner surface (for the
 //     sphere → plane maps and the elevation analysis);
 //   • case data entered at export time: days between explantation and scanning,
-//     polyethylene grade.
+//     polyethylene grade (or radiation dose + thermal treatment).
 // Specification: HipCreep repository, docs/HIPWEAR_EXPORT.md.
 // Only type imports: the module also runs in the Node regression tests.
 // ============================================================
 
 import type { AnalysisResults, MeshData, SeparationResult } from '../types';
 
-export type HipCreepMaterial = 'virgin' | 'conventional' | 'hxlpe' | 'vite-hxlpe';
+export type HipCreepMaterial = 'conventional' | 'abg2-duration' | 'hxlpe-remelted' | 'hxlpe-annealed' | 'vite-hxlpe' | 'hxlpe' | 'virgin' | 'dose';
+export type HipCreepThermal = 'none' | 'annealed' | 'remelted' | 'vitamin-e';
 
+/** Polyethylene grades known to HipCreep (same ids as HipCreep's materials.ts) */
 export const HIPCREEP_MATERIALS: { value: HipCreepMaterial; label: string }[] = [
   { value: 'conventional', label: 'Conventional UHMWPE, γ-sterilised (25–40 kGy)' },
-  { value: 'hxlpe', label: 'Highly cross-linked (remelted / annealed)' },
-  { value: 'vite-hxlpe', label: 'Vitamin-E highly cross-linked' },
+  { value: 'abg2-duration', label: 'ABG II — Duration (γ 30 kGy N₂ + annealed 50 °C)' },
+  { value: 'hxlpe-remelted', label: 'Highly cross-linked, remelted (Durasul, Longevity, Marathon…)' },
+  { value: 'hxlpe-annealed', label: 'Highly cross-linked, annealed (Crossfire, X3…)' },
+  { value: 'vite-hxlpe', label: 'Vitamin-E highly cross-linked (E1, Vitamys, ECIMA…)' },
+  { value: 'hxlpe', label: 'Highly cross-linked, type not known' },
   { value: 'virgin', label: 'Unirradiated (virgin) UHMWPE' },
+  { value: 'dose', label: 'Specify the radiation dose and thermal treatment…' },
+];
+
+export const HIPCREEP_THERMAL: { value: HipCreepThermal; label: string }[] = [
+  { value: 'none', label: 'None (sterilisation or cross-linking only)' },
+  { value: 'annealed', label: 'Annealed (below melting)' },
+  { value: 'remelted', label: 'Remelted (above melting)' },
+  { value: 'vitamin-e', label: 'Vitamin E (diffused or blended)' },
 ];
 
 type V3 = { x: number; y: number; z: number };
@@ -44,6 +57,9 @@ export interface HipCreepExportOptions {
   /** Days between explantation and scanning (null = unknown) */
   daysExVivo: number | null;
   material: HipCreepMaterial | null;
+  /** Only with material = 'dose': total radiation dose (kGy) and post-irradiation treatment */
+  radiationDoseKGy?: number | null;
+  thermalTreatment?: HipCreepThermal | null;
 }
 
 export interface HipCreepExportResult {
@@ -162,6 +178,9 @@ export function buildHipCreepInput(o: HipCreepExportOptions): HipCreepExportResu
   }
   if (!wall) warnings.push('Wall thickness could not be measured from the outer surface: enter it in HipCreep.');
 
+  if (o.material === 'dose' && !(o.radiationDoseKGy != null && o.radiationDoseKGy >= 0)) {
+    warnings.push('Radiation dose not given: HipCreep will use its default dose for the "dose" grade.');
+  }
   if (o.daysExVivo == null) warnings.push('Days between explantation and scanning not given: HipCreep will use its default.');
   if (!(o.yearsInVivo > 0)) warnings.push('Time in vivo is 0 (unknown): set "Years in vivo" before exporting, or enter it in HipCreep.');
 
@@ -188,6 +207,8 @@ export function buildHipCreepInput(o: HipCreepExportOptions): HipCreepExportResu
     implant: {
       headDiameterMm: r6(2 * radius),
       material: o.material,
+      radiationDoseKGy: o.material === 'dose' && o.radiationDoseKGy != null && Number.isFinite(o.radiationDoseKGy) ? o.radiationDoseKGy : null,
+      thermalTreatment: o.material === 'dose' ? (o.thermalTreatment ?? 'none') : null,
     },
     geometry: {
       commercialRadiusMm: r6(radius),

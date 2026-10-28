@@ -25,7 +25,7 @@ import { trimRim, computeRimAnchor, rimAnchorToPlanePoint, type RimAnchor } from
 import { computeTiltedRimNormal, fitPlaneFromPoints, decomposeNormalToInclination } from './utils/geometry';
 import { SaveDialog } from './ui/SaveDialog';
 import { renderWearMap } from './utils/WearMap';
-import { buildHipCreepInput, HIPCREEP_MATERIALS, type HipCreepMaterial } from './utils/HipCreepExport';
+import { buildHipCreepInput, HIPCREEP_MATERIALS, HIPCREEP_THERMAL, type HipCreepMaterial, type HipCreepThermal } from './utils/HipCreepExport';
 import {
   extractRows,
   createWorkbook,
@@ -2097,9 +2097,9 @@ export class App {
     if (!mesh) { this.status.setStatus('No trimmed inner surface available — run the analysis again'); return; }
 
     const KEY = 'hipwear-hipcreep-export';
-    let saved: { daysExVivo: number | null; material: string } = { daysExVivo: null, material: 'conventional' };
+    let saved: { daysExVivo: number | null; material: string; radiationDoseKGy?: number | null; thermalTreatment?: string | null } = { daysExVivo: null, material: 'conventional' };
     try { const t = localStorage.getItem(KEY); if (t) saved = { ...saved, ...JSON.parse(t) }; } catch { /* storage unavailable */ }
-    const info = await this.saveDialog.askHipCreepInfo(saved, HIPCREEP_MATERIALS, this.params.yearsInVivo);
+    const info = await this.saveDialog.askHipCreepInfo(saved, HIPCREEP_MATERIALS, this.params.yearsInVivo, HIPCREEP_THERMAL);
     if (!info) return;
     try { localStorage.setItem(KEY, JSON.stringify(info)); } catch { /* ignore */ }
 
@@ -2115,6 +2115,8 @@ export class App {
         yearsInVivo: this.params.yearsInVivo,
         daysExVivo: info.daysExVivo,
         material: info.material as HipCreepMaterial,
+        radiationDoseKGy: info.radiationDoseKGy,
+        thermalTreatment: info.thermalTreatment as HipCreepThermal | null,
       });
     } catch (e) {
       this.status.setStatus(`HipCreep export failed: ${(e as Error).message}`);
