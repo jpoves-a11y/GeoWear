@@ -2280,6 +2280,7 @@ export class App {
       for (let i = 0; i < jobs.length; i++) {
         const j = jobs[i];
         const tag = `Batch ${i + 1}/${jobs.length} · ${j.label}`;
+        this.setBatchProgress(i, jobs.length, j.label, t0);
         try {
           this.status.setStatus(`${tag}: loading ${j.stl.name}...`);
           this.currentMeshData = null;          // so a failed load cannot fall back to the previous mesh
@@ -2319,6 +2320,7 @@ export class App {
       }
     } finally {
       this.batchRunning = false;
+      this.setBatchProgress(null);
     }
     if (!handle && wb) downloadWorkbook(wb, outName);
     const mins = ((performance.now() - t0) / 60000).toFixed(1);
@@ -2328,6 +2330,32 @@ export class App {
       (stopped ? `\n\nBatch stopped: ${stopped}.` : '') +
       (saveMaps ? '\nWear maps saved in the selected folder.' : '') +
       (failed.length ? `\n\nFailed (no row in the Excel file):\n${failed.map(f => `• ${f}`).join('\n')}` : ''));
+  }
+
+  /** Batch progress bar in the loading overlay: `done` liners finished out of `total`, `label` is
+   *  the one being analysed now. Pass null to hide it. Display only — it does not touch the analysis. */
+  private setBatchProgress(done: number | null, total = 0, label = '', t0 = 0): void {
+    const box = document.getElementById('batch-progress');
+    if (!box) return;
+    if (done === null || total <= 0) { box.classList.add('hidden'); return; }
+    const pct = (100 * done) / total;
+    box.classList.remove('hidden');
+    box.setAttribute('aria-valuenow', pct.toFixed(0));
+    const fill = document.getElementById('batch-progress-fill');
+    if (fill) fill.style.width = `${pct.toFixed(1)}%`;
+    const lab = document.getElementById('batch-progress-label');
+    if (lab) lab.textContent = `${done + 1} of ${total} · ${label}`;
+    const eta = document.getElementById('batch-progress-eta');
+    if (eta) {
+      const left = total - done;
+      if (done > 0) {
+        const perJob = (performance.now() - t0) / done;
+        const mins = Math.max(1, Math.round((perJob * left) / 60000));
+        eta.textContent = `${done} done · ${left} left · about ${mins} min remaining`;
+      } else {
+        eta.textContent = `${left} left`;
+      }
+    }
   }
 
   /** Write the batch workbook in place; on failure (file open in Excel…) ask to retry.
