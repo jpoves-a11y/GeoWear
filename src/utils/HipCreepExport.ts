@@ -20,7 +20,7 @@ export type HipCreepThermal = 'none' | 'annealed' | 'remelted' | 'vitamin-e';
 
 /** Polyethylene grades known to HipCreep (same ids as HipCreep's materials.ts) */
 export const HIPCREEP_MATERIALS: { value: HipCreepMaterial; label: string }[] = [
-  { value: 'conventional', label: 'Conventional UHMWPE, γ-sterilised (25–40 kGy)' },
+  { value: 'conventional', label: 'Conventional UHMWPE, γ-sterilised 25–40 kGy (e.g. ABG I: γ in air)' },
   { value: 'abg2-duration', label: 'ABG II — Duration (γ 30 kGy N₂ + annealed 50 °C)' },
   { value: 'hxlpe-remelted', label: 'Highly cross-linked, remelted (Durasul, Longevity, Marathon…)' },
   { value: 'hxlpe-annealed', label: 'Highly cross-linked, annealed (Crossfire, X3…)' },
